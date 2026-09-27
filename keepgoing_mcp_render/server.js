@@ -161,6 +161,20 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
 
 app.use(express.json({ limit: "256kb" }));
 
+app.use((req, res, next) => {
+  res.set("X-Content-Type-Options", "nosniff");
+  res.set("Referrer-Policy", "no-referrer");
+  res.set("X-Frame-Options", "DENY");
+  if (
+    req.path === "/mcp" ||
+    req.path.startsWith("/billing/") ||
+    req.path.startsWith("/paypal/")
+  ) {
+    res.set("Cache-Control", "no-store");
+  }
+  next();
+});
+
 const PORT = Number(process.env.PORT || 10000);
 const MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
