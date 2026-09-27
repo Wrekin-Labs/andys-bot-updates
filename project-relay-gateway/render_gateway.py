@@ -74,8 +74,8 @@ class RelayGateway(BaseHTTPRequestHandler):
             headers.update(extra)
         self._send(status, json.dumps(value, separators=(",", ":")).encode(), "application/json; charset=utf-8", headers)
 
-    def _redirect(self, location: str) -> None:
-        self.send_response(302)
+    def _redirect(self, location: str, status: int = 302) -> None:
+        self.send_response(status)
         self.send_header("location", location)
         self.send_header("cache-control", "no-store")
         self.send_header("referrer-policy", "no-referrer")
@@ -311,7 +311,12 @@ async function renderSession(){{
     login.style.display="block";signed.style.display="none";
   }}
 }}
+let submitted=false;
 function submit(decision,token=""){{
+  if(submitted)return;
+  submitted=true;
+  for(const button of document.querySelectorAll("button"))button.disabled=true;
+  setStatus("Returning to ChatGPT…");
   const form=document.createElement("form");form.method="POST";form.action="/oauth/approve";
   const values={{request_id:requestId,decision,user_access_token:token}};
   for(const [k,v] of Object.entries(values)){{const i=document.createElement("input");i.type="hidden";i.name=k;i.value=v;form.appendChild(i)}}
@@ -326,9 +331,12 @@ document.getElementById("signin").onclick=async()=>{{
   status.style.display="none";await renderSession();
 }};
 document.getElementById("allow").onclick=async()=>{{
+  const allow=document.getElementById("allow");
+  if(allow.disabled)return;
+  allow.disabled=true;
   const {{data}}=await supabase.auth.getSession();
   const token=data?.session?.access_token;
-  if(!token){{setStatus("Please sign in again.");await renderSession();return}}
+  if(!token){{allow.disabled=false;setStatus("Please sign in again.");await renderSession();return}}
   submit("allow",token);
 }};
 document.getElementById("deny").onclick=()=>submit("deny","");
@@ -366,7 +374,7 @@ await renderSession();
             state = str(result.get("state") or "")
             if state:
                 params.append(("state", state))
-            self._redirect(self._append_query(str(result["redirect_uri"]), params))
+            self._redirect(self._append_query(str(result["redirect_uri"]), params), 303)
             return
 
         if decision != "allow":
@@ -386,7 +394,7 @@ await renderSession();
         state = str(result.get("state") or "")
         if state:
             params.append(("state", state))
-        self._redirect(self._append_query(str(result["redirect_uri"]), params))
+        self._redirect(self._append_query(str(result["redirect_uri"]), params), 303)
 
     def _oauth_token(self) -> None:
         if self.headers.get("authorization"):
