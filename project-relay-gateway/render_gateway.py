@@ -82,6 +82,26 @@ class RelayGateway(BaseHTTPRequestHandler):
         self.send_header("content-length", "0")
         self.end_headers()
 
+    def _oauth_return_page(self, location: str) -> None:
+        # Some mobile browsers leave the consent form visible after a cross-site
+        # POST redirect. Give the user a real link as well as a timed navigation.
+        # The code stays in this no-store, same-origin page and is never logged.
+        target = html.escape(location, quote=True)
+        page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="1;url={target}">
+<title>Return to ChatGPT</title>
+<style>body{{font-family:system-ui;background:#101217;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}}
+main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;background:#ff6a00;color:#111;padding:1rem;border-radius:.7rem;font-weight:700;text-decoration:none}}</style>
+</head><body><main><h1>Project Relay approved</h1><p>Returning to ChatGPT…</p>
+<a href="{target}" rel="noreferrer">Continue to ChatGPT</a>
+<p>If the page stays here, tap the button above.</p></main></body></html>"""
+        self._send(200, page.encode(), "text/html; charset=utf-8", {
+            "cache-control": "no-store",
+            "referrer-policy": "no-referrer",
+            "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        })
+
     def _append_query(self, url: str, params: list[tuple[str, str]]) -> str:
         parts = urllib.parse.urlsplit(url)
         current = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
@@ -374,7 +394,7 @@ await renderSession();
             state = str(result.get("state") or "")
             if state:
                 params.append(("state", state))
-            self._redirect(self._append_query(str(result["redirect_uri"]), params), 303)
+            self._oauth_return_page(self._append_query(str(result["redirect_uri"]), params))
             return
 
         if decision != "allow":
@@ -394,7 +414,7 @@ await renderSession();
         state = str(result.get("state") or "")
         if state:
             params.append(("state", state))
-        self._redirect(self._append_query(str(result["redirect_uri"]), params), 303)
+        self._oauth_return_page(self._append_query(str(result["redirect_uri"]), params))
 
     def _oauth_token(self) -> None:
         if self.headers.get("authorization"):
