@@ -561,11 +561,14 @@ function createMcpServer() {
 app.post("/billing/claim", async (req, res) => {
   const sessionId = String(req.body?.session_id || "");
   if (!sessionId) return res.status(400).json({ error: "session_id_required" });
-  if (!CLAIM_URL) return res.status(503).json({ error: "claim_not_configured" });
+  if (!CLAIM_URL || !BILLING_INGEST_TOKEN) return res.status(503).json({ error: "claim_not_configured" });
   try {
     const response = await fetch(CLAIM_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-keepgoing-ingest-token": BILLING_INGEST_TOKEN
+      },
       body: JSON.stringify({ provider: "stripe", session_id: sessionId })
     });
     const data = await response.json().catch(() => ({}));
@@ -578,7 +581,7 @@ app.post("/billing/claim", async (req, res) => {
 app.post("/paypal/claim", async (req, res) => {
   const subscriptionId = String(req.body?.subscription_id || "");
   if (!subscriptionId) return res.status(400).json({ error: "subscription_id_required" });
-  if (!CLAIM_URL) return res.status(503).json({ error: "claim_not_configured" });
+  if (!CLAIM_URL || !BILLING_INGEST_TOKEN) return res.status(503).json({ error: "claim_not_configured" });
   try {
     await ensurePayPalSetup();
     const sub = await paypalApi("/v1/billing/subscriptions/" + encodeURIComponent(subscriptionId), { method: "GET" });
@@ -596,7 +599,10 @@ app.post("/paypal/claim", async (req, res) => {
 
     const response = await fetch(CLAIM_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-keepgoing-ingest-token": BILLING_INGEST_TOKEN
+      },
       body: JSON.stringify({ provider: "paypal", subscription_id: subscriptionId })
     });
     const data = await response.json().catch(() => ({}));
