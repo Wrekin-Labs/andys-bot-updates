@@ -73,6 +73,11 @@ class RelayGateway(BaseHTTPRequestHandler):
             status = 502
             print("gateway page upstream error:", repr(exc), flush=True)
 
+        text = payload.decode("utf-8", errors="replace")
+        text = text.replace("/functions/v1/project-relay-site/", "/")
+        text = text.replace("/functions/v1/project-relay-site", "")
+        payload = text.encode("utf-8")
+
         self._send(
             status,
             payload,
@@ -89,6 +94,31 @@ class RelayGateway(BaseHTTPRequestHandler):
                 ),
             },
         )
+
+    def _proxy_site_post(self, upstream: str) -> None:
+        length = int(self.headers.get("content-length", "0") or "0")
+        body = self.rfile.read(length) if length else b""
+        headers = {
+            "content-type": self.headers.get("content-type", "application/json"),
+            "accept": "application/json",
+            "user-agent": self.headers.get("user-agent", "ProjectRelayGateway/0.2"),
+        }
+        req = urllib.request.Request(upstream, data=body, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                payload = response.read()
+                status = response.status
+                content_type = response.headers.get("Content-Type", "application/json; charset=utf-8")
+        except urllib.error.HTTPError as exc:
+            payload = exc.read()
+            status = exc.code
+            content_type = exc.headers.get("Content-Type", "application/json; charset=utf-8")
+        except Exception as exc:
+            payload = json.dumps({"ok": False, "error": "Support request unavailable"}).encode()
+            status = 502
+            content_type = "application/json; charset=utf-8"
+            print("gateway support upstream error:", repr(exc), flush=True)
+        self._send(status, payload, content_type, {"cache-control": "no-store"})
 
     def _proxy(self) -> None:
         suffix = self.path[len("/mcp"):] if self.path.startswith("/mcp") else self.path
@@ -181,6 +211,10 @@ class RelayGateway(BaseHTTPRequestHandler):
         self._send(404, b"Not found", "text/plain; charset=utf-8")
 
     def do_POST(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if path == "/support":
+            self._proxy_site_post(SITE_PAGE + "/support")
+            return
         if self.path.startswith("/mcp"):
             self._proxy()
             return
