@@ -1,10 +1,11 @@
 {
   "name": "keepgoing-render-mcp",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "check": "node --check server.js",
+    "start": "npm run check && node server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.2",
