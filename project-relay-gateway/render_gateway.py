@@ -41,6 +41,7 @@ CHALLENGE = os.environ.get("OPENAI_APPS_CHALLENGE", "").strip()
 ISSUER = PUBLIC_ORIGIN
 RESOURCE = PUBLIC_ORIGIN + "/mcp"
 OAUTH_SCOPE = "relay:inspect"
+OAUTH_SCOPES = (OAUTH_SCOPE, "openid", "email")
 CHATGPT_CLIENT_HOST = "chatgpt.com"
 CHATGPT_STABLE_CLIENT = "https://chatgpt.com/oauth/client.json"
 CHATGPT_STABLE_REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect"
@@ -157,10 +158,11 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
             "authorization_response_iss_parameter_supported": True,
             "authorization_endpoint": ISSUER + "/oauth/authorize",
             "token_endpoint": ISSUER + "/oauth/token",
+            "userinfo_endpoint": ISSUER + "/oauth/userinfo",
             "client_id_metadata_document_supported": True,
             "token_endpoint_auth_methods_supported": ["none"],
             "code_challenge_methods_supported": ["S256"],
-            "scopes_supported": [OAUTH_SCOPE],
+            "scopes_supported": list(OAUTH_SCOPES),
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
         }
@@ -255,9 +257,10 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
         scopes = [x for x in scope.split() if x]
         if not scopes:
             scopes = [OAUTH_SCOPE]
-        if any(x != OAUTH_SCOPE for x in scopes):
+        if OAUTH_SCOPE not in scopes or any(x not in OAUTH_SCOPES for x in scopes):
             oauth_error("invalid_scope")
             return
+        scope_value = " ".join(x for x in OAUTH_SCOPES if x in scopes)
 
         broker = self._broker(
             "create_request",
@@ -267,7 +270,7 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
                 "resource": RESOURCE,
-                "scope": OAUTH_SCOPE,
+                "scope": scope_value,
                 "state": state,
             },
         )
@@ -462,6 +465,22 @@ await renderSession();
         }
         self._json(200, payload, {"pragma": "no-cache"})
 
+    def _oauth_userinfo(self) -> None:
+        auth = self.headers.get("authorization", "")
+        token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        if not token:
+            self._json(401, {"error": "invalid_token"}, {"www-authenticate": 'Bearer error="invalid_token"'})
+            return
+        result = self._broker("userinfo", {"access_token": token})
+        if not result.get("ok"):
+            self._json(401, {"error": "invalid_token"}, {"www-authenticate": 'Bearer error="invalid_token"'})
+            return
+        profile = result.get("profile")
+        if not isinstance(profile, dict):
+            self._json(500, {"error": "server_error"})
+            return
+        self._json(200, profile, {"pragma": "no-cache"})
+
     def _proxy_html(self, upstream_base: str) -> None:
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         upstream = upstream_base + (("?" + query) if query else "")
@@ -607,6 +626,9 @@ await renderSession();
         if path == "/oauth/authorize":
             self._oauth_authorize()
             return
+        if path == "/oauth/userinfo":
+            self._oauth_userinfo()
+            return
         if path in {"/", "/support", "/privacy", "/terms"}:
             suffix = "" if path == "/" else path
             self._proxy_html(SITE_PAGE + suffix)
@@ -635,6 +657,9 @@ await renderSession();
             return
         if path == "/oauth/token":
             self._oauth_token()
+            return
+        if path == "/oauth/userinfo":
+            self._oauth_userinfo()
             return
         if path == "/support":
             self._proxy_site_post(SITE_PAGE + "/support")
