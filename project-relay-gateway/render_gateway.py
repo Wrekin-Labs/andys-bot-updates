@@ -18,6 +18,10 @@ OAUTH_PAGE = os.environ.get(
     "PROJECT_RELAY_OAUTH_PAGE",
     "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-oauth",
 )
+SITE_PAGE = os.environ.get(
+    "PROJECT_RELAY_SITE_PAGE",
+    "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-site",
+)
 PORT = int(os.environ.get("PORT", "10000"))
 CHALLENGE = os.environ.get("OPENAI_APPS_CHALLENGE", "").strip()
 
@@ -154,6 +158,10 @@ class RelayGateway(BaseHTTPRequestHandler):
                 {"ok": True, "service": "Project Relay MCP Gateway", "upstream": "configured"}
             ).encode()
             self._send(200, body, "application/json; charset=utf-8", {"cache-control": "no-store"})
+            return
+        if path in {"/", "/support", "/privacy", "/terms"}:
+            suffix = "" if path == "/" else path
+            self._proxy_html(SITE_PAGE + suffix)
             return
         if path == "/account":
             self._proxy_html(ACCOUNT_PAGE)
