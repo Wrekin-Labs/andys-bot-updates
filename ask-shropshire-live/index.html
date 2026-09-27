@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<title>Ask Shropshire — What's on across Shropshire</title>
+<meta name="description" content="Discover live music, theatre, markets, workshops, heritage, community events and more across Shropshire.">
+<style>
+:root{--bg:#0b1020;--panel:#131a2b;--panel2:#192238;--text:#f8fafc;--muted:#a7b0c0;--brand:#8b5cf6;--brand2:#22c55e;--line:#27324b;--shadow:0 12px 35px rgba(0,0,0,.28)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:linear-gradient(180deg,#0b1020 0,#0e1426 55%,#0b1020 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:inherit}.wrap{max-width:1180px;margin:0 auto;padding:0 18px}.top{position:sticky;top:0;z-index:20;background:rgba(11,16,32,.88);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}
+.nav{height:68px;display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;align-items:center;gap:10px;font-weight:900;letter-spacing:-.03em;font-size:21px}.pin{width:34px;height:34px;border-radius:12px;background:linear-gradient(135deg,var(--brand),#ec4899);display:grid;place-items:center;box-shadow:var(--shadow)}.nav small{color:var(--muted)}
+.hero{padding:58px 0 28px}.hero h1{font-size:clamp(38px,7vw,72px);line-height:.98;letter-spacing:-.055em;margin:0 0 16px;max-width:850px}.hero p{color:var(--muted);font-size:18px;max-width:720px;line-height:1.55}
+.searchbox{margin-top:26px;background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:10px;display:flex;gap:8px;box-shadow:var(--shadow);max-width:850px}
+.searchbox input{flex:1;border:0;outline:0;background:transparent;color:white;font-size:16px;padding:14px}.btn{border:0;border-radius:14px;padding:13px 16px;font-weight:800;cursor:pointer;background:var(--brand);color:#fff}.btn.secondary{background:var(--panel2);border:1px solid var(--line)}.btn.green{background:#166534}
+.quick{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 8px}.chip{border:1px solid var(--line);background:var(--panel);color:#e5e7eb;border-radius:999px;padding:10px 14px;font-weight:700;cursor:pointer}.chip.active{background:#2d1e55;border-color:#7048c7;color:#fff}
+.sectionhead{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:34px 0 14px}.sectionhead h2{margin:0;font-size:27px;letter-spacing:-.03em}.count{color:var(--muted);font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;padding-bottom:44px}.card{background:linear-gradient(180deg,var(--panel) 0,var(--panel2) 100%);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 9px 30px rgba(0,0,0,.18);display:flex;flex-direction:column;min-height:255px}
+.card .img{height:145px;background:linear-gradient(135deg,#3b1f74,#1d4ed8);background-size:cover;background-position:center;position:relative}.tag{position:absolute;top:12px;left:12px;background:rgba(8,12,25,.86);border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:6px 9px;font-size:12px;font-weight:800}.featured{position:absolute;right:12px;top:12px;background:#f59e0b;color:#1f1300;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:900}
+.body{padding:16px;display:flex;flex-direction:column;gap:9px;flex:1}.date{color:#c4b5fd;font-size:13px;font-weight:800}.title{font-size:19px;line-height:1.2;font-weight:900;letter-spacing:-.02em}.meta{color:var(--muted);font-size:14px}.desc{color:#cbd5e1;font-size:14px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.actions{display:flex;gap:8px;margin-top:auto;padding-top:8px}.actions a,.actions button{flex:1;text-align:center;text-decoration:none;font-size:13px}
+.empty{grid-column:1/-1;padding:45px 20px;border:1px dashed var(--line);border-radius:20px;text-align:center;color:var(--muted)}
+.foot{border-top:1px solid var(--line);padding:28px 0 50px;color:var(--muted);font-size:13px}.live{display:inline-flex;align-items:center;gap:7px}.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 5px rgba(34,197,94,.12)}
+@media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.hero{padding-top:34px}.grid{grid-template-columns:1fr}.nav small{display:none}.searchbox{flex-wrap:wrap}.searchbox input{width:100%;flex-basis:100%}.btn{flex:1}.hero p{font-size:16px}.card .img{height:130px}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap nav"><div class="brand"><div class="pin">✦</div><span>Ask Shropshire</span></div><small>Local. Useful. Verified.</small></div></header>
+<main class="wrap">
+<section class="hero">
+<h1>What’s happening across Shropshire?</h1>
+<p>Find the things that are easy to miss — local live music, theatre, markets, talks, workshops, heritage, community events, sport and more.</p>
+<div class="searchbox"><input id="q" placeholder="Search events, towns or venues…" autocomplete="off"><button class="btn" id="searchBtn">Search</button><button class="btn secondary" id="nearBtn">Near me</button></div>
+<div class="quick" id="chips"></div>
+</section>
+<section>
+<div class="sectionhead"><h2 id="heading">Upcoming events</h2><div class="count" id="count"></div></div>
+<div class="grid" id="grid"><div class="empty">Loading verified Shropshire events…</div></div>
+</section>
+</main>
+<footer class="foot"><div class="wrap"><div class="live"><span class="dot"></span><span>Powered by the Ask Shropshire verified events database</span></div><p>Event details can change. Always check the organiser’s booking/source page before travelling.</p></div></footer>
+<script>
+const $=s=>document.querySelector(s);
+let all=[],filter="All",coords=null;
+const cats=["All","Today","This weekend","Live music","Theatre","Comedy","Market","Festival","Community","Workshop","Sport","Exhibition","Family"];
+function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function money(v){if(v===null||v===undefined||v==="")return ""; if(Number(v)===0)return "Free"; return "From £"+Number(v).toFixed(Number(v)%1?2:0)}
+function fmt(iso){if(!iso)return ""; const d=new Date(iso); return new Intl.DateTimeFormat("en-GB",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(d)}
+function distance(a,b,c,d){const R=3958.8,rad=x=>x*Math.PI/180;const p1=rad(a),p2=rad(c),dp=rad(c-a),dl=rad(d-b);const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))}
+function isToday(iso){const d=new Date(iso),n=new Date();return d.toDateString()===n.toDateString()}
+function isWeekend(iso){const d=new Date(iso),n=new Date(),day=n.getDay();const diff=(6-day+7)%7;const sat=new Date(n);sat.setHours(0,0,0,0);sat.setDate(n.getDate()+diff);const mon=new Date(sat);mon.setDate(sat.getDate()+2);return d>=sat&&d<mon}
+function chips(){const root=$("#chips");root.innerHTML="";cats.forEach(c=>{const b=document.createElement("button");b.className="chip"+(filter===c?" active":"");b.textContent=c;b.onclick=()=>{filter=c;chips();render()};root.appendChild(b)})}
+function render(){
+ const q=$("#q").value.trim().toLowerCase();let list=all.filter(e=>{
+  let ok=true;
+  if(filter==="Today")ok=isToday(e.start); else if(filter==="This weekend")ok=isWeekend(e.start); else if(filter!=="All")ok=(e.category||"").toLowerCase()===filter.toLowerCase();
+  if(q) ok=ok&&[e.name,e.town,e.venue,e.category,e.description].join(" ").toLowerCase().includes(q);
+  if(coords && $("#nearBtn").dataset.on==="1"){ if(e.lat==null||e.lon==null)return false; ok=ok&&distance(coords.lat,coords.lon,e.lat,e.lon)<=20;}
+  return ok;
+ });
+ $("#count").textContent=list.length+" event"+(list.length===1?"":"s");
+ $("#heading").textContent=coords&&$("#nearBtn").dataset.on==="1"?"Events within 20 miles":(filter==="All"?"Upcoming events":filter);
+ const g=$("#grid");g.innerHTML="";
+ if(!list.length){g.innerHTML='<div class="empty">No verified events match those filters yet. Try another category or town.</div>';return}
+ list.forEach(e=>{
+  const c=document.createElement("article");c.className="card";
+  const bg=e.image?' style="background-image:url('+encodeURI(e.image)+')"':"";
+  const place=[e.venue,e.town].filter(Boolean).join(" · ");
+  const dist=coords&&e.lat!=null&&e.lon!=null?distance(coords.lat,coords.lon,e.lat,e.lon).toFixed(1)+" mi · ":"";
+  const nav=[e.venue,e.town,e.postcode].filter(Boolean).join(", ");
+  c.innerHTML='<div class="img"'+bg+'><span class="tag">'+esc(e.category)+'</span>'+(e.featured?'<span class="featured">FEATURED</span>':'')+'</div>'+
+   '<div class="body"><div class="date">'+esc(fmt(e.start))+(e.end?' – '+esc(fmt(e.end).split(", ").pop()):"")+'</div>'+
+   '<div class="title">'+esc(e.name)+'</div><div class="meta">'+esc(dist+place)+'</div>'+
+   (e.price!==null?'<div class="meta"><strong>'+esc(money(e.price))+'</strong></div>':'')+
+   (e.description?'<div class="desc">'+esc(e.description)+'</div>':'')+
+   '<div class="actions">'+(e.booking?'<a class="btn" target="_blank" rel="noopener" href="'+esc(e.booking)+'">Details / book</a>':'')+
+   (nav?'<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(nav)+'">Directions</a>':'')+'</div></div>';
+  g.appendChild(c);
+ });
+}
+$("#searchBtn").onclick=render;$("#q").addEventListener("input",render);
+$("#nearBtn").onclick=()=>{
+ if($("#nearBtn").dataset.on==="1"){delete $("#nearBtn").dataset.on;$("#nearBtn").textContent="Near me";render();return}
+ if(!navigator.geolocation){alert("Location is not available in this browser.");return}
+ $("#nearBtn").textContent="Locating…";
+ navigator.geolocation.getCurrentPosition(p=>{coords={lat:p.coords.latitude,lon:p.coords.longitude};$("#nearBtn").dataset.on="1";$("#nearBtn").textContent="Within 20 miles ✓";render()},()=>{$("#nearBtn").textContent="Near me";alert("Location permission was not available.")},{enableHighAccuracy:false,timeout:8000});
+};
+fetch("events.json",{cache:"no-store"}).then(r=>r.json()).then(d=>{all=d.events||[];chips();render()}).catch(()=>{$("#grid").innerHTML='<div class="empty">Events are temporarily unavailable. Please try again shortly.</div>'});
+</script>
+</body></html>
