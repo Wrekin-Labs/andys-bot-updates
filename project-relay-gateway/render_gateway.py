@@ -10,6 +10,14 @@ UPSTREAM_MCP = os.environ.get(
     "UPSTREAM_MCP",
     "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-mcp",
 ).rstrip("/")
+ACCOUNT_PAGE = os.environ.get(
+    "PROJECT_RELAY_ACCOUNT_PAGE",
+    "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-account",
+)
+OAUTH_PAGE = os.environ.get(
+    "PROJECT_RELAY_OAUTH_PAGE",
+    "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-oauth",
+)
 PORT = int(os.environ.get("PORT", "10000"))
 CHALLENGE = os.environ.get("OPENAI_APPS_CHALLENGE", "").strip()
 
@@ -37,6 +45,46 @@ class RelayGateway(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _proxy_html(self, upstream_base: str) -> None:
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        upstream = upstream_base + (("?" + query) if query else "")
+        req = urllib.request.Request(
+            upstream,
+            method="GET",
+            headers={
+                "accept": "text/html",
+                "user-agent": self.headers.get("user-agent", "ProjectRelayGateway/0.2"),
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                payload = response.read()
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            payload = exc.read()
+            status = exc.code
+        except Exception as exc:
+            payload = b"Project Relay page unavailable"
+            status = 502
+            print("gateway page upstream error:", repr(exc), flush=True)
+
+        self._send(
+            status,
+            payload,
+            "text/html; charset=utf-8",
+            {
+                "cache-control": "no-store",
+                "referrer-policy": "no-referrer",
+                "content-security-policy": (
+                    "default-src 'self'; "
+                    "script-src 'self' https://esm.sh 'unsafe-inline'; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self' https://dbhwjzznwhukoogjewfl.supabase.co; "
+                    "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"
+                ),
+            },
+        )
 
     def _proxy(self) -> None:
         suffix = self.path[len("/mcp"):] if self.path.startswith("/mcp") else self.path
@@ -100,13 +148,20 @@ class RelayGateway(BaseHTTPRequestHandler):
         self._send(status, payload, content_type, keep)
 
     def do_GET(self) -> None:
-        if self.path == "/health":
+        path = self.path.split("?", 1)[0]
+        if path == "/health":
             body = json.dumps(
                 {"ok": True, "service": "Project Relay MCP Gateway", "upstream": "configured"}
             ).encode()
             self._send(200, body, "application/json; charset=utf-8", {"cache-control": "no-store"})
             return
-        if self.path == "/.well-known/openai-apps-challenge":
+        if path == "/account":
+            self._proxy_html(ACCOUNT_PAGE)
+            return
+        if path == "/oauth":
+            self._proxy_html(OAUTH_PAGE)
+            return
+        if path == "/.well-known/openai-apps-challenge":
             if not CHALLENGE:
                 self._send(404, b"Not configured", "text/plain; charset=utf-8", {"cache-control": "no-store"})
                 return
