@@ -164,7 +164,7 @@ app.use(express.json({ limit: "256kb" }));
 const PORT = Number(process.env.PORT || 10000);
 const MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const TOKEN_HASH = "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
+const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
 
 function digest(value) {
   return crypto.createHash("sha256").update(value || "").digest("hex");
@@ -495,7 +495,7 @@ async function waitForJob(jobId, waitSeconds = 20) {
 
 function createMcpServer() {
   const server = new McpServer(
-    { name: "KeepGoing", version: "0.7.0" },
+    { name: "KeepGoing", version: "1.0.0" },
     { instructions: "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -634,8 +634,8 @@ app.get("/", async (_req, res) => {
     : '';
 
   const setupMessage = paypalReady
-    ? '<p class="good">' + modeLabel + ' is configured.</p>'
-    : '<div class="notice"><strong>PayPal setup pending.</strong><br>Add PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET to Render Environment. KeepGoing will then create the PayPal product, both monthly plans and the webhook automatically.</div>';
+    ? '<p class="good">Secure subscription checkout is ready.</p>'
+    : '<div class="notice"><strong>Checkout is being activated.</strong><br>The KeepGoing service is online, but new paid subscriptions are temporarily unavailable.</div>';
 
   const proAction = paypalReady ? '<div id="paypal-pro"></div>' : '<span class="muted">Payment button appears after PayPal credentials are added.</span>';
   const bizAction = paypalReady ? '<div id="paypal-business"></div>' : '<span class="muted">Payment button appears after PayPal credentials are added.</span>';
@@ -678,11 +678,40 @@ app.get("/paypal/status", async (_req, res) => {
   });
 });
 
+app.get("/readiness", async (_req, res) => {
+  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+    try { await ensurePayPalSetup(); } catch {}
+  }
+  const engineReady = Boolean(OPENAI_API_KEY);
+  const billingBackendReady = Boolean(
+    AUTH_URL &&
+    CLAIM_URL &&
+    BILLING_INGEST_URL &&
+    BILLING_INGEST_TOKEN
+  );
+  const checkoutReady = Boolean(
+    PAYPAL_CLIENT_ID &&
+    PAYPAL_CLIENT_SECRET &&
+    paypalSetupComplete
+  );
+  res.json({
+    ok: engineReady && billingBackendReady,
+    version: "1.0.0",
+    engine_ready: engineReady,
+    billing_backend_ready: billingBackendReady,
+    checkout_ready: checkoutReady,
+    sell_ready: engineReady && billingBackendReady && checkoutReady,
+    payment_provider: "paypal",
+    paypal_mode: PAYPAL_MODE,
+    protected: true
+  });
+});
+
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     name: "KeepGoing MCP",
-    version: "0.7.0",
+    version: "1.0.0",
     openaiConfigured: Boolean(OPENAI_API_KEY),
     protected: true,
     model: MODEL,
@@ -717,7 +746,7 @@ app.get("/mcp", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP v0.7.0 listening on " + PORT);
+  console.log("KeepGoing MCP v1.0.0 listening on " + PORT);
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
     ensurePayPalSetup()
       .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
