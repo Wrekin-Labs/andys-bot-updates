@@ -287,7 +287,7 @@ function setupPage(message = '') {
 
 function connectPage() {
   return pageShell('Connect Barclays',
-    '<h1>Connect Barclays</h1><p>This uses UK Open Banking through Plaid. You authenticate with Barclays on Barclays\\' own screen.</p>' +
+    '<h1>Connect Barclays</h1><p>This uses UK Open Banking through Plaid. You authenticate with Barclays on Barclays\' own screen.</p>' +
     '<label>Bridge passphrase</label><input id="secret" type="password" autocomplete="current-password"><button id="connect">Connect Barclays</button>' +
     '<div id="status" class="muted" style="margin-top:14px"></div>' +
     '<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script><script>' +
