@@ -41,6 +41,18 @@ export class MemoryJobStore {
     return row ? structuredClone(row) : null;
   }
 
+  async listRecoverableJobs({ before, limit = 50 } = {}) {
+    const cutoff = Number(before);
+    const rows = [...this.jobs.values()]
+      .filter((row) =>
+        ["queued", "working", "continuing"].includes(row.status) &&
+        Number(row.updatedAt || 0) <= cutoff
+      )
+      .sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0))
+      .slice(0, Math.max(1, Math.min(200, Number(limit) || 50)));
+    return structuredClone(rows);
+  }
+
   async compareAndSet(jobId, expectedVersion, next) {
     const current = this.jobs.get(String(jobId));
     if (!current) return { ok: false, reason: "not_found", job: null };
