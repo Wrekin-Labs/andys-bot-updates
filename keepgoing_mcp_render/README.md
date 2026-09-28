@@ -104,6 +104,7 @@ Core:
 
 v1.2 durable engine:
 - `KEEPGOING_V12_ENABLED=true`
+- `KEEPGOING_V12_CANARY_ONLY=true` during owner-only staged validation; set false/omit only after the live drills pass
 - `KEEPGOING_SUPABASE_URL` (or `SUPABASE_URL`)
 - `KEEPGOING_SUPABASE_SERVICE_KEY`
 - `OPENAI_WEBHOOK_SECRET`
@@ -140,6 +141,8 @@ npm install --omit=dev
 npm run verify
 npm start
 ```
+
+Recommended staged rollout: first enable `KEEPGOING_V12_ENABLED=true` together with `KEEPGOING_V12_CANARY_ONLY=true`. This exposes v1.2 only to the owner account while ordinary subscribers remain on v1.1 with normal quota charging. Remove/disable canary-only mode only after the owner drills pass.
 
 Before enabling v1.2 for paid customers, verify:
 1. CI passes on the exact release commit.
