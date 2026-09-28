@@ -19,6 +19,8 @@ assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_r
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
+assert.match(source, /runtime\.store\?\.healthCheck/);
+assert.match(source, /durable_store_ready: durableStoreReady/);
 assert.match(source, /sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady/);
 assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 assert.match(source, /name: "get_profile"[\s\S]{0,900}"openai\/profile": true/);
