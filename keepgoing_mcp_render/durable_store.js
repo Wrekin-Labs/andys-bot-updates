@@ -68,6 +68,29 @@ export class MemoryJobStore {
     return structuredClone(rows);
   }
 
+  async cleanupRetention({
+    now = Date.now(),
+    jobRetentionDays = 30
+  } = {}) {
+    const cutoff = Number(now) - Math.max(1, Number(jobRetentionDays) || 30) * 86_400_000;
+    const terminal = new Set([
+      "completed","failed","cancelled","budget_exhausted"
+    ]);
+    const deleted = new Set();
+    for (const [id, row] of this.jobs) {
+      if (terminal.has(row.status) && Number(row.updatedAt || 0) <= cutoff) {
+        this.jobs.delete(id);
+        deleted.add(id);
+      }
+    }
+    if (deleted.size) {
+      for (const [key, id] of this.requests) {
+        if (deleted.has(id)) this.requests.delete(key);
+      }
+    }
+    return { deleted_jobs: deleted.size, deleted_events: 0 };
+  }
+
   async compareAndSet(jobId, expectedVersion, next) {
     const current = this.jobs.get(String(jobId));
     if (!current) return { ok: false, reason: "not_found", job: null };
