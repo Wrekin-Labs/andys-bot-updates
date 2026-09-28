@@ -242,13 +242,41 @@ function validChatGptClientId(value) {
   }
 }
 
+const cimdCache = new Map();
+
+async function validateCimdClient(clientId, redirectUri) {
+  if (!validChatGptClientId(clientId) || !validChatGptRedirect(redirectUri)) return false;
+  const cached = cimdCache.get(clientId);
+  const now = Date.now();
+  if (cached && cached.expires > now) {
+    return cached.redirects.includes(redirectUri) && cached.methods.includes("none");
+  }
+  try {
+    const response = await fetch(clientId, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) return false;
+    const doc = await response.json();
+    const redirects = Array.isArray(doc.redirect_uris) ? doc.redirect_uris.map(String) : [];
+    const methods = Array.isArray(doc.token_endpoint_auth_methods_supported)
+      ? doc.token_endpoint_auth_methods_supported.map(String)
+      : [String(doc.token_endpoint_auth_method || "")].filter(Boolean);
+    cimdCache.set(clientId, { redirects, methods, expires: now + 300000 });
+    return redirects.includes(redirectUri) && methods.includes("none");
+  } catch {
+    return false;
+  }
+}
+
 function safeResource(value) {
   return !value || String(value).replace(/\/$/, "") === PUBLIC_BASE_URL;
 }
 
 function oauthChallenge(res, error = "invalid_token", description = "Authentication is required") {
   const metadata = PUBLIC_BASE_URL + "/.well-known/oauth-protected-resource";
-  res.set("WWW-Authenticate", 'Bearer resource_metadata="' + metadata + '", error="' + error + '", error_description="' + String(description).replace(/"/g, "") + '"');
+  res.set("WWW-Authenticate", 'Bearer resource_metadata="' + metadata + '", scope="' + OAUTH_SCOPE + '", error="' + error + '", error_description="' + String(description).replace(/"/g, "") + '"');
 }
 
 function htmlEscape(value) {
@@ -690,7 +718,10 @@ app.get("/.well-known/oauth-protected-resource", (_req, res) => {
     resource: PUBLIC_BASE_URL,
     authorization_servers: [PUBLIC_BASE_URL],
     scopes_supported: [OAUTH_SCOPE],
-    bearer_methods_supported: ["header"]
+    bearer_methods_supported: ["header"],
+    resource_documentation: PUBLIC_BASE_URL + "/install",
+    resource_policy_uri: PUBLIC_BASE_URL + "/privacy",
+    resource_tos_uri: PUBLIC_BASE_URL + "/terms"
   });
 });
 
@@ -702,13 +733,14 @@ app.get("/.well-known/oauth-authorization-server", (_req, res) => {
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
+    client_id_metadata_document_supported: true,
     token_endpoint_auth_methods_supported: ["none"],
     scopes_supported: [OAUTH_SCOPE],
     authorization_response_iss_parameter_supported: true
   });
 });
 
-app.get("/oauth/authorize", (req, res) => {
+app.get("/oauth/authorize", async (req, res) => {
   const responseType = String(req.query.response_type || "");
   const clientId = String(req.query.client_id || "");
   const redirectUri = String(req.query.redirect_uri || "");
@@ -718,10 +750,10 @@ app.get("/oauth/authorize", (req, res) => {
   const resource = String(req.query.resource || PUBLIC_BASE_URL);
   const scope = String(req.query.scope || OAUTH_SCOPE);
 
+  const clientValid = await validateCimdClient(clientId, redirectUri);
   if (
     responseType !== "code" ||
-    !validChatGptClientId(clientId) ||
-    !validChatGptRedirect(redirectUri) ||
+    !clientValid ||
     !state ||
     !codeChallenge ||
     method !== "S256" ||
@@ -760,10 +792,10 @@ app.post("/oauth/authorize", async (req, res) => {
   const scope = String(req.body.scope || OAUTH_SCOPE);
   const activationToken = String(req.body.activation_token || "").trim();
 
+  const clientValid = await validateCimdClient(clientId, redirectUri);
   if (
     !OAUTH_SECRET ||
-    !validChatGptClientId(clientId) ||
-    !validChatGptRedirect(redirectUri) ||
+    !clientValid ||
     !state ||
     !codeChallenge ||
     method !== "S256" ||
@@ -844,11 +876,13 @@ app.post("/oauth/token", async (req, res) => {
         code.client_id !== clientId ||
         code.redirect_uri !== redirectUri ||
         !safeResource(resource) ||
-        !validChatGptClientId(clientId) ||
-        !validChatGptRedirect(redirectUri) ||
         !verifier
       ) {
         return res.status(400).json({ error: "invalid_grant" });
+      }
+
+      if (!(await validateCimdClient(clientId, redirectUri))) {
+        return res.status(400).json({ error: "invalid_client" });
       }
 
       const computed = base64url(crypto.createHash("sha256").update(verifier, "utf8").digest());
