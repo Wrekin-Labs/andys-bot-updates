@@ -136,7 +136,7 @@ export function latestRootTurn(turnsResponse) {
   return turns.find((turn) => turn?.subagent_id == null) || turns[0] || null;
 }
 
-export function classifySession(session, latestText = "", turnsResponse = null) {
+export function classifySession(session, latestText = "", turnsResponse = null, itemsResponse = null) {
   const status = String(session?.status || "").toLowerCase();
   const required = session?.required_actions;
   if (Array.isArray(required) && required.length > 0) {
@@ -151,7 +151,14 @@ export function classifySession(session, latestText = "", turnsResponse = null) 
   const tokensUsed = turnTokens(turn);
 
   if (turnStatus === "completed") {
-    return { providerStatus: "completed", output: latestText, turnId: turn?.id || null, tokensUsed };
+    const failedWork = turnHasFailedWork(itemsResponse, turn?.id || null);
+    return {
+      providerStatus: failedWork ? "incomplete" : "completed",
+      output: latestText,
+      turnId: turn?.id || null,
+      tokensUsed,
+      toolFailureDetected: failedWork
+    };
   }
   if (turnStatus === "failed") {
     return { providerStatus: "failed", output: latestText, turnId: turn?.id || null, tokensUsed };
@@ -166,6 +173,22 @@ export function classifySession(session, latestText = "", turnsResponse = null) 
   // Session idle means no turn is currently running; it does not prove the
   // last turn succeeded. Without a terminal root turn, fail safe as working.
   return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed };
+}
+
+export function turnHasFailedWork(itemsResponse, turnId = null) {
+  const failedStatuses = new Set(["failed", "incomplete"]);
+  return collection(itemsResponse).some((item) => {
+    if (turnId && item?.turn_id && item.turn_id !== turnId) return false;
+    const status = String(item?.status || "").toLowerCase();
+    if (!failedStatuses.has(status)) return false;
+    const type = String(item?.type || "").toLowerCase();
+    return (
+      type.includes("call") ||
+      type.includes("tool") ||
+      type.includes("execution") ||
+      type.includes("search")
+    );
+  });
 }
 
 function collection(response) {
