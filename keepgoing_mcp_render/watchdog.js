@@ -5,7 +5,10 @@ export function createWatchdog({
   orchestrator,
   now = () => Date.now(),
   staleAfterMs = 30_000,
-  limit = 50
+  limit = 50,
+  cleanupEveryMs = 24 * 60 * 60 * 1000,
+  jobRetentionDays = 30,
+  eventRetentionDays = 14
 } = {}) {
   if (!store || typeof store.listRecoverableJobs !== "function") {
     throw new Error("recoverable job store required");
@@ -13,6 +16,8 @@ export function createWatchdog({
   if (!orchestrator || typeof orchestrator.reconcile !== "function") {
     throw new Error("orchestrator required");
   }
+
+  let lastCleanupAt = 0;
 
   async function runOnce() {
     const currentTime = now();
@@ -60,9 +65,28 @@ export function createWatchdog({
       }
     }
 
+    let cleanup = null;
+    const cleanupInterval = Math.max(60_000, Number(cleanupEveryMs) || 24 * 60 * 60 * 1000);
+    if (
+      typeof store.cleanupRetention === "function" &&
+      currentTime - lastCleanupAt >= cleanupInterval
+    ) {
+      lastCleanupAt = currentTime;
+      try {
+        cleanup = await store.cleanupRetention({
+          now: currentTime,
+          jobRetentionDays,
+          eventRetentionDays
+        });
+      } catch (error) {
+        cleanup = { error: safeError(error) };
+      }
+    }
+
     return {
       checked: jobs.length,
-      results
+      results,
+      cleanup
     };
   }
 
