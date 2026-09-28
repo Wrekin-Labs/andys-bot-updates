@@ -10,6 +10,14 @@ export class SupabaseJobStore {
     this.fetchImpl = fetchImpl;
   }
 
+  async healthCheck() {
+    await Promise.all([
+      this.request("/rest/v1/keepgoing_jobs?select=job_id&limit=1", { method: "GET" }),
+      this.request("/rest/v1/keepgoing_job_events?select=id&limit=1", { method: "GET" })
+    ]);
+    return { ok: true };
+  }
+
   async createOrGet({ job, ownerSubjectHash, clientRequestId = null }) {
     const rows = await this.request("/rest/v1/rpc/reserve_keepgoing_job", {
       method: "POST",
