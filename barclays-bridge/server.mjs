@@ -227,6 +227,80 @@ function maskIdentifier(value) {
   return v.length <= 4 ? v : '••••' + v.slice(-4);
 }
 
+async function tlConfig() {
+  const config = await getConfig();
+  if (!config || config.provider !== 'truelayer') throw new Error('TrueLayer is not configured');
+  return {
+    ...config,
+    client_id: decryptSecret(config.encrypted_tl_client_id),
+    client_secret: decryptSecret(config.encrypted_tl_client_secret),
+    env: config.tl_env === 'sandbox' ? 'sandbox' : 'production'
+  };
+}
+
+function tlAuthBase(env) {
+  return env === 'sandbox' ? 'https://auth.truelayer-sandbox.com' : 'https://auth.truelayer.com';
+}
+
+function tlApiBase(env) {
+  return env === 'sandbox' ? 'https://api.truelayer-sandbox.com' : 'https://api.truelayer.com';
+}
+
+async function tlTokenRequest(params, config = null) {
+  const c = config || await tlConfig();
+  const response = await fetch(tlAuthBase(c.env) + '/connect/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: new URLSearchParams({
+      client_id: c.client_id,
+      client_secret: c.client_secret,
+      ...params
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error_description || data.error || ('TrueLayer token request failed (' + response.status + ')'));
+  return data;
+}
+
+async function tlAccess(connection) {
+  const c = await tlConfig();
+  if (!connection.encrypted_access_token) throw new Error('Barclays authorisation has not completed yet');
+  let bundle = JSON.parse(decryptSecret(connection.encrypted_access_token));
+  if (Number(bundle.expires_at || 0) > Date.now() + 60_000 && bundle.access_token) {
+    return { config: c, bundle };
+  }
+  if (!bundle.refresh_token) throw new Error('TrueLayer access expired; reconnect Barclays');
+  const fresh = await tlTokenRequest({
+    grant_type: 'refresh_token',
+    refresh_token: bundle.refresh_token
+  }, c);
+  bundle = {
+    access_token: fresh.access_token,
+    refresh_token: fresh.refresh_token || bundle.refresh_token,
+    expires_at: Date.now() + Number(fresh.expires_in || 3600) * 1000
+  };
+  await dbRpc('put_connection', {
+    provider: 'truelayer',
+    institution_id: connection.institution_id || 'uk-ob-barclays',
+    institution_name: connection.institution_name || 'Barclays',
+    item_id: connection.item_id,
+    encrypted_access_token: encryptSecret(JSON.stringify(bundle)),
+    consent_expiration_time: connection.consent_expiration_time || '',
+    provider_data: connection.provider_data || { status: 'connected' }
+  });
+  return { config: c, bundle };
+}
+
+async function tlGet(connection, path) {
+  const { config, bundle } = await tlAccess(connection);
+  const response = await fetch(tlApiBase(config.env) + path, {
+    headers: { authorization: 'Bearer ' + bundle.access_token, accept: 'application/json' }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error_description || data.error || data.message || ('TrueLayer request failed (' + response.status + ')'));
+  return data;
+}
+
 async function getConnection() {
   const row = await dbRpc('get_connection');
   if (!row) return null;
@@ -239,7 +313,11 @@ async function getConnection() {
 async function bankStatus() {
   const c = await getConnection();
   const gcAccounts = c && c.provider === 'gocardless' ? gcAccountIds(c) : [];
-  const connected = Boolean(c && (c.provider !== 'gocardless' || gcAccounts.length));
+  const connected = Boolean(c && (
+    c.provider === 'gocardless' ? gcAccounts.length :
+    c.provider === 'truelayer' ? Boolean(c.encrypted_access_token) :
+    true
+  ));
   return {
     connected,
     provider: c ? c.provider : null,
@@ -253,6 +331,22 @@ async function bankStatus() {
 async function listAccounts() {
   const c = await getConnection();
   if (!c) throw new Error('No bank is connected yet');
+
+  if (c.provider === 'truelayer') {
+    const data = await tlGet(c, '/data/v1/accounts');
+    return (data.results || []).map((a) => ({
+      account_id: a.account_id,
+      display_name: a.display_name || null,
+      account_type: a.account_type || null,
+      currency: a.currency || null,
+      account_number: a.account_number ? {
+        number_masked: maskIdentifier(a.account_number.number),
+        sort_code_masked: maskIdentifier(a.account_number.sort_code),
+        iban_masked: maskIdentifier(a.account_number.iban)
+      } : null,
+      provider: a.provider || null
+    }));
+  }
 
   if (c.provider === 'gocardless') {
     const ids = gcAccountIds(c);
@@ -288,6 +382,16 @@ async function listAccounts() {
 async function getBalances() {
   const c = await getConnection();
   if (!c) throw new Error('No bank is connected yet');
+
+  if (c.provider === 'truelayer') {
+    const accounts = await listAccounts();
+    const rows = [];
+    for (const account of accounts) {
+      const data = await tlGet(c, '/data/v1/accounts/' + encodeURIComponent(account.account_id) + '/balance');
+      rows.push({ account_id: account.account_id, balances: data.results || [] });
+    }
+    return rows;
+  }
 
   if (c.provider === 'gocardless') {
     const ids = gcAccountIds(c);
@@ -334,6 +438,39 @@ async function getTransactions(input) {
   const c = await getConnection();
   if (!c) throw new Error('No bank is connected yet');
   const wanted = Math.max(1, Math.min(Number(input.limit || 100), 500));
+
+  if (c.provider === 'truelayer') {
+    const accounts = await listAccounts();
+    const selected = Array.isArray(input.account_ids) && input.account_ids.length
+      ? accounts.filter((a) => input.account_ids.includes(a.account_id))
+      : accounts;
+    const result = [];
+    for (const account of selected) {
+      const qs = new URLSearchParams();
+      if (input.start_date) qs.set('from', input.start_date);
+      if (input.end_date) qs.set('to', input.end_date);
+      const data = await tlGet(c, '/data/v1/accounts/' + encodeURIComponent(account.account_id) + '/transactions?' + qs.toString());
+      for (const t of data.results || []) {
+        result.push({
+          transaction_id: t.normalised_provider_transaction_id || t.transaction_id || t.provider_transaction_id || null,
+          account_id: account.account_id,
+          date: t.timestamp ? String(t.timestamp).slice(0, 10) : null,
+          timestamp: t.timestamp || null,
+          name: t.merchant_name || t.description || 'Transaction',
+          description: t.description || null,
+          amount: Number(t.amount || 0),
+          iso_currency_code: t.currency || null,
+          direction: t.transaction_type === 'DEBIT' ? 'out' : t.transaction_type === 'CREDIT' ? 'in' : null,
+          category: t.transaction_category || null,
+          classification: t.transaction_classification || [],
+          running_balance: t.running_balance || null,
+          pending: false
+        });
+      }
+    }
+    result.sort((a, b) => String(b.timestamp || b.date || '').localeCompare(String(a.timestamp || a.date || '')));
+    return result.slice(0, wanted);
+  }
 
   if (c.provider === 'gocardless') {
     const ids = gcAccountIds(c);
@@ -404,20 +541,31 @@ function setupPage(message = '') {
     '<h1>Barclays Bridge</h1><p>Secure one-time setup. Your Barclays password, PIN and one-time codes are never entered here.</p>' +
     (message ? '<div class="err">' + esc(message) + '</div>' : '') +
     '<form method="post" action="/setup"><label>One-time setup code</label><input name="bootstrap_code" required autocomplete="one-time-code">' +
-    '<label>Open Banking provider</label><select id="provider" name="provider"><option value="gocardless" selected>GoCardless Bank Account Data — recommended for UK Barclays</option><option value="plaid">Plaid — fallback</option></select>' +
-    '<div id="gc-fields"><label>GoCardless User Secret ID</label><input id="gc-id" name="gc_secret_id" autocomplete="off">' +
-    '<label>GoCardless Secret Key</label><input id="gc-key" name="gc_secret_key" type="password" autocomplete="new-password">' +
-    '<p class="muted">Get these from the GoCardless Bank Account Data portal → User Secrets. Enter them here directly; do not send them in chat.</p></div>' +
+    '<label>Open Banking provider</label><select id="provider" name="provider"><option value="truelayer" selected>TrueLayer — current recommended Barclays route</option><option value="gocardless">GoCardless Bank Account Data — existing accounts only</option><option value="plaid">Plaid — fallback</option></select>' +
+    '<div id="tl-fields"><label>TrueLayer Client ID</label><input id="tl-id" name="tl_client_id" autocomplete="off">' +
+    '<label>TrueLayer Client Secret</label><input id="tl-key" name="tl_client_secret" type="password" autocomplete="new-password">' +
+    '<label>TrueLayer environment</label><select name="tl_env"><option value="production">Live (real Barclays account)</option><option value="sandbox">Sandbox (test data only)</option></select>' +
+    '<p class="muted">In TrueLayer Console add this redirect URI exactly: <code>https://barclays-bridge.onrender.com/truelayer/return</code>. Enter the Client ID/Secret here directly — never send the secret in chat.</p></div>' +
+    '<div id="gc-fields" style="display:none"><label>GoCardless User Secret ID</label><input id="gc-id" name="gc_secret_id" autocomplete="off">' +
+    '<label>GoCardless Secret Key</label><input id="gc-key" name="gc_secret_key" type="password" autocomplete="new-password"></div>' +
     '<div id="plaid-fields" style="display:none"><label>Plaid Client ID</label><input id="plaid-id" name="plaid_client_id" autocomplete="off">' +
     '<label>Plaid Secret</label><input id="plaid-key" name="plaid_secret" type="password" autocomplete="new-password">' +
-    '<label>Plaid environment</label><select name="plaid_env"><option value="production">Production (real Barclays account)</option><option value="sandbox">Sandbox (testing only)</option></select></div>' +
+    '<label>Plaid environment</label><select name="plaid_env"><option value="production">Production</option><option value="sandbox">Sandbox</option></select></div>' +
     '<label>Bridge passphrase</label><input name="bridge_secret" type="password" minlength="12" required autocomplete="new-password">' +
-    '<p class="muted">Choose a new passphrase used only to approve ChatGPT read-only access to this bridge. Do not reuse your Barclays password.</p>' +
+    '<p class="muted">Choose a new passphrase used only to approve ChatGPT read-only access. Do not reuse your Barclays password.</p>' +
     '<button type="submit">Save secure setup</button></form>' +
-    '<script>const p=document.getElementById("provider"),g=document.getElementById("gc-fields"),q=document.getElementById("plaid-fields"),gi=document.getElementById("gc-id"),gk=document.getElementById("gc-key"),pi=document.getElementById("plaid-id"),pk=document.getElementById("plaid-key");function t(){const x=p.value==="gocardless";g.style.display=x?"block":"none";q.style.display=x?"none":"block";gi.required=x;gk.required=x;pi.required=!x;pk.required=!x}p.onchange=t;t();</script>');
+    '<script>const p=document.getElementById("provider"),tlf=document.getElementById("tl-fields"),g=document.getElementById("gc-fields"),q=document.getElementById("plaid-fields"),ti=document.getElementById("tl-id"),tk=document.getElementById("tl-key"),gi=document.getElementById("gc-id"),gk=document.getElementById("gc-key"),pi=document.getElementById("plaid-id"),pk=document.getElementById("plaid-key");function t(){const v=p.value;tlf.style.display=v==="truelayer"?"block":"none";g.style.display=v==="gocardless"?"block":"none";q.style.display=v==="plaid"?"block":"none";ti.required=tk.required=v==="truelayer";gi.required=gk.required=v==="gocardless";pi.required=pk.required=v==="plaid"}p.onchange=t;t();</script>');
 }
 
 function connectPage(config) {
+  if (config && config.provider === 'truelayer') {
+    return pageShell('Connect Barclays',
+      '<h1>Connect Barclays</h1><p>This uses TrueLayer Open Banking. You will be sent to TrueLayer/Barclays to choose the account and approve read-only access.</p>' +
+      '<label>Bridge passphrase</label><input id="secret" type="password" autocomplete="current-password"><button id="connect">Continue to Barclays</button>' +
+      '<div id="status" class="muted" style="margin-top:14px"></div>' +
+      '<script>const status=document.getElementById("status"),secret=document.getElementById("secret");document.getElementById("connect").onclick=async()=>{try{status.textContent="Preparing Barclays authorisation...";const r=await fetch("/truelayer/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bridge_secret:secret.value})});const j=await r.json();if(!r.ok)throw new Error(j.error||"Could not start");location.href=j.link}catch(e){status.textContent=e.message}};</script>');
+  }
+
   if (config && config.provider === 'gocardless') {
     return pageShell('Connect Barclays',
       '<h1>Connect Barclays</h1><p>This uses UK Open Banking through GoCardless. Barclays authentication happens on the bank connection flow; this bridge never receives your Barclays password or PIN.</p>' +
@@ -486,7 +634,7 @@ async function handle(req, res) {
   const url = new URL(req.url || '/', baseUrl(req));
   const path = url.pathname;
 
-  if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true, service: 'barclays-bridge', version: '0.4.0' });
+  if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true, service: 'barclays-bridge', version: '0.5.0' });
 
   if (req.method === 'GET' && path === '/') {
     const config = await getConfig().catch(() => null);
@@ -505,24 +653,45 @@ async function handle(req, res) {
     const bootstrap = await dbRpc('get_bootstrap', { code });
     if (!bootstrap || bootstrap.used || new Date(bootstrap.expires_at).getTime() <= Date.now()) return html(res, 403, setupPage('Setup code is invalid, expired or already used.'));
 
-    const provider = form.provider === 'plaid' ? 'plaid' : 'gocardless';
+    const provider = ['truelayer','gocardless','plaid'].includes(form.provider) ? form.provider : 'truelayer';
     const bridgeSecret = String(form.bridge_secret || '');
     if (bridgeSecret.length < 12) return html(res, 400, setupPage('Use a bridge passphrase of at least 12 characters.'));
 
-    if (provider === 'gocardless') {
+    const common = {
+      bridge_login_hash: makePasswordHash(bridgeSecret),
+      plaid_client_id: '',
+      encrypted_plaid_secret: '',
+      plaid_env: '',
+      encrypted_gc_secret_id: '',
+      encrypted_gc_secret_key: '',
+      encrypted_tl_client_id: '',
+      encrypted_tl_client_secret: '',
+      tl_env: ''
+    };
+
+    if (provider === 'truelayer') {
+      const clientId = String(form.tl_client_id || '').trim();
+      const clientSecret = String(form.tl_client_secret || '').trim();
+      const tlEnv = form.tl_env === 'sandbox' ? 'sandbox' : 'production';
+      if (!clientId || !clientSecret) return html(res, 400, setupPage('Enter the TrueLayer Client ID and Client Secret.'));
+      await dbRpc('put_config', {
+        ...common,
+        provider: 'truelayer',
+        encrypted_tl_client_id: encryptSecret(clientId),
+        encrypted_tl_client_secret: encryptSecret(clientSecret),
+        tl_env: tlEnv
+      });
+    } else if (provider === 'gocardless') {
       const secretId = String(form.gc_secret_id || '').trim();
       const secretKey = String(form.gc_secret_key || '').trim();
       if (!secretId || !secretKey) return html(res, 400, setupPage('Enter both GoCardless User Secret values.'));
       try { await gcCreateTokenWithSecrets(secretId, secretKey); }
       catch (e) { return html(res, 400, setupPage('GoCardless credentials could not be verified: ' + e.message)); }
       await dbRpc('put_config', {
+        ...common,
         provider: 'gocardless',
         encrypted_gc_secret_id: encryptSecret(secretId),
-        encrypted_gc_secret_key: encryptSecret(secretKey),
-        plaid_client_id: '',
-        encrypted_plaid_secret: '',
-        plaid_env: '',
-        bridge_login_hash: makePasswordHash(bridgeSecret)
+        encrypted_gc_secret_key: encryptSecret(secretKey)
       });
     } else {
       const clientId = String(form.plaid_client_id || '').trim();
@@ -530,19 +699,17 @@ async function handle(req, res) {
       const plaidEnv = form.plaid_env === 'sandbox' ? 'sandbox' : 'production';
       if (!clientId || !plaidSecret) return html(res, 400, setupPage('Enter the Plaid Client ID and Secret.'));
       await dbRpc('put_config', {
+        ...common,
         provider: 'plaid',
         plaid_client_id: clientId,
         encrypted_plaid_secret: encryptSecret(plaidSecret),
-        plaid_env: plaidEnv,
-        encrypted_gc_secret_id: '',
-        encrypted_gc_secret_key: '',
-        bridge_login_hash: makePasswordHash(bridgeSecret)
+        plaid_env: plaidEnv
       });
     }
 
     const used = await dbRpc('use_bootstrap', { code });
     if (!used || !used.ok) throw new Error('Could not consume setup code');
-    return html(res, 200, pageShell('Setup complete', '<h1>Setup complete</h1><div class="ok">Open Banking credentials were verified and stored encrypted. The one-time setup code is now disabled.</div><p><a class="btn" href="/connect">Connect Barclays</a></p>'));
+    return html(res, 200, pageShell('Setup complete', '<h1>Setup complete</h1><div class="ok">Open Banking credentials were stored encrypted. The one-time setup code is now disabled.</div><p><a class="btn" href="/connect">Connect Barclays</a></p>'));
   }
 
   if (req.method === 'GET' && path === '/connect') {
@@ -551,7 +718,85 @@ async function handle(req, res) {
     return html(res, 200, connectPage(config));
   }
 
-  if (req.method === 'POST' && path === '/gocardless/banks') {
+  if (req.method === 'POST' && path === '/truelayer/start') {
+    const body = await bodyJson(req);
+    const config = await requireBridgeSecret(body.bridge_secret || '');
+    if (config.provider !== 'truelayer') return json(res, 400, { error: 'TrueLayer is not the configured provider' });
+    const tc = await tlConfig();
+    const state = crypto.randomBytes(24).toString('base64url');
+    const redirectUri = baseUrl(req) + '/truelayer/return';
+    await dbRpc('put_connection', {
+      provider: 'truelayer',
+      institution_id: tc.env === 'production' ? 'uk-ob-barclays' : 'sandbox',
+      institution_name: tc.env === 'production' ? 'Barclays' : 'TrueLayer Sandbox',
+      item_id: state,
+      encrypted_access_token: '',
+      consent_expiration_time: '',
+      provider_data: { status: 'pending', redirect_uri: redirectUri }
+    });
+    const auth = new URL(tlAuthBase(tc.env) + '/');
+    auth.searchParams.set('response_type', 'code');
+    auth.searchParams.set('client_id', tc.client_id);
+    auth.searchParams.set('scope', 'accounts balance transactions offline_access');
+    auth.searchParams.set('redirect_uri', redirectUri);
+    auth.searchParams.set('state', state);
+    if (tc.env === 'production') auth.searchParams.set('providers', 'uk-ob-barclays');
+    return json(res, 200, { link: auth.toString() });
+  }
+
+  if (req.method === 'GET' && path === '/truelayer/return') {
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const c = await getConnection();
+    if (!code || !state || !c || c.provider !== 'truelayer' || !timingSafeString(state, c.item_id)) {
+      return html(res, 400, pageShell('TrueLayer connection error', '<h1>Could not verify the Barclays return</h1><p>The authorisation state did not match. Start the connection again.</p><a class="btn" href="/connect">Try again</a>'));
+    }
+    try {
+      const tc = await tlConfig();
+      const redirectUri = baseUrl(req) + '/truelayer/return';
+      const tokens = await tlTokenRequest({
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri,
+        code
+      }, tc);
+      const bundle = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token || null,
+        expires_at: Date.now() + Number(tokens.expires_in || 3600) * 1000
+      };
+      let institutionId = tc.env === 'production' ? 'uk-ob-barclays' : 'sandbox';
+      let institutionName = tc.env === 'production' ? 'Barclays' : 'TrueLayer Sandbox';
+      let consentExpiration = '';
+      try {
+        const response = await fetch(tlApiBase(tc.env) + '/data/v1/me', {
+          headers: { authorization: 'Bearer ' + bundle.access_token, accept: 'application/json' }
+        });
+        const meta = await response.json();
+        const row = Array.isArray(meta.results) ? meta.results[0] : null;
+        if (row && row.provider) {
+          institutionId = row.provider.provider_id || institutionId;
+          institutionName = row.provider.display_name || row.provider.logo_uri || institutionName;
+        }
+        consentExpiration = row && row.consent_expires_at ? row.consent_expires_at : '';
+      } catch {}
+      await dbRpc('put_connection', {
+        provider: 'truelayer',
+        institution_id: institutionId,
+        institution_name: institutionName,
+        item_id: state,
+        encrypted_access_token: encryptSecret(JSON.stringify(bundle)),
+        consent_expiration_time: consentExpiration,
+        provider_data: { status: 'connected' }
+      });
+      return html(res, 200, pageShell('Barclays connected', '<h1>Barclays connected</h1><div class="ok">TrueLayer returned a read-only bank-data connection successfully.</div><p>You can close this page. The next step is connecting the MCP endpoint to ChatGPT.</p>'));
+    } catch (e) {
+      return html(res, 500, pageShell('TrueLayer connection error', '<h1>Could not finish the Barclays connection</h1><div class="err">' + esc(e.message) + '</div><p>Check that the redirect URI is registered in TrueLayer Console and that the app has live Data access.</p><a class="btn" href="/connect">Try again</a>'));
+    }
+  }
+
+  if (req.method === 'POST' && path === '/gocardless/banks')
+
+if (req.method === 'POST' && path === '/gocardless/banks') {
     const body = await bodyJson(req);
     const config = await requireBridgeSecret(body.bridge_secret || '');
     if (config.provider !== 'gocardless') return json(res, 400, { error: 'GoCardless is not the configured provider' });
@@ -623,9 +868,7 @@ async function handle(req, res) {
     }
   }
 
-  if (req.method === 'POST' && path === '/link-token')
-
-if (req.method === 'POST' && path === '/link-token') {
+  if (req.method === 'POST' && path === '/link-token') {
     const body = await bodyJson(req);
     await requireBridgeSecret(body.bridge_secret || '');
     const data = await plaidPost('/link/token/create', {
@@ -678,7 +921,7 @@ if (req.method === 'POST' && path === '/link-token') {
     return json(res, 200, { ok: true });
   }
 
-if (req.method === 'GET' && path === '/.well-known/oauth-protected-resource') {
+  if (req.method === 'GET' && path === '/.well-known/oauth-protected-resource') {
     const base = baseUrl(req);
     return json(res, 200, { resource: base + '/mcp', authorization_servers: [base], scopes_supported: ['bank.read'], bearer_methods_supported: ['header'] });
   }
@@ -757,7 +1000,7 @@ if (req.method === 'GET' && path === '/.well-known/oauth-protected-resource') {
   if (path === '/mcp' && req.method === 'POST') {
     let body;
     try { body = await bodyJson(req); } catch { return rpcError(res, null, -32700, 'Parse error', 400); }
-    if (body && body.method === 'initialize') return rpcResponse(res, body.id, { protocolVersion: (body.params && body.params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'barclays-bridge', version: '0.4.0' }, instructions: 'Read-only Barclays bridge. No payment or transfer tools exist.' });
+    if (body && body.method === 'initialize') return rpcResponse(res, body.id, { protocolVersion: (body.params && body.params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'barclays-bridge', version: '0.5.0' }, instructions: 'Read-only Barclays bridge. No payment or transfer tools exist.' });
     if (body && body.method === 'notifications/initialized') { res.writeHead(204); return res.end(); }
     const auth = String(req.headers.authorization || '');
     try {
