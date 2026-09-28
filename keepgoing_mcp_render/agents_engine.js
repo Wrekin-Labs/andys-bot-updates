@@ -61,6 +61,39 @@ export function createAgentsEngine({
     return request("/agents/sessions/" + encodeURIComponent(sessionId), { method: "GET" });
   }
 
+  async function listSessions({ order = "desc", limit = 100, after = null } = {}) {
+    const safeOrder = order === "asc" ? "asc" : "desc";
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
+    const query = new URLSearchParams({
+      order: safeOrder,
+      limit: String(safeLimit)
+    });
+    if (after) query.set("after", String(after));
+    return request("/agents/sessions?" + query.toString(), { method: "GET" });
+  }
+
+  async function findSessionByMetadata(key, value, { maxPages = 3, pageSize = 100 } = {}) {
+    const metadataKey = String(key || "").trim();
+    const metadataValue = String(value || "");
+    if (!metadataKey || !metadataValue) throw new Error("metadata key and value required");
+    const pages = Math.max(1, Math.min(10, Number(maxPages) || 3));
+    let after = null;
+
+    for (let page = 0; page < pages; page++) {
+      const result = await listSessions({ order: "desc", limit: pageSize, after });
+      for (const session of collection(result)) {
+        if (String(session?.metadata?.[metadataKey] || "") === metadataValue) {
+          return session;
+        }
+      }
+      if (!result?.has_more) return null;
+      const next = String(result?.last_id || "").trim();
+      if (!next || next === after) return null;
+      after = next;
+    }
+    return null;
+  }
+
   async function listItems(sessionId, { order = "asc", limit = 100, after = null } = {}) {
     requireSessionId(sessionId);
     const safeOrder = order === "desc" ? "desc" : "asc";
@@ -154,7 +187,7 @@ export function createAgentsEngine({
     });
   }
 
-  return { createSession, getSession, listItems, listAllItems, listTurns, sendMessage, cancelTurn };
+  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurns, sendMessage, cancelTurn };
 }
 
 export function latestSessionText(itemsResponse) {
