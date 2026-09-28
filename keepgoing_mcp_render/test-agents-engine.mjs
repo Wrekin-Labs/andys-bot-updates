@@ -48,10 +48,12 @@ assert.equal(createBody.agent.tools[0].type, "web_search");
 assert.equal(createBody.agent.tools[0].mode, "live");
 assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
 
-await engine.sendMessage("sess_abc", "continue");
-const sent = JSON.parse(calls.at(-1).init.body);
+await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
+const sentCall = calls.at(-1);
+const sent = JSON.parse(sentCall.init.body);
 assert.equal(sent.events[0].type, "agent.session.input.message");
 assert.equal(sent.events[0].input[0].content[0].text, "continue");
+assert.equal(sentCall.init.headers["Idempotency-Key"], "kg-cont-test");
 
 await engine.cancelTurn("sess_abc");
 const cancelled = JSON.parse(calls.at(-1).init.body);
@@ -90,5 +92,6 @@ assert.equal(
 
 await assert.rejects(() => engine.getSession("../bad"), /valid session id/);
 await assert.rejects(() => engine.listTurns("../bad"), /valid session id/);
+await assert.rejects(() => engine.sendMessage("sess_abc", "x", "bad\nkey"), /valid idempotency key/);
 
 console.log("agents engine tests passed");
