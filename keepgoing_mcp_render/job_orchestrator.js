@@ -28,8 +28,6 @@ export class KeepGoingOrchestrator {
   }) {
     if (!String(initialPrompt || "").trim()) throw new Error("initial prompt required");
 
-    // For idempotent retries, check whether this request already created a job
-    // before making another external model call.
     if (clientRequestId && typeof this.store.findByRequest === "function") {
       const existing = await this.store.findByRequest(ownerSubjectHash, clientRequestId);
       if (existing) return { created: false, job: existing };
@@ -83,7 +81,9 @@ export class KeepGoingOrchestrator {
     if (provider.providerStatus === "working") {
       const refreshed = { ...current, updatedAt: this.now(), lastProgressAt: this.now() };
       const saved = await this.store.compareAndSet(jobId, current.version, refreshed);
-      return { job: saved.job || current, action: "working" };
+      return saved.ok
+        ? { job: saved.job, action: "working" }
+        : { job: saved.job || current, action: "already_updated" };
     }
 
     if (provider.providerStatus === "action_required") {
@@ -96,7 +96,9 @@ export class KeepGoingOrchestrator {
         updatedAt: this.now()
       };
       const saved = await this.store.compareAndSet(jobId, current.version, blocked);
-      return { job: saved.job || current, action: "needs_user" };
+      return saved.ok
+        ? { job: saved.job, action: "needs_user" }
+        : { job: saved.job || current, action: "already_updated" };
     }
 
     const assessed = assessRun(current, {
@@ -108,10 +110,11 @@ export class KeepGoingOrchestrator {
 
     if (!assessed.continuationNeeded) {
       const saved = await this.store.compareAndSet(jobId, current.version, assessed);
-      return { job: saved.job || current, action: assessed.status };
+      return saved.ok
+        ? { job: saved.job, action: assessed.status }
+        : { job: saved.job || current, action: "already_updated" };
     }
 
-    // Claim exactly one continuation with compare-and-set before sending it.
     const claim = {
       ...assessed,
       status: JOB_STATES.CONTINUING,
@@ -137,7 +140,9 @@ export class KeepGoingOrchestrator {
         updatedAt: this.now()
       };
       const saved = await this.store.compareAndSet(jobId, claimed.job.version, working);
-      return { job: saved.job || claimed.job, action: "continued" };
+      return saved.ok
+        ? { job: saved.job, action: "continued" }
+        : { job: saved.job || claimed.job, action: "already_updated" };
     } catch (error) {
       const failed = {
         ...claimed.job,
