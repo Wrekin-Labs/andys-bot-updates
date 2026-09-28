@@ -30,27 +30,12 @@ export function createWatchdog({
     for (const job of jobs) {
       try {
         if (job.status === JOB_STATES.QUEUED && !job.providerSessionId) {
-          if (Number(job.startLeaseUntil || 0) > currentTime) {
-            results.push({ job_id: job.id, action: "start_pending" });
+          if (typeof orchestrator.recoverStart === "function") {
+            const recovered = await orchestrator.recoverStart(job.id);
+            results.push({ job_id: job.id, action: recovered.action });
             continue;
           }
-
-          // A crash may have happened after the provider created a session but
-          // before its ID was stored. Without provider-side idempotency for
-          // session creation, creating another session could double-spend.
-          const failed = {
-            ...job,
-            status: JOB_STATES.FAILED,
-            startLeaseUntil: null,
-            safeErrorCode: "ambiguous_start_outcome",
-            safeErrorMessage: "KeepGoing could not safely confirm whether the initial model session was created.",
-            updatedAt: currentTime
-          };
-          const saved = await store.compareAndSet(job.id, job.version, failed);
-          results.push({
-            job_id: job.id,
-            action: saved.ok ? "failed_ambiguous_start" : "already_updated"
-          });
+          results.push({ job_id: job.id, action: "recovery_unavailable" });
           continue;
         }
 
