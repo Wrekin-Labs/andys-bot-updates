@@ -1,10 +1,12 @@
 {
   "name": "keepgoing-render-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0-beta.1",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check server.js",
+    "check": "node --check server.js && node --check durable_job.js",
+    "test": "node test-durable-job.mjs",
+    "verify": "npm run check && npm test",
     "start": "npm run check && node server.js"
   },
   "dependencies": {
