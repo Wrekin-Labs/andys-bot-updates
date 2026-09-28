@@ -881,6 +881,16 @@ async function cancelPersistentJobCompat(jobId, access) {
   return getV12Runtime().service.cancel(jobId, durableOwnerHash(access), Boolean(access.admin));
 }
 
+async function resumePersistentJobCompat(jobId, input, access) {
+  if (!V12_ENABLED) throw new Error("Durable job resume requires KeepGoing v1.2");
+  return getV12Runtime().service.resume(
+    jobId,
+    input,
+    durableOwnerHash(access),
+    Boolean(access.admin)
+  );
+}
+
 function createMcpServer(access = {}) {
   const server = new McpServer(
     { name: "KeepGoing", version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0" },
@@ -994,6 +1004,31 @@ function createMcpServer(access = {}) {
     }
   });
 
+  if (V12_ENABLED) {
+    server.registerTool("resume_persistent_job", {
+      description: "Provide requested user input and resume the same durable KeepGoing job after it enters input_required.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        input: z.string().min(1).max(8000)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        status: z.string(),
+        message: z.string()
+      },
+      securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    }, async ({ job_id, input }) => {
+      try {
+        const result = await resumePersistentJobCompat(job_id, input, access);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+  }
+
   // OpenAI expects securitySchemes at the root of each tool descriptor.
   // MCP SDK v1 currently drops that root extension from tools/list while
   // preserving the compatibility copy under _meta. Override only tools/list;
@@ -1001,8 +1036,8 @@ function createMcpServer(access = {}) {
   const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
   const oauthMeta = { securitySchemes: oauthSecuritySchemes };
 
-  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const tools = [
       {
         name: "start_persistent_job",
         description: "Start a persistent OpenAI background job so substantial model work or research can continue without repeated continue prompts.",
@@ -1125,8 +1160,39 @@ function createMcpServer(access = {}) {
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
         _meta: oauthMeta
       }
-    ]
-  }));
+    ];
+
+    if (V12_ENABLED) {
+      tools.push({
+        name: "resume_persistent_job",
+        description: "Provide requested user input and resume the same durable KeepGoing job after it enters input_required.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            input: { type: "string", minLength: 1, maxLength: 8000 }
+          },
+          required: ["job_id", "input"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            message: { type: "string" }
+          },
+          required: ["job_id", "status", "message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        _meta: oauthMeta
+      });
+    }
+
+    return { tools };
+  });
 
   return server;
 }
