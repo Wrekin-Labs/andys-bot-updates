@@ -152,6 +152,35 @@ export class KeepGoingOrchestrator {
     const now = this.now();
 
     if (provider.providerStatus === "working") {
+      const tokenBudgetReached =
+        Number(provider.tokensUsed || 0) > 0 &&
+        current.tokensUsed + Number(provider.tokensUsed || 0) >= current.tokenBudgetTotal;
+      const toolBudgetReached =
+        current.toolCallBudgetTotal > 0 &&
+        current.toolCallsUsed + Number(provider.toolCallsUsed || 0) >= current.toolCallBudgetTotal;
+      const deadlineReached = now >= current.wallDeadlineAt;
+
+      if (deadlineReached || tokenBudgetReached || toolBudgetReached) {
+        try {
+          await this.engine.cancelTurn(providerId, "kg-budget-" + jobId);
+        } catch {}
+        const exhausted = {
+          ...current,
+          status: JOB_STATES.BUDGET_EXHAUSTED,
+          tokensUsed: current.tokensUsed + Number(provider.tokensUsed || 0),
+          toolCallsUsed: current.toolCallsUsed + Number(provider.toolCallsUsed || 0),
+          continuationNeeded: false,
+          continuationLeaseUntil: null,
+          safeErrorCode: "budget_exhausted",
+          safeErrorMessage: "KeepGoing stopped the active turn at its configured safety/cost budget.",
+          updatedAt: now
+        };
+        const saved = await this.store.compareAndSet(jobId, current.version, exhausted);
+        return saved.ok
+          ? { job: saved.job, action: JOB_STATES.BUDGET_EXHAUSTED }
+          : { job: saved.job || current, action: "already_updated" };
+      }
+
       const refreshed = {
         ...current,
         status: JOB_STATES.WORKING,
@@ -228,6 +257,7 @@ export class KeepGoingOrchestrator {
       providerStatus: provider.providerStatus,
       output: provider.output,
       tokensUsed: provider.tokensUsed || 0,
+      toolCallsUsed: provider.toolCallsUsed || 0,
       now,
       runId: terminalTurnId || providerId
     });
