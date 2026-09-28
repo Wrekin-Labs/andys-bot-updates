@@ -46,7 +46,8 @@ let paypalConfig = {
   product_id: "",
   pro_plan_id: "",
   business_plan_id: "",
-  webhook_id: ""
+  webhook_id: "",
+  webhook_url: ""
 };
 let paypalSetupPromise = null;
 let paypalSetupComplete = false;
@@ -517,7 +518,10 @@ async function paypalApi(path, init = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const issue = data?.details?.[0]?.description || data?.message || data?.name || ("PayPal API failed (" + response.status + ")");
-    throw new Error(issue);
+    const error = new Error(issue);
+    error.status = response.status;
+    error.paypal_name = data?.name || null;
+    throw error;
   }
   return data;
 }
@@ -561,7 +565,7 @@ async function ensurePayPalSetup() {
           name: "KeepGoing",
           description: "Persistent AI background jobs that continue without repeated continue prompts.",
           type: "SERVICE",
-          home_url: "https://keepgoing-mcp.onrender.com"
+          home_url: PUBLIC_BASE_URL
         })
       });
       paypalConfig.product_id = product.id;
@@ -598,11 +602,51 @@ async function ensurePayPalSetup() {
       await billingConfig("set", paypalConfig);
     }
 
+    const desiredWebhookUrl = PUBLIC_BASE_URL + "/paypal/webhook";
+    let existingWebhook = null;
+
+    if (paypalConfig.webhook_id) {
+      try {
+        existingWebhook = await paypalApi(
+          "/v1/notifications/webhooks/" + encodeURIComponent(paypalConfig.webhook_id),
+          { method: "GET" }
+        );
+      } catch (error) {
+        // A webhook may have been deleted manually from the PayPal app while
+        // its ID remains in KeepGoing billing config. Re-create only for 404;
+        // all other PayPal failures remain fail-closed.
+        if (Number(error?.status || 0) === 404) {
+          paypalConfig.webhook_id = "";
+          paypalConfig.webhook_url = "";
+          await billingConfig("set", paypalConfig);
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (paypalConfig.webhook_id && existingWebhook) {
+      const currentWebhookUrl = String(existingWebhook.url || "");
+      if (currentWebhookUrl !== desiredWebhookUrl) {
+        await paypalApi(
+          "/v1/notifications/webhooks/" + encodeURIComponent(paypalConfig.webhook_id),
+          {
+            method: "PATCH",
+            body: JSON.stringify([
+              { op: "replace", path: "/url", value: desiredWebhookUrl }
+            ])
+          }
+        );
+      }
+      paypalConfig.webhook_url = desiredWebhookUrl;
+      await billingConfig("set", paypalConfig);
+    }
+
     if (!paypalConfig.webhook_id) {
       const webhook = await paypalApi("/v1/notifications/webhooks", {
         method: "POST",
         body: JSON.stringify({
-          url: "https://keepgoing-mcp.onrender.com/paypal/webhook",
+          url: desiredWebhookUrl,
           event_types: [
             { name: "BILLING.SUBSCRIPTION.CREATED" },
             { name: "BILLING.SUBSCRIPTION.ACTIVATED" },
@@ -618,6 +662,7 @@ async function ensurePayPalSetup() {
         })
       });
       paypalConfig.webhook_id = webhook.id;
+      paypalConfig.webhook_url = desiredWebhookUrl;
       await billingConfig("set", paypalConfig);
     }
 
