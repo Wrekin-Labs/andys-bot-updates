@@ -1704,8 +1704,12 @@ app.get("/readiness", async (_req, res) => {
     PAYPAL_CLIENT_SECRET &&
     paypalSetupComplete
   );
+  const durableOpsReady = !V12_ENABLED || Boolean(
+    v12Configured() &&
+    OPENAI_WEBHOOK_SECRET
+  );
   res.json({
-    ok: engineReady && billingBackendReady,
+    ok: engineReady && billingBackendReady && durableOpsReady,
     version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0",
     engine_ready: engineReady,
     durable_engine_enabled: V12_ENABLED,
@@ -1714,7 +1718,7 @@ app.get("/readiness", async (_req, res) => {
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
     oauth_ready: Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
-    sell_ready: engineReady && billingBackendReady && checkoutReady && Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
+    sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady && Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
     protected: true
