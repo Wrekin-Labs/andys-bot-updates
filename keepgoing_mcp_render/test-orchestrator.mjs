@@ -10,12 +10,14 @@ function engineWith({ failFirstSend = false } = {}) {
   let failedOnce = false;
   const seenProviderIds = [];
   const idempotencyKeys = [];
+  const scopedTurns = [];
 
   return {
     get sends() { return sends; },
     get creates() { return creates; },
     get seenProviderIds() { return seenProviderIds; },
     get idempotencyKeys() { return idempotencyKeys; },
+    get scopedTurns() { return scopedTurns; },
     advance() { turn += 1; },
 
     async createSession() {
@@ -33,6 +35,24 @@ function engineWith({ failFirstSend = false } = {}) {
         ? "half\nSTATUS: PARTIAL"
         : "done\nSTATUS: COMPLETED";
       return { data: [{ type: "message", content: [{ type: "output_text", text }] }] };
+    },
+    async listTurnItems(id, turnId) {
+      seenProviderIds.push(id);
+      scopedTurns.push(turnId);
+      const text = turn === 1
+        ? "half\nSTATUS: PARTIAL"
+        : "done\nSTATUS: COMPLETED";
+      return {
+        data: [{
+          id: "message_" + turn,
+          type: "message",
+          turn_id: turnId,
+          status: "completed",
+          content: [{ type: "output_text", text }]
+        }],
+        found: true,
+        truncated: false
+      };
     },
     async listTurns(id) {
       seenProviderIds.push(id);
@@ -114,6 +134,7 @@ async function startJob(kg, beforeCreateSession = null) {
   ].includes(b.action));
   assert.equal(engine.idempotencyKeys.length, 1);
   assert.match(engine.idempotencyKeys[0], /^kg-cont-/);
+  assert.ok(engine.scopedTurns.every((turnId) => turnId === "turn_1"));
 
   const repeated = await kg.reconcile(jobId);
   assert.equal(repeated.action, "already_assessed");
@@ -123,6 +144,7 @@ async function startJob(kg, beforeCreateSession = null) {
   const done = await kg.reconcile(jobId);
   assert.equal(done.job.status, JOB_STATES.COMPLETED);
   assert.equal(done.job.attempt, 2);
+  assert.ok(engine.scopedTurns.includes("turn_2"));
 
   const terminal = await kg.reconcile(jobId);
   assert.equal(terminal.action, "terminal");
