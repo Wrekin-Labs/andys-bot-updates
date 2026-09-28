@@ -43,6 +43,12 @@ assert.equal(started.status, JOB_STATES.WORKING);
 assert.equal(started.model, "gpt-test");
 assert.equal(quota, 1);
 
+const ownedActive = await service.list("ownerhash", { activeOnly: true });
+assert.equal(ownedActive.jobs.length, 1);
+assert.equal(ownedActive.jobs[0].job_id, started.job_id);
+const otherOwner = await service.list("different-owner", { activeOnly: false });
+assert.equal(otherOwner.jobs.length, 0);
+
 const duplicate = await service.start({
   goal: "finish it",
   definitionOfDone: "done",
@@ -61,6 +67,11 @@ await orchestrator.reconcile(started.job_id);
 const finished = await service.get(started.job_id, "ownerhash");
 assert.equal(finished.status, JOB_STATES.COMPLETED);
 assert.match(finished.output, /COMPLETED/);
+
+const noLongerActive = await service.list("ownerhash", { activeOnly: true });
+assert.equal(noLongerActive.jobs.length, 0);
+const recentAll = await service.list("ownerhash", { activeOnly: false });
+assert.equal(recentAll.jobs.some((job) => job.job_id === started.job_id), true);
 
 await assert.rejects(
   () => service.get(started.job_id, "different-owner"),
