@@ -182,7 +182,11 @@ app.use((req, res, next) => {
 });
 
 const PORT = Number(process.env.PORT || 10000);
-const MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
+const MODEL = process.env.OPENAI_MODEL || "gpt-6-luna";
+const PRO_MAX_OUTPUT_TOKENS = Number(process.env.KEEPGOING_PRO_MAX_OUTPUT_TOKENS || 10000);
+const BUSINESS_MAX_OUTPUT_TOKENS = Number(process.env.KEEPGOING_BUSINESS_MAX_OUTPUT_TOKENS || 20000);
+const PRO_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_PRO_MAX_TOOL_CALLS || 3);
+const BUSINESS_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_BUSINESS_MAX_TOOL_CALLS || 5);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
 
@@ -606,19 +610,40 @@ function jobPrompt(goal, done, mode) {
   ].join("\n");
 }
 
-async function startJob({ goal, definitionOfDone, mode, allowWeb }) {
+function jobLimits(tier) {
+  const business = tier === "business" || tier === "owner";
+  return {
+    maxOutputTokens: business ? BUSINESS_MAX_OUTPUT_TOKENS : PRO_MAX_OUTPUT_TOKENS,
+    maxToolCalls: business ? BUSINESS_MAX_TOOL_CALLS : PRO_MAX_TOOL_CALLS
+  };
+}
+
+async function startJob({ goal, definitionOfDone, mode, allowWeb, tier = "pro", safetyIdentifier = "" }) {
+  const limits = jobLimits(tier);
+  const reasoningEffort = mode === "max" ? "high" : mode === "safe" ? "low" : "medium";
   const body = {
     model: MODEL,
     input: jobPrompt(goal, definitionOfDone, mode),
     background: true,
-    store: true
+    store: true,
+    reasoning: { effort: reasoningEffort },
+    max_output_tokens: limits.maxOutputTokens
   };
-  if (allowWeb) body.tools = [{ type: "web_search" }];
+  if (safetyIdentifier) body.safety_identifier = safetyIdentifier;
+  if (allowWeb) {
+    body.tools = [{ type: "web_search", return_token_budget: "default" }];
+    body.max_tool_calls = limits.maxToolCalls;
+  }
   const data = await openai("/responses", { method: "POST", body: JSON.stringify(body) });
   return {
     job_id: data.id,
     status: data.status,
     model: data.model || MODEL,
+    tier,
+    limits: {
+      max_output_tokens: limits.maxOutputTokens,
+      max_tool_calls: allowWeb ? limits.maxToolCalls : 0
+    },
     message: "KeepGoing job started. Reuse this job_id with get_persistent_job instead of starting a duplicate."
   };
 }
@@ -660,7 +685,7 @@ async function waitForJob(jobId, waitSeconds = 20) {
   };
 }
 
-function createMcpServer() {
+function createMcpServer(access = {}) {
   const server = new McpServer(
     { name: "KeepGoing", version: "1.1.0" },
     { instructions: "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
@@ -678,7 +703,11 @@ function createMcpServer() {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (args) => {
     try {
-      const result = await startJob(args);
+      const result = await startJob({
+        ...args,
+        tier: access.tier || "pro",
+        safetyIdentifier: "kg_" + digest(String(access.subject || access.tier || "customer")).slice(0, 32)
+      });
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -1044,7 +1073,7 @@ app.get("/", async (_req, res) => {
   const proAction = paypalReady ? '<div id="paypal-pro"></div>' : '<span class="muted">Payment button appears after PayPal credentials are added.</span>';
   const bizAction = paypalReady ? '<div id="paypal-business"></div>' : '<span class="muted">Payment button appears after PayPal credentials are added.</span>';
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial model work and research. KeepGoing preserves the same background job so ChatGPT can resume and check it instead of repeatedly restarting the work.</p>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free account rollout follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div>' + buttons + '</body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial model work and research. KeepGoing preserves the same background job so ChatGPT can resume and check it instead of repeatedly restarting the work.</p>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free account rollout follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month · up to 3 web tool calls per job</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month · up to 5 web tool calls per job</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div>' + buttons + '</body></html>';
   res.type("html").send(html);
 });
 
@@ -1072,7 +1101,7 @@ app.get("/privacy", (_req, res) => {
     "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done and options submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
     "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
-    "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. Hosting and API providers may retain technical logs or background-response data according to their own published retention policies.</p>",
+    "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. Because KeepGoing uses stored OpenAI Responses so a background job can be retrieved later, OpenAI currently documents a 30-day application-state retention period for those Responses, subject to the OpenAI account's applicable data controls. Hosting providers may retain technical logs according to their own policies.</p>",
     "<h2>Your choices</h2><p>Do not submit information you do not want processed by the service. You can cancel a subscription through the available billing provider. For account or privacy questions, contact <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>",
     "<p class=\"muted\">KeepGoing is in commercial beta. This policy will be updated if the data flow or providers materially change.</p>"
   ].join("")));
@@ -1084,6 +1113,7 @@ app.get("/terms", (_req, res) => {
     "<p>KeepGoing is a subscription software service for persistent AI background jobs. By purchasing or using a paid plan you agree to these terms.</p>",
     "<h2>Plans and billing</h2><p>Paid plans renew monthly until cancelled. Current advertised limits are 100 jobs/month for Pro and 500 jobs/month for Business. A job is counted when a new persistent background job is started.</p>",
     "<h2>Cancellation</h2><p>You may cancel future renewal through the available billing provider. Any rights you have under applicable consumer law are not excluded. Where applicable law provides a cooling-off or cancellation right, that right continues to apply.</p>",
+    "<h2>Usage limits</h2><p>Plans include a monthly number of new background jobs and reasonable per-job technical limits on generated tokens and hosted tool calls. These limits protect service reliability and predictable subscription pricing. Current limits are shown on the plan page and may be adjusted for future billing periods with appropriate notice.</p>",
     "<h2>Acceptable use</h2><p>You must not use KeepGoing for unlawful activity, to bypass platform safeguards, to attack or disrupt systems, or to access accounts or information without permission.</p>",
     "<h2>Service limitations</h2><p>KeepGoing depends on third-party services including ChatGPT/OpenAI, hosting and payment providers. Availability can therefore be affected by their outages, limits, plan rules or product changes. KeepGoing cannot guarantee that ChatGPT will continue making tool calls after a chat turn has ended.</p>",
     "<h2>Liability</h2><p>KeepGoing is provided as a productivity tool. You remain responsible for reviewing important outputs and actions. Nothing in these terms excludes liability that cannot legally be excluded.</p>",
@@ -1194,7 +1224,7 @@ app.post("/mcp", async (req, res) => {
     oauthChallenge(res, access.error === "oauth_token_invalid_scope" ? "insufficient_scope" : "invalid_token", access.error || "Authentication required");
     return res.status(access.status || 401).json({ error: access.error || "unauthorized", tier: access.tier, used: access.used, limit: access.limit });
   }
-  const server = createMcpServer();
+  const server = createMcpServer(access);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", async () => {
     try { await transport.close(); } catch {}
