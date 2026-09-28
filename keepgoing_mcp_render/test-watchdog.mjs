@@ -35,6 +35,18 @@ await store.createOrGet({ job: fresh, ownerSubjectHash: fresh.ownerSubjectHash }
 
 const calls = [];
 const orchestrator = {
+  async recoverStart(jobId) {
+    const current = await store.get(jobId);
+    const attached = {
+      ...current,
+      status: JOB_STATES.WORKING,
+      providerSessionId: "sess_recovered",
+      startLeaseUntil: null,
+      updatedAt: now
+    };
+    const saved = await store.compareAndSet(jobId, current.version, attached);
+    return { action: saved.ok ? "start_recovered" : "already_updated", job: saved.job };
+  },
   async reconcile(jobId) {
     calls.push(jobId);
     return { action: "working", job: await store.get(jobId) };
@@ -52,9 +64,9 @@ const result = await watchdog.runOnce();
 assert.equal(result.checked, 2);
 assert.deepEqual(calls, ["kgj_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]);
 
-const failedStart = await store.get("kgj_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-assert.equal(failedStart.status, JOB_STATES.FAILED);
-assert.equal(failedStart.safeErrorCode, "ambiguous_start_outcome");
+const recoveredStart = await store.get("kgj_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+assert.equal(recoveredStart.status, JOB_STATES.WORKING);
+assert.equal(recoveredStart.providerSessionId, "sess_recovered");
 
 const untouchedFresh = await store.get("kgj_cccccccccccccccccccccccccccccccc");
 assert.equal(untouchedFresh.status, JOB_STATES.WORKING);
