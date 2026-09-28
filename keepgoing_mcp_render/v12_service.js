@@ -63,8 +63,6 @@ export function createV12Service({
       jobs: jobs.map((job) => ({
         job_id: job.id,
         status: job.status,
-        started_at: job.startedAt ? new Date(job.startedAt).toISOString() : null,
-        updated_at: job.updatedAt ? new Date(job.updatedAt).toISOString() : null,
         attempt: Number(job.attempt || 0),
         max_attempts: Number(job.maxAttempts || 0),
         completion_marker: job.completionMarker || null,
@@ -243,7 +241,6 @@ export function createV12Service({
         token_budget_total: job.tokenBudgetTotal,
         tool_calls_used: job.toolCallsUsed,
         tool_call_budget_total: job.toolCallBudgetTotal,
-        last_progress_at: job.lastProgressAt ? new Date(job.lastProgressAt).toISOString() : null,
         completion_marker: job.completionMarker || null
       }
     };
