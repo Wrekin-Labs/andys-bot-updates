@@ -191,7 +191,9 @@ export function createV12Service({
     let output = "";
     if (job.providerSessionId) {
       try {
-        const items = await engine.listItems(job.providerSessionId, { order: "asc", limit: 100 });
+        const items = engine.listAllItems
+          ? await engine.listAllItems(job.providerSessionId, { order: "asc", pageSize: 100, maxPages: 5 })
+          : await engine.listItems(job.providerSessionId, { order: "asc", limit: 100 });
         output = latestSessionText(items);
       } catch {
         output = "";
