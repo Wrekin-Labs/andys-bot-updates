@@ -42,6 +42,9 @@ create table if not exists public.keepgoing_jobs (
     check (completion_marker is null or completion_marker in ('COMPLETED', 'NEEDS_USER', 'PARTIAL')),
   continuation_needed boolean not null default false,
   continuation_claim_id uuid,
+  continuation_idempotency_key text
+    check (continuation_idempotency_key is null or char_length(continuation_idempotency_key) between 1 and 256),
+  last_assessed_turn_id text,
   start_lease_until timestamptz,
   continuation_lease_until timestamptz,
   repeated_output_count integer not null default 0
