@@ -168,3 +168,48 @@ revoke all on function public.reserve_keepgoing_job(
 grant execute on function public.reserve_keepgoing_job(
   text, text, text, text, text, text, integer, bigint, integer, timestamptz, timestamptz
 ) to service_role;
+
+
+-- Remove old terminal orchestration metadata and old safe webhook event rows.
+-- Active/incomplete jobs are never deleted by this function.
+create or replace function public.cleanup_keepgoing_durable_state(
+  p_job_retention_days integer default 30,
+  p_event_retention_days integer default 14
+)
+returns table (
+  deleted_jobs bigint,
+  deleted_events bigint
+)
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_deleted_jobs bigint := 0;
+  v_deleted_events bigint := 0;
+begin
+  if p_job_retention_days < 1 or p_job_retention_days > 3650 then
+    raise exception 'p_job_retention_days must be between 1 and 3650';
+  end if;
+  if p_event_retention_days < 1 or p_event_retention_days > 3650 then
+    raise exception 'p_event_retention_days must be between 1 and 3650';
+  end if;
+
+  delete from public.keepgoing_job_events
+  where created_at < now() - make_interval(days => p_event_retention_days);
+  get diagnostics v_deleted_events = row_count;
+
+  delete from public.keepgoing_jobs
+  where status in ('completed', 'failed', 'cancelled', 'budget_exhausted')
+    and updated_at < now() - make_interval(days => p_job_retention_days);
+  get diagnostics v_deleted_jobs = row_count;
+
+  return query select v_deleted_jobs, v_deleted_events;
+end;
+$$;
+
+revoke all on function public.cleanup_keepgoing_durable_state(integer, integer)
+  from public, anon, authenticated;
+
+grant execute on function public.cleanup_keepgoing_durable_state(integer, integer)
+  to service_role;
