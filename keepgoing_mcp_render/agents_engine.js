@@ -144,6 +144,75 @@ export function createAgentsEngine({
     };
   }
 
+  async function listTurnItems(sessionId, turnId, {
+    pageSize = 100,
+    maxPages = 10
+  } = {}) {
+    requireSessionId(sessionId);
+    const target = String(turnId || "").trim();
+    if (!/^turn_[A-Za-z0-9_-]+$/.test(target)) {
+      throw new Error("valid turn id required");
+    }
+
+    const pages = Math.max(1, Math.min(20, Number(maxPages) || 10));
+    const data = [];
+    let after = null;
+    let hasMore = false;
+    let sawTarget = false;
+    let crossedIntoOlderTurn = false;
+
+    for (let page = 0; page < pages; page++) {
+      const result = await listItems(sessionId, {
+        order: "desc",
+        limit: pageSize,
+        after
+      });
+      const rows = collection(result);
+
+      for (const item of rows) {
+        const itemTurn = String(item?.turn_id || "");
+        if (itemTurn === target) {
+          sawTarget = true;
+          data.push(item);
+          continue;
+        }
+
+        // Items are newest-first. Once target-turn items have been observed,
+        // the first different turn means subsequent items are older and cannot
+        // belong to the target turn.
+        if (sawTarget && itemTurn && itemTurn !== target) {
+          crossedIntoOlderTurn = true;
+          break;
+        }
+      }
+
+      if (crossedIntoOlderTurn) {
+        hasMore = false;
+        break;
+      }
+
+      hasMore = Boolean(result?.has_more);
+      if (!hasMore) break;
+
+      const next = String(result?.last_id || "").trim();
+      if (!next || next === after) break;
+      after = next;
+    }
+
+    // Preserve the ascending item order expected by latestSessionText and
+    // existing classification helpers.
+    data.reverse();
+
+    return {
+      data,
+      has_more: hasMore && !crossedIntoOlderTurn,
+      truncated: hasMore && !crossedIntoOlderTurn,
+      last_id: after,
+      turn_id: target,
+      found: sawTarget
+    };
+  }
+
   async function listTurns(sessionId, { order = "desc", limit = 10 } = {}) {
     requireSessionId(sessionId);
     const safeOrder = order === "asc" ? "asc" : "desc";
@@ -187,7 +256,7 @@ export function createAgentsEngine({
     });
   }
 
-  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurns, sendMessage, cancelTurn };
+  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurnItems, listTurns, sendMessage, cancelTurn };
 }
 
 export function latestSessionText(itemsResponse) {
