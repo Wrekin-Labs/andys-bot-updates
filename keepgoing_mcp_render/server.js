@@ -861,6 +861,14 @@ async function startPersistentJobCompat(args, access) {
   });
 }
 
+async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
+  if (!V12_ENABLED) throw new Error("Durable job listing requires KeepGoing v1.2");
+  return getV12Runtime().service.list(
+    durableOwnerHash(access),
+    { limit, activeOnly }
+  );
+}
+
 async function getPersistentJobCompat(jobId, access) {
   if (!V12_ENABLED) return getJob(jobId);
   return getV12Runtime().service.get(jobId, durableOwnerHash(access), Boolean(access.admin));
@@ -1005,6 +1013,36 @@ function createMcpServer(access = {}) {
   });
 
   if (V12_ENABLED) {
+    server.registerTool("list_persistent_jobs", {
+      description: "List your recent durable KeepGoing jobs so an existing job can be recovered in a new chat without exposing raw prompts.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).default(20),
+        activeOnly: z.boolean().default(true)
+      },
+      outputSchema: {
+        jobs: z.array(z.object({
+          job_id: z.string(),
+          status: z.string(),
+          started_at: z.string().nullable(),
+          updated_at: z.string().nullable(),
+          attempt: z.number(),
+          max_attempts: z.number(),
+          completion_marker: z.string().nullable(),
+          error: z.string().nullable()
+        }))
+      },
+      securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ limit, activeOnly }) => {
+      try {
+        const result = await listPersistentJobsCompat(access, limit, activeOnly);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+
     server.registerTool("resume_persistent_job", {
       description: "Provide requested user input and resume the same durable KeepGoing job after it enters input_required.",
       inputSchema: {
@@ -1163,6 +1201,50 @@ function createMcpServer(access = {}) {
     ];
 
     if (V12_ENABLED) {
+      tools.push({
+        name: "list_persistent_jobs",
+        description: "List your recent durable KeepGoing jobs so an existing job can be recovered in a new chat without exposing raw prompts.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+            activeOnly: { type: "boolean", default: true }
+          },
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            jobs: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  job_id: { type: "string" },
+                  status: { type: "string" },
+                  started_at: { type: ["string", "null"] },
+                  updated_at: { type: ["string", "null"] },
+                  attempt: { type: "number" },
+                  max_attempts: { type: "number" },
+                  completion_marker: { type: ["string", "null"] },
+                  error: { type: ["string", "null"] }
+                },
+                required: [
+                  "job_id","status","started_at","updated_at",
+                  "attempt","max_attempts","completion_marker","error"
+                ],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["jobs"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
       tools.push({
         name: "resume_persistent_job",
         description: "Provide requested user input and resume the same durable KeepGoing job after it enters input_required.",
