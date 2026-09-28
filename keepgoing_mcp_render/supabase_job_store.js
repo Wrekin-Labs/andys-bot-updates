@@ -43,6 +43,17 @@ export class SupabaseJobStore {
     return Array.isArray(rows) && rows[0] ? fromRow(rows[0]) : null;
   }
 
+  async findByProviderSessionId(providerSessionId) {
+    const value = String(providerSessionId || "").trim();
+    if (!value) return null;
+    const q = new URLSearchParams({
+      provider_session_id: "eq." + value,
+      limit: "1"
+    });
+    const rows = await this.request("/rest/v1/keepgoing_jobs?" + q.toString(), { method: "GET" });
+    return Array.isArray(rows) && rows[0] ? fromRow(rows[0]) : null;
+  }
+
   async get(jobId) {
     const q = new URLSearchParams({ job_id: "eq." + jobId, limit: "1" });
     const rows = await this.request("/rest/v1/keepgoing_jobs?" + q.toString(), { method: "GET" });
