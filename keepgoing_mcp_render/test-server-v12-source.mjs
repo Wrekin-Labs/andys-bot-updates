@@ -19,6 +19,7 @@ assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_r
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
+assert.match(source, /sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady/);
 assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 
 console.log("server v1.2 source guards passed");
