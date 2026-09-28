@@ -29,6 +29,7 @@ const OPENAI_APPS_CHALLENGE = process.env.OPENAI_APPS_CHALLENGE || "";
 const OAUTH_CODE_URL = process.env.KEEPGOING_OAUTH_CODE_URL || "";
 
 const V12_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_ENABLED || "");
+const V12_CANARY_ONLY = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_CANARY_ONLY || "");
 const V12_SUPABASE_URL = process.env.KEEPGOING_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const V12_SUPABASE_SERVICE_KEY = process.env.KEEPGOING_SUPABASE_SERVICE_KEY || "";
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
@@ -293,6 +294,12 @@ function v12Configured() {
     V12_SUPABASE_URL &&
     V12_SUPABASE_SERVICE_KEY
   );
+}
+
+function v12ForAccess(access) {
+  if (!V12_ENABLED) return false;
+  if (!V12_CANARY_ONLY) return true;
+  return Boolean(access?.admin || access?.tier === "owner");
 }
 
 function getV12Runtime() {
@@ -841,7 +848,7 @@ async function waitForJob(jobId, waitSeconds = 20) {
 }
 
 async function startPersistentJobCompat(args, access) {
-  if (!V12_ENABLED) {
+  if (!v12ForAccess(access)) {
     const legacy = await startJob({
       ...args,
       tier: access.tier || "pro",
@@ -867,7 +874,7 @@ async function startPersistentJobCompat(args, access) {
 }
 
 async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
-  if (!V12_ENABLED) throw new Error("Durable job listing requires KeepGoing v1.2");
+  if (!v12ForAccess(access)) throw new Error("Durable job listing requires KeepGoing v1.2");
   return getV12Runtime().service.list(
     durableOwnerHash(access),
     { limit, activeOnly }
@@ -875,7 +882,7 @@ async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
 }
 
 async function getPersistentJobCompat(jobId, access) {
-  if (!V12_ENABLED) {
+  if (!v12ForAccess(access)) {
     const legacy = await getJob(jobId);
     return {
       job_id: legacy.job_id,
@@ -888,7 +895,7 @@ async function getPersistentJobCompat(jobId, access) {
 }
 
 async function waitPersistentJobCompat(jobId, waitSeconds, access) {
-  if (!V12_ENABLED) {
+  if (!v12ForAccess(access)) {
     const legacy = await waitForJob(jobId, waitSeconds);
     return {
       job_id: legacy.job_id,
@@ -908,12 +915,12 @@ async function waitPersistentJobCompat(jobId, waitSeconds, access) {
 }
 
 async function cancelPersistentJobCompat(jobId, access) {
-  if (!V12_ENABLED) return cancelJob(jobId);
+  if (!v12ForAccess(access)) return cancelJob(jobId);
   return getV12Runtime().service.cancel(jobId, durableOwnerHash(access), Boolean(access.admin));
 }
 
 async function resumePersistentJobCompat(jobId, input, access) {
-  if (!V12_ENABLED) throw new Error("Durable job resume requires KeepGoing v1.2");
+  if (!v12ForAccess(access)) throw new Error("Durable job resume requires KeepGoing v1.2");
   return getV12Runtime().service.resume(
     jobId,
     input,
@@ -923,17 +930,18 @@ async function resumePersistentJobCompat(jobId, input, access) {
 }
 
 function createMcpServer(access = {}) {
+  const v12Access = v12ForAccess(access);
   const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
   const oauthMeta = { securitySchemes: oauthSecuritySchemes };
 
   const server = new McpServer(
-    { name: "KeepGoing", version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0" },
-    { instructions: V12_ENABLED
+    { name: "KeepGoing", version: v12Access ? "1.2.0-beta.1" : "1.1.0" },
+    { instructions: v12Access
       ? "Use KeepGoing for substantial work that should survive normal chat-turn boundaries. Start one durable job and preserve its job_id. The server uses recovery/watchdog logic to continue partial work safely; status polling is only for visibility. Reuse the same job_id and never create duplicate jobs."
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
-  if (V12_ENABLED) {
+  if (v12Access) {
     server.registerTool("get_profile", {
       title: "Get KeepGoing profile",
       description: "Return the authenticated KeepGoing account identity so connected accounts can be distinguished. Does not modify account or job data.",
@@ -1067,7 +1075,7 @@ function createMcpServer(access = {}) {
     }
   });
 
-  if (V12_ENABLED) {
+  if (v12Access) {
     server.registerTool("list_persistent_jobs", {
       title: "List persistent jobs",
       description: "Use when the user wants to find or recover their own recent KeepGoing jobs, including from a new chat. Returns minimal job metadata and never returns raw prompts.",
@@ -1256,7 +1264,7 @@ function createMcpServer(access = {}) {
       }
     ];
 
-    if (V12_ENABLED) {
+    if (v12Access) {
       tools.unshift({
         name: "get_profile",
         title: "Get KeepGoing profile",
@@ -1847,6 +1855,24 @@ app.post("/mcp", async (req, res) => {
     oauthChallenge(res, access.error === "oauth_token_invalid_scope" ? "insufficient_scope" : "invalid_token", access.error || "Authentication required");
     return res.status(access.status || 401).json({ error: access.error || "unauthorized", tier: access.tier, used: access.used, limit: access.limit });
   }
+
+  // When v1.2 infrastructure is enabled in owner-only canary mode, ordinary
+  // subscribers remain on v1.1 and must keep the legacy start-quota charge.
+  if (isStart && V12_ENABLED && !v12ForAccess(access)) {
+    const consumed = await validateCustomerToken(access._customer_token, true);
+    if (!consumed.ok) {
+      oauthChallenge(res, "invalid_token", consumed.error || "Subscription quota unavailable");
+      return res.status(consumed.status || 401).json({
+        error: consumed.error || "unauthorized",
+        tier: consumed.tier,
+        used: consumed.used,
+        limit: consumed.limit
+      });
+    }
+    const customerToken = access._customer_token;
+    Object.assign(access, consumed, { _customer_token: customerToken });
+  }
+
   if (access.ok && req.body?.id != null) {
     access._mcp_request_id = "mcp-" + digest(String(req.body.id));
   }
