@@ -140,8 +140,11 @@ export class KeepGoingOrchestrator {
 
     const providerId = current.providerSessionId;
     const session = await this.engine.getSession(providerId);
+    const itemRead = this.engine.listAllItems
+      ? this.engine.listAllItems(providerId, { order: "asc", pageSize: 100, maxPages: 5 })
+      : this.engine.listItems(providerId, { order: "asc", limit: 100 });
     const [items, turns] = await Promise.all([
-      this.engine.listItems(providerId, { order: "asc", limit: 100 }),
+      itemRead,
       this.engine.listTurns(providerId, { order: "desc", limit: 10 })
     ]);
     const output = latestSessionText(items);
