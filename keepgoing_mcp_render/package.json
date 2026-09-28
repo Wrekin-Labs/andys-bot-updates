@@ -8,8 +8,11 @@
     "start": "npm run check && node server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.18.2",
+    "@modelcontextprotocol/sdk": "1.30.1",
     "express": "^5.1.0",
     "zod": "^3.25.76"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }
