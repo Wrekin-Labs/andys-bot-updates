@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { isTerminal } from "./durable_job.js";
-import { latestSessionText } from "./agents_engine.js";
+import { latestRootTurn, latestSessionText } from "./agents_engine.js";
 
 export function createV12Service({
   engine,
@@ -208,9 +208,24 @@ export function createV12Service({
     let output = "";
     if (job.providerSessionId) {
       try {
-        const items = engine.listAllItems
-          ? await engine.listAllItems(job.providerSessionId, { order: "asc", pageSize: 100, maxPages: 5 })
-          : await engine.listItems(job.providerSessionId, { order: "asc", limit: 100 });
+        let turnId =
+          /^turn_[A-Za-z0-9_-]+$/.test(String(job.currentRunId || ""))
+            ? String(job.currentRunId)
+            : /^turn_[A-Za-z0-9_-]+$/.test(String(job.lastAssessedTurnId || ""))
+              ? String(job.lastAssessedTurnId)
+              : null;
+
+        if (!turnId && typeof engine.listTurns === "function") {
+          const turns = await engine.listTurns(job.providerSessionId, { order: "desc", limit: 10 });
+          turnId = latestRootTurn(turns)?.id || null;
+        }
+
+        const items =
+          turnId && typeof engine.listTurnItems === "function"
+            ? await engine.listTurnItems(job.providerSessionId, turnId, { pageSize: 100, maxPages: 10 })
+            : engine.listAllItems
+              ? await engine.listAllItems(job.providerSessionId, { order: "asc", pageSize: 100, maxPages: 5 })
+              : await engine.listItems(job.providerSessionId, { order: "asc", limit: 100 });
         output = latestSessionText(items);
       } catch {
         output = "";
