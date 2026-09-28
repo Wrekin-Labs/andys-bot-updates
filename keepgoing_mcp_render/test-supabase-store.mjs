@@ -62,6 +62,11 @@ const store = new SupabaseJobStore({
   fetchImpl: fakeFetch
 });
 
+const health = await store.healthCheck();
+assert.deepEqual(health, { ok: true });
+assert.ok(calls.some((c) => c.url.includes("keepgoing_jobs?select=job_id&limit=1")));
+assert.ok(calls.some((c) => c.url.includes("keepgoing_job_events?select=id&limit=1")));
+
 const reservation = await store.createOrGet({
   job: {
     id: baseRow.job_id,
