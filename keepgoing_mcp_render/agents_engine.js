@@ -61,15 +61,54 @@ export function createAgentsEngine({
     return request("/agents/sessions/" + encodeURIComponent(sessionId), { method: "GET" });
   }
 
-  async function listItems(sessionId, { order = "asc", limit = 100 } = {}) {
+  async function listItems(sessionId, { order = "asc", limit = 100, after = null } = {}) {
     requireSessionId(sessionId);
     const safeOrder = order === "desc" ? "desc" : "asc";
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
+    const query = new URLSearchParams({
+      order: safeOrder,
+      limit: String(safeLimit)
+    });
+    if (after) query.set("after", String(after));
     return request(
       "/agents/sessions/" + encodeURIComponent(sessionId) +
-      "/items?order=" + safeOrder + "&limit=" + safeLimit,
+      "/items?" + query.toString(),
       { method: "GET" }
     );
+  }
+
+  async function listAllItems(sessionId, {
+    order = "asc",
+    pageSize = 100,
+    maxPages = 5
+  } = {}) {
+    requireSessionId(sessionId);
+    const pages = Math.max(1, Math.min(10, Number(maxPages) || 5));
+    const data = [];
+    let after = null;
+    let hasMore = false;
+
+    for (let page = 0; page < pages; page++) {
+      const result = await listItems(sessionId, {
+        order,
+        limit: pageSize,
+        after
+      });
+      const rows = collection(result);
+      data.push(...rows);
+      hasMore = Boolean(result?.has_more);
+      if (!hasMore) break;
+      const next = String(result?.last_id || "").trim();
+      if (!next || next === after) break;
+      after = next;
+    }
+
+    return {
+      data,
+      has_more: hasMore,
+      truncated: hasMore,
+      last_id: after
+    };
   }
 
   async function listTurns(sessionId, { order = "desc", limit = 10 } = {}) {
@@ -115,7 +154,7 @@ export function createAgentsEngine({
     });
   }
 
-  return { createSession, getSession, listItems, listTurns, sendMessage, cancelTurn };
+  return { createSession, getSession, listItems, listAllItems, listTurns, sendMessage, cancelTurn };
 }
 
 export function latestSessionText(itemsResponse) {
