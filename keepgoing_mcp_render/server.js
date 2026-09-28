@@ -168,10 +168,55 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
 app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
+app.set("trust proxy", 1);
+
+const rateWindows = new Map();
+
+function clientIp(req) {
+  return String(req.ip || req.socket?.remoteAddress || "unknown").slice(0, 128);
+}
+
+function rateLimit(keyPrefix, maxRequests, windowMs) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = keyPrefix + ":" + clientIp(req);
+    let entry = rateWindows.get(key);
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs };
+      rateWindows.set(key, entry);
+    }
+    entry.count += 1;
+
+    // Opportunistic pruning keeps the in-memory limiter bounded without a timer.
+    if (rateWindows.size > 2000) {
+      for (const [k, v] of rateWindows) {
+        if (v.resetAt <= now) rateWindows.delete(k);
+        if (rateWindows.size <= 1500) break;
+      }
+    }
+
+    if (entry.count > maxRequests) {
+      const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      res.set("Retry-After", String(retryAfter));
+      res.set("Cache-Control", "no-store");
+      return res.status(429).json({ error: "rate_limited", retry_after_seconds: retryAfter });
+    }
+    next();
+  };
+}
+
+app.use("/oauth/authorize", rateLimit("oauth-authorize", 30, 15 * 60 * 1000));
+app.use("/oauth/token", rateLimit("oauth-token", 60, 15 * 60 * 1000));
+app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
+app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
+
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("Referrer-Policy", "no-referrer");
   res.set("X-Frame-Options", "DENY");
+  res.set("Strict-Transport-Security", "max-age=31536000");
+  res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   if (
     req.path === "/mcp" ||
     req.path.startsWith("/billing/") ||
@@ -1295,7 +1340,7 @@ app.get("/support", (_req, res) => {
 
 app.get("/security", (_req, res) => {
   res.type("html").send(infoPage("Security", [
-    "<p>KeepGoing uses HTTPS, OAuth authorization-code flow with PKCE for ChatGPT connections, single-use authorization codes backed by a server-only ledger, short-lived access tokens, refresh tokens, subscription validation, no-store caching on sensitive routes and signed payment webhooks where configured.</p>",
+    "<p>KeepGoing uses HTTPS with HSTS, OAuth authorization-code flow with PKCE for ChatGPT connections, single-use authorization codes backed by a server-only ledger, short-lived access tokens, refresh tokens, subscription validation, rate limiting on sensitive authorization/claim routes, no-store caching on sensitive routes and signed payment webhooks where configured.</p>",
     "<h2>Secrets</h2><p>Activation tokens and OAuth tokens are credentials. Keep them private. KeepGoing does not require your ChatGPT password.</p>",
     "<h2>Reporting a security issue</h2><p>Please email <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a> with enough detail to reproduce the issue. Do not include live passwords, payment credentials or other people's personal information.</p>"
   ].join("")));
