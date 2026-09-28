@@ -69,7 +69,7 @@ const ok = await runDeploymentPreflight({
 });
 assert.equal(ok.ok, true);
 assert.deepEqual(ok.failed, []);
-assert.equal(ok.checks.length, 9);
+assert.equal(ok.checks.length, 10);
 
 const broken = await runDeploymentPreflight({
   baseUrl: base,
