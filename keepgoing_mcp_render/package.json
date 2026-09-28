@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js",
-    "test": "node test-durable-job.mjs && node test-agents-engine.mjs",
+    "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js && node --check durable_store.js && node --check job_orchestrator.js",
+    "test": "node test-durable-job.mjs && node test-agents-engine.mjs && node test-orchestrator.mjs",
     "verify": "npm run check && npm test",
     "start": "npm run check && node server.js"
   },
