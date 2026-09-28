@@ -62,13 +62,14 @@ function engineWith({ failFirstSend = false } = {}) {
   };
 }
 
-async function startJob(kg) {
+async function startJob(kg, beforeCreateSession = null) {
   const request = {
     initialPrompt: "do it",
     instructions: "finish it",
     ownerSubjectHash: "owner",
     clientRequestId: "req-1",
-    limits: { maxAttempts: 4 }
+    limits: { maxAttempts: 4 },
+    beforeCreateSession
   };
   const [startA, startB] = await Promise.all([kg.start(request), kg.start(request)]);
   const first = startA.created ? startA : startB;
@@ -89,9 +90,11 @@ async function startJob(kg) {
   const engine = engineWith();
   let clock = 10_000;
   const kg = new KeepGoingOrchestrator({ engine, store, now: () => ++clock });
-  const jobId = await startJob(kg);
+  let quotaReservations = 0;
+  const jobId = await startJob(kg, async () => { quotaReservations++; });
 
   assert.equal(engine.creates, 1);
+  assert.equal(quotaReservations, 1);
 
   const [a, b] = await Promise.all([kg.reconcile(jobId), kg.reconcile(jobId)]);
   assert.equal(engine.sends, 1);
