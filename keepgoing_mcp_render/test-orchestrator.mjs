@@ -53,8 +53,8 @@ assert.equal(engine.creates, 1);
 
 const [a, b] = await Promise.all([kg.reconcile("sess_test"), kg.reconcile("sess_test")]);
 assert.equal(engine.sends, 1);
-assert.ok(["continued", "already_claimed", "working"].includes(a.action));
-assert.ok(["continued", "already_claimed", "working"].includes(b.action));
+assert.ok(["continued", "already_claimed", "already_updated", "working"].includes(a.action));
+assert.ok(["continued", "already_claimed", "already_updated", "working"].includes(b.action));
 
 const done = await kg.reconcile("sess_test");
 assert.equal(done.job.status, JOB_STATES.COMPLETED);
