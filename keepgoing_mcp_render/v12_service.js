@@ -42,13 +42,6 @@ export function createV12Service({
     return {
       job_id: result.job.id,
       status: result.job.status,
-      model,
-      tier,
-      limits: {
-        max_output_tokens: limits.max_total_tokens,
-        max_tool_calls: limits.max_total_tool_calls,
-        ...limits
-      },
       duplicate: !result.created,
       message: result.created
         ? "KeepGoing durable job started. Server-side recovery can continue it without repeated continue prompts."
@@ -65,7 +58,6 @@ export function createV12Service({
         status: job.status,
         attempt: Number(job.attempt || 0),
         max_attempts: Number(job.maxAttempts || 0),
-        completion_marker: job.completionMarker || null,
         error: job.safeErrorMessage || null
       }))
     };
@@ -234,14 +226,9 @@ export function createV12Service({
       status: job.status,
       output,
       error: job.safeErrorMessage || null,
-      incomplete_details: {
+      progress: {
         attempt: job.attempt,
-        max_attempts: job.maxAttempts,
-        tokens_used: job.tokensUsed,
-        token_budget_total: job.tokenBudgetTotal,
-        tool_calls_used: job.toolCallsUsed,
-        tool_call_budget_total: job.toolCallBudgetTotal,
-        completion_marker: job.completionMarker || null
+        max_attempts: job.maxAttempts
       }
     };
   }
