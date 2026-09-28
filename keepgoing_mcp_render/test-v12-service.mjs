@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createV12Service, planLimits } from "./v12_service.js";
 import { MemoryJobStore } from "./durable_store.js";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
-import { JOB_STATES } from "./durable_job.js";
+import { JOB_STATES, newJobRecord } from "./durable_job.js";
 
 let turn = 1;
 const sent = [];
@@ -66,6 +66,25 @@ await assert.rejects(
   () => service.get(started.job_id, "different-owner"),
   /not found/i
 );
+
+const paused = newJobRecord({
+  id: "kgj_dddddddddddddddddddddddddddddddd",
+  ownerSubjectHash: "ownerhash",
+  now: 5_000
+});
+paused.status = JOB_STATES.INPUT_REQUIRED;
+paused.providerSessionId = "sess_service";
+paused.lastAssessedTurnId = "turn_pause";
+await store.createOrGet({ job: paused, ownerSubjectHash: "ownerhash" });
+
+const resumed = await service.resume(
+  paused.id,
+  "Here is the missing information",
+  "ownerhash"
+);
+assert.equal(resumed.status, JOB_STATES.WORKING);
+assert.equal(sent.at(-1).id, "sess_service");
+assert.match(sent.at(-1).key, /^kg-user-/);
 
 const limits = planLimits("business", true);
 assert.equal(limits.max_attempts, 10);
