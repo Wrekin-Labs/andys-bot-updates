@@ -90,6 +90,24 @@ export class SupabaseJobStore {
     return Array.isArray(rows) ? rows.map(fromRow) : [];
   }
 
+  async cleanupRetention({
+    jobRetentionDays = 30,
+    eventRetentionDays = 14
+  } = {}) {
+    const rows = await this.request("/rest/v1/rpc/cleanup_keepgoing_durable_state", {
+      method: "POST",
+      body: JSON.stringify({
+        p_job_retention_days: Math.max(1, Math.trunc(Number(jobRetentionDays) || 30)),
+        p_event_retention_days: Math.max(1, Math.trunc(Number(eventRetentionDays) || 14))
+      })
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return {
+      deleted_jobs: Number(row?.deleted_jobs || 0),
+      deleted_events: Number(row?.deleted_events || 0)
+    };
+  }
+
   async compareAndSet(jobId, expectedVersion, next) {
     const q = new URLSearchParams({
       job_id: "eq." + jobId,
