@@ -56,6 +56,23 @@ export function createV12Service({
     };
   }
 
+  async function list(ownerSubjectHash, { limit = 20, activeOnly = true } = {}) {
+    if (!store.listOwnerJobs) throw new Error("Durable job listing is unavailable");
+    const jobs = await store.listOwnerJobs(ownerSubjectHash, { limit, activeOnly });
+    return {
+      jobs: jobs.map((job) => ({
+        job_id: job.id,
+        status: job.status,
+        started_at: job.startedAt ? new Date(job.startedAt).toISOString() : null,
+        updated_at: job.updatedAt ? new Date(job.updatedAt).toISOString() : null,
+        attempt: Number(job.attempt || 0),
+        max_attempts: Number(job.maxAttempts || 0),
+        completion_marker: job.completionMarker || null,
+        error: job.safeErrorMessage || null
+      }))
+    };
+  }
+
   async function get(jobId, ownerSubjectHash, admin = false) {
     const job = await ownedJob(jobId, ownerSubjectHash, admin);
     return view(job);
@@ -217,7 +234,7 @@ export function createV12Service({
     };
   }
 
-  return { start, get, wait, cancel, resume, ownedJob };
+  return { start, list, get, wait, cancel, resume, ownedJob };
 }
 
 export function planLimits(tier, allowWeb = true) {
