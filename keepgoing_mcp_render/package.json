@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js && node --check durable_store.js && node --check job_orchestrator.js && node --check supabase_job_store.js && node --check webhook_processor.js && node --check watchdog.js && node --check v12_service.js",
-    "test": "node test-durable-job.mjs && node test-agents-engine.mjs && node test-orchestrator.mjs && node test-supabase-store.mjs && node test-webhook-processor.mjs && node test-watchdog.mjs && node test-v12-service.mjs && node test-server-v12-source.mjs && node test-sql-v12-source.mjs",
+    "test": "node test-durable-job.mjs && node test-agents-engine.mjs && node test-orchestrator.mjs && node test-supabase-store.mjs && node test-webhook-processor.mjs && node test-watchdog.mjs && node test-v12-service.mjs && node test-server-v12-source.mjs && node test-sql-v12-source.mjs && node test-durable-sql-source.mjs",
     "verify": "npm run check && npm test",
     "start": "npm run check && node server.js"
   },
