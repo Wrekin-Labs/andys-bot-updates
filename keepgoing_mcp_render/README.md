@@ -1,38 +1,84 @@
-# KeepGoing v1.0
+# KeepGoing v1.2 beta
 
-KeepGoing is an MCP service for persistent AI background jobs. It starts one OpenAI background response, preserves the job ID, and keeps polling that same job instead of asking the user to repeatedly type "continue".
+KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
+
+v1.2 is developed behind `KEEPGOING_V12_ENABLED`. Keep the production v1.1 path available until the v1.2 database migration, webhook and live preflight are complete.
+
+## What v1.2 changes
+
+v1.1 preserved one OpenAI background Response ID and polled it.
+
+v1.2 instead:
+- reserves a stable KeepGoing job before provider work starts;
+- maps that job to an OpenAI Agent session;
+- validates each root turn as `COMPLETED`, `NEEDS_USER` or `PARTIAL`;
+- automatically continues `PARTIAL` work within hard budgets;
+- uses compare-and-set state plus idempotency keys to prevent duplicate starts/continuations;
+- recovers missed webhook/poll events with a watchdog;
+- lets a new chat list and recover the customer's active jobs;
+- safely resumes the same job after genuine user input is required;
+- keeps raw prompts, model output, OAuth tokens and activation tokens out of the durable job database.
+
+KeepGoing does not control ChatGPT's private reasoning, bypass ChatGPT/OpenAI limits, or force a new ChatGPT message after a chat turn has already ended. The durable server job can continue independently; the user/client can later retrieve it by job ID.
 
 ## Customer flow
 
 1. Subscribe to KeepGoing.
-2. The billing backend issues a private customer token.
-3. The customer receives a private MCP endpoint.
-4. Add the endpoint to ChatGPT as a personal plugin/connector.
-5. Start a persistent job once. KeepGoing reuses the same job ID until it reaches a terminal state.
+2. Receive a private activation token.
+3. Connect `/mcp` in ChatGPT using OAuth.
+4. Enter the activation token only on the KeepGoing OAuth page.
+5. Start a durable job once.
+6. KeepGoing reuses the same job ID while its server-side watchdog/webhook path advances the work.
+7. Use `list_persistent_jobs` in a later chat to recover active jobs if needed.
 
-Never publish or share a customer's tokenised MCP URL.
+Never share an activation token, OAuth token or other account credential.
 
-## Plans
+## Plans and technical limits
 
-- Free: 3 jobs/month (rollout after paid beta)
-- Pro: £7.99/month, 100 jobs/month
-- Business: £29/month, 500 jobs/month
+- Free: 3 jobs/month (rollout after paid beta).
+- Pro: £7.99/month, 100 jobs/month, up to 3 web/tool calls per durable job.
+- Business: £29/month, 500 jobs/month, up to 5 web/tool calls per durable job.
+
+v1.2 also applies aggregate per-job continuation budgets:
+- Pro: up to 6 turns/attempts, 20,000 aggregate model tokens, 2-hour wall-clock window.
+- Business: up to 8 turns/attempts, 30,000 aggregate model tokens, 4-hour wall-clock window.
+
+These are safety/cost ceilings, not promised consumption targets. A job stops earlier when completed or when user input is genuinely required.
 
 ## MCP tools
 
-- `start_persistent_job`
-- `get_persistent_job`
-- `wait_for_persistent_job`
-- `cancel_persistent_job`
+- `start_persistent_job` — create or idempotently recover a durable job.
+- `get_persistent_job` — read current status/result.
+- `wait_for_persistent_job` — bounded wait on the same job ID.
+- `cancel_persistent_job` — cancel the durable job/provider turn.
+- `list_persistent_jobs` — list the authenticated customer's own recent/active jobs using safe metadata only.
+- `resume_persistent_job` — deliver required user input to the same durable job with race-safe/idempotent delivery.
 
-The server instructions tell the client to keep polling the same job ID automatically when work is still running.
+## Durable states
+
+- `queued`
+- `working`
+- `continuing`
+- `input_required`
+- `completed`
+- `failed`
+- `cancelled`
+- `budget_exhausted`
+
+The model is instructed to end every root turn with one marker:
+- `STATUS: COMPLETED`
+- `STATUS: NEEDS_USER`
+- `STATUS: PARTIAL`
+
+The server validates that marker against provider turn state and tool failures; text alone does not decide success.
 
 ## Production endpoints
 
 - `/` — product and subscription page
-- `/health` — basic health status
-- `/readiness` — production readiness booleans
+- `/health` — lightweight process/config health
+- `/readiness` — production readiness, including live durable-store reachability when v1.2 is enabled
 - `/mcp` — protected MCP endpoint
+- `/openai/webhook` — signed OpenAI Agents session webhook receiver (v1.2)
 - `/billing/claim` — Stripe claim endpoint
 - `/billing/success` — Stripe activation page
 - `/paypal/claim` — PayPal subscription claim
@@ -41,43 +87,68 @@ The server instructions tell the client to keep polling the same job ID automati
 
 ## Required production environment
 
-Store secrets in Render environment variables only. Do not commit secret values.
+Store secrets in Render/environment-secret storage only. Never commit secret values.
 
+Core:
 - `OPENAI_API_KEY`
-- `OPENAI_MODEL`
+- `OPENAI_MODEL` (commercial default currently uses GPT-6 Luna unless overridden)
 - `KEEPGOING_AUTH_URL`
 - `KEEPGOING_CLAIM_URL`
 - `KEEPGOING_BILLING_INGEST_URL`
 - `KEEPGOING_BILLING_INGEST_TOKEN`
 - `KEEPGOING_CONFIG_URL`
 - `KEEPGOING_OWNER_TOKEN_HASH`
+- `KEEPGOING_OAUTH_SECRET`
+- `KEEPGOING_OAUTH_CODE_URL`
+- `KEEPGOING_PUBLIC_BASE_URL`
 
-For PayPal live checkout:
+v1.2 durable engine:
+- `KEEPGOING_V12_ENABLED=true`
+- `KEEPGOING_SUPABASE_URL` (or `SUPABASE_URL`)
+- `KEEPGOING_SUPABASE_SERVICE_KEY`
+- `OPENAI_WEBHOOK_SECRET`
+- optional watchdog interval configuration
 
+Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
+
+PayPal live checkout:
 - `PAYPAL_MODE=live`
 - `PAYPAL_CLIENT_ID`
 - `PAYPAL_CLIENT_SECRET`
 
-When PayPal credentials are available, KeepGoing creates the KeepGoing product, Pro and Business monthly plans, and webhook automatically, with IDs persisted through the billing configuration backend.
+## Security and reliability
 
-## Security
-
-- Customer access is token protected.
-- Quota is consumed only when a new persistent job starts.
-- Billing and MCP responses use no-store caching where appropriate.
-- Referrer policy is no-referrer.
-- Framing is disabled.
-- The owner credential is stored as a SHA-256 hash and can be overridden with `KEEPGOING_OWNER_TOKEN_HASH`.
-- Webhook signatures are verified before billing events are accepted.
+- OAuth 2.1 authorization-code flow with PKCE protects ChatGPT connections.
+- Durable job ownership is scoped to the authenticated customer hash.
+- Client request IDs are hashed before durable storage.
+- Start, continuation and resume paths use durable reservation/CAS plus provider idempotency keys.
+- Signed OpenAI webhooks are verified before processing.
+- Webhook event IDs are deduplicated.
+- The watchdog repairs missed webhook/poll progress without blindly creating a duplicate provider session.
+- Active jobs have hard attempt, token, tool-call and wall-clock limits.
+- Durable metadata retention is bounded; active jobs are not deleted by retention cleanup.
+- The durable database stores orchestration metadata/hashes rather than raw prompts/model output.
+- Sensitive HTTP responses use no-store caching where appropriate.
+- Secrets are redacted from safe watchdog/service errors.
 
 ## Release check
 
-Run:
+From `keepgoing_mcp_render`:
 
 ```bash
 npm install --omit=dev
-npm run check
+npm run verify
 npm start
 ```
 
-Then verify `/health`, `/readiness`, invalid-token rejection on `/mcp`, and a full paid checkout/claim in the selected payment provider before opening sales.
+Before enabling v1.2 for paid customers, verify:
+1. CI passes on the exact release commit.
+2. `sql/durable_jobs.sql` is applied to the intended Supabase project.
+3. `/readiness` reports `ok: true`, `durable_engine_ready: true`, `durable_store_ready: true`, and `openai_webhook_ready: true`.
+4. Invalid OAuth/token access is rejected without consuming quota.
+5. A real durable test job progresses PARTIAL -> continuation -> COMPLETED.
+6. Duplicate starts return the original job and consume quota once.
+7. `NEEDS_USER` -> `resume_persistent_job` resumes the same job once.
+8. A missed webhook is repaired by the watchdog.
+9. PayPal/Stripe subscription claim and cancellation flows are tested in the selected live provider.
+10. Privacy, Terms, Support and Security pages match the deployed data flow.
