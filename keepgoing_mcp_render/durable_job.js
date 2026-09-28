@@ -55,6 +55,8 @@ export function newJobRecord({
     lastOutputHash: null,
     repeatedOutputCount: 0,
     currentRunId: null,
+    lastAssessedTurnId: null,
+    continuationIdempotencyKey: null,
     continuationNeeded: false,
     completionMarker: null,
     safeErrorCode: null,
