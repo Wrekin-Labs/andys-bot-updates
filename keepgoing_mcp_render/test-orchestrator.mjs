@@ -184,4 +184,50 @@ async function startJob(kg, beforeCreateSession = null) {
   assert.equal(cancelled, 1);
 }
 
+// Lost acknowledgement during initial session creation is recovered by metadata.
+{
+  const store = new MemoryJobStore();
+  let quotaReservations = 0;
+  let creates = 0;
+  const engine = {
+    async createSession() {
+      creates++;
+      throw new Error("connection dropped after session creation");
+    },
+    async findSessionByMetadata(key, value) {
+      assert.equal(key, "keepgoing_job_id");
+      assert.match(value, /^kgj_/);
+      return { id: "sess_recovered_start", metadata: { [key]: value } };
+    },
+    async cancelTurn() {}
+  };
+  let clock = 30_000;
+  const kg = new KeepGoingOrchestrator({ engine, store, now: () => ++clock });
+
+  await assert.rejects(
+    () => kg.start({
+      initialPrompt: "recover me",
+      instructions: "finish",
+      ownerSubjectHash: "owner-recovery",
+      clientRequestId: "req-recovery",
+      beforeCreateSession: async () => { quotaReservations++; }
+    }),
+    /connection dropped/
+  );
+
+  const pending = await store.listOwnerJobs("owner-recovery", { activeOnly: true });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].status, JOB_STATES.QUEUED);
+  assert.equal(pending[0].providerSessionId, null);
+  assert.equal(quotaReservations, 1);
+  assert.equal(creates, 1);
+
+  const recovered = await kg.recoverStart(pending[0].id);
+  assert.equal(recovered.action, "start_recovered");
+  assert.equal(recovered.job.status, JOB_STATES.WORKING);
+  assert.equal(recovered.job.providerSessionId, "sess_recovered_start");
+  assert.equal(quotaReservations, 1);
+  assert.equal(creates, 1);
+}
+
 console.log("orchestrator tests passed");
