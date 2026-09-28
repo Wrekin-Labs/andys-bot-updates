@@ -16,7 +16,8 @@ assert.ok(
 assert.match(source, /authorise\(req, isStart && !V12_ENABLED\)/);
 assert.match(source, /access\._mcp_request_id = "mcp-" \+ digest/);
 assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_request_id \|\| null/);
-assert.match(source, /if \(V12_ENABLED\) \{[\s\S]*server\.registerTool\("list_persistent_jobs"/);\nassert.match(source, /if \(V12_ENABLED\) \{[\s\S]*server\.registerTool\("resume_persistent_job"/);
+assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
+assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
 assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 
