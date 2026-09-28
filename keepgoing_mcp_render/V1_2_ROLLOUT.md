@@ -52,7 +52,10 @@ Before applying it:
 2. Run Supabase security/database advisors.
 3. Confirm the durable tables are not exposed to anon/authenticated users.
 4. Apply through the normal reviewed migration workflow.
-5. Test atomic reservation and optimistic version updates.
+5. Add database tests under the Supabase test workflow that assert anon/authenticated cannot select, insert, update or delete durable rows.
+6. Run `supabase test db` (or the project-equivalent database test runner) and require a clean pass.
+7. Run Supabase database/security advisors after the migration and resolve relevant findings.
+8. Test atomic reservation and optimistic version updates through the same Data API path used by KeepGoing.
 
 The durable tables store orchestration metadata only. They deliberately do not store raw prompts, model output, passwords, OAuth tokens or activation tokens.
 
