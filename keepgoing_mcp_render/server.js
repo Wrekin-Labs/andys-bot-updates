@@ -856,7 +856,7 @@ async function startPersistentJobCompat(args, access) {
     allowWeb: args.allowWeb,
     tier: access.tier || "pro",
     ownerSubjectHash: durableOwnerHash(access),
-    clientRequestId: args.clientRequestId || null,
+    clientRequestId: args.clientRequestId || access._mcp_request_id || null,
     beforeCreateSession: async () => reserveJobQuota(access)
   });
 }
@@ -1664,6 +1664,9 @@ app.post("/mcp", async (req, res) => {
   if (!access.ok) {
     oauthChallenge(res, access.error === "oauth_token_invalid_scope" ? "insufficient_scope" : "invalid_token", access.error || "Authentication required");
     return res.status(access.status || 401).json({ error: access.error || "unauthorized", tier: access.tier, used: access.used, limit: access.limit });
+  }
+  if (access.ok && req.body?.id != null) {
+    access._mcp_request_id = "mcp-" + digest(String(req.body.id));
   }
   const server = createMcpServer(access);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
