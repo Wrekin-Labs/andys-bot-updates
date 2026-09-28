@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
 
@@ -793,6 +794,134 @@ function createMcpServer(access = {}) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
     }
   });
+
+  // OpenAI expects securitySchemes at the root of each tool descriptor.
+  // MCP SDK v1 currently drops that root extension from tools/list while
+  // preserving the compatibility copy under _meta. Override only tools/list;
+  // registered tools/call still uses McpServer's Zod input validation.
+  const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
+  const oauthMeta = { securitySchemes: oauthSecuritySchemes };
+
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      {
+        name: "start_persistent_job",
+        description: "Start a persistent OpenAI background job so substantial model work or research can continue without repeated continue prompts.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: { type: "string", minLength: 1, maxLength: 12000 },
+            definitionOfDone: { type: "string", minLength: 1, maxLength: 4000, default: "All requested work completed and verified" },
+            mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
+            allowWeb: { type: "boolean", default: true }
+          },
+          required: ["goal"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            model: { type: "string" },
+            tier: { type: "string" },
+            limits: {
+              type: "object",
+              properties: {
+                max_output_tokens: { type: "number" },
+                max_tool_calls: { type: "number" }
+              },
+              required: ["max_output_tokens", "max_tool_calls"],
+              additionalProperties: false
+            },
+            message: { type: "string" }
+          },
+          required: ["job_id", "status", "model", "tier", "limits", "message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: oauthMeta
+      },
+      {
+        name: "get_persistent_job",
+        description: "Check the current state and output of an existing KeepGoing job. Keep polling the same job_id until it completes or needs the user.",
+        inputSchema: {
+          type: "object",
+          properties: { job_id: { type: "string", minLength: 1, maxLength: 200 } },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            output: { type: "string" },
+            error: { type: ["string", "null"] },
+            incomplete_details: {}
+          },
+          required: ["job_id", "status", "output", "error"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        _meta: oauthMeta
+      },
+      {
+        name: "wait_for_persistent_job",
+        description: "Wait and poll an existing KeepGoing job for up to 25 seconds. If should_continue_polling is true, call this tool again with the same job_id automatically instead of asking the user to type continue.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            wait_seconds: { type: "integer", minimum: 1, maximum: 25, default: 20 }
+          },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            output: { type: "string" },
+            error: { type: ["string", "null"] },
+            incomplete_details: {},
+            should_continue_polling: { type: "boolean" },
+            message: { type: "string" }
+          },
+          required: ["job_id", "status", "output", "error", "should_continue_polling", "message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        _meta: oauthMeta
+      },
+      {
+        name: "cancel_persistent_job",
+        description: "Cancel a KeepGoing background job.",
+        inputSchema: {
+          type: "object",
+          properties: { job_id: { type: "string", minLength: 1, maxLength: 200 } },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" }
+          },
+          required: ["job_id", "status"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+        _meta: oauthMeta
+      }
+    ]
+  }));
 
   return server;
 }
