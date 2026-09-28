@@ -4,6 +4,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { createAgentsEngine } from "./agents_engine.js";
+import { SupabaseJobStore } from "./supabase_job_store.js";
+import { KeepGoingOrchestrator } from "./job_orchestrator.js";
+import { createOpenAIWebhookVerifier, createWebhookProcessor } from "./webhook_processor.js";
+import { createWatchdog } from "./watchdog.js";
+import { createV12Service } from "./v12_service.js";
 
 const app = express();
 
@@ -21,6 +27,12 @@ const OAUTH_SECRET = process.env.KEEPGOING_OAUTH_SECRET || "";
 const OAUTH_SCOPE = "keepgoing.jobs";
 const OPENAI_APPS_CHALLENGE = process.env.OPENAI_APPS_CHALLENGE || "";
 const OAUTH_CODE_URL = process.env.KEEPGOING_OAUTH_CODE_URL || "";
+
+const V12_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_ENABLED || "");
+const V12_SUPABASE_URL = process.env.KEEPGOING_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const V12_SUPABASE_SERVICE_KEY = process.env.KEEPGOING_SUPABASE_SERVICE_KEY || "";
+const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
+const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -165,6 +177,41 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
   return res.json({ received: true });
 });
 
+app.post("/openai/webhook", express.text({ type: "application/json", limit: "512kb" }), async (req, res) => {
+  if (!V12_ENABLED) return res.status(404).send("Not found");
+  let runtime;
+  try {
+    runtime = getV12Runtime();
+  } catch {
+    return res.status(503).send("KeepGoing v1.2 not configured");
+  }
+  if (!runtime.webhookProcessor) return res.status(503).send("OpenAI webhook not configured");
+
+  try {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers || {})) {
+      if (Array.isArray(value)) {
+        for (const item of value) headers.append(name, String(item));
+      } else if (value != null) {
+        headers.set(name, String(value));
+      }
+    }
+    const accepted = await runtime.webhookProcessor.ingest(String(req.body || ""), headers);
+    res.status(202).json({ received: true, duplicate: accepted.duplicate });
+
+    if (accepted.shouldReconcile && !accepted.duplicate) {
+      setImmediate(() => {
+        runtime.webhookProcessor.process(accepted).catch((error) => {
+          console.error("keepgoing_v12_webhook_process_error", safeLogError(error));
+        });
+      });
+    }
+  } catch (error) {
+    console.error("keepgoing_v12_webhook_verify_error", safeLogError(error));
+    return res.status(400).send("Invalid OpenAI webhook");
+  }
+});
+
 app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
@@ -220,7 +267,8 @@ app.use((req, res, next) => {
   if (
     req.path === "/mcp" ||
     req.path.startsWith("/billing/") ||
-    req.path.startsWith("/paypal/")
+    req.path.startsWith("/paypal/") ||
+    req.path.startsWith("/openai/")
   ) {
     res.set("Cache-Control", "no-store");
   }
@@ -235,6 +283,66 @@ const PRO_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_PRO_MAX_TOOL_CALLS || 3)
 const BUSINESS_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_BUSINESS_MAX_TOOL_CALLS || 5);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
+
+let v12RuntimeCache = null;
+
+function v12Configured() {
+  return Boolean(
+    V12_ENABLED &&
+    OPENAI_API_KEY &&
+    V12_SUPABASE_URL &&
+    V12_SUPABASE_SERVICE_KEY
+  );
+}
+
+function getV12Runtime() {
+  if (v12RuntimeCache) return v12RuntimeCache;
+  if (!v12Configured()) throw new Error("KeepGoing v1.2 durable engine is not configured");
+
+  const engine = createAgentsEngine({
+    apiKey: OPENAI_API_KEY,
+    model: MODEL
+  });
+  const store = new SupabaseJobStore({
+    supabaseUrl: V12_SUPABASE_URL,
+    serviceKey: V12_SUPABASE_SERVICE_KEY
+  });
+  const orchestrator = new KeepGoingOrchestrator({ engine, store });
+  const service = createV12Service({ engine, store, orchestrator, model: MODEL });
+  const watchdog = createWatchdog({ store, orchestrator });
+  const webhookProcessor = OPENAI_WEBHOOK_SECRET
+    ? createWebhookProcessor({
+        store,
+        orchestrator,
+        verify: createOpenAIWebhookVerifier({
+          apiKey: OPENAI_API_KEY,
+          webhookSecret: OPENAI_WEBHOOK_SECRET
+        })
+      })
+    : null;
+
+  v12RuntimeCache = { engine, store, orchestrator, service, watchdog, webhookProcessor };
+  return v12RuntimeCache;
+}
+
+function safeLogError(error) {
+  const message = String(error?.message || error || "error");
+  return /password|token|secret|credential|authorization/i.test(message)
+    ? "redacted protected error"
+    : message.slice(0, 500);
+}
+
+function durableOwnerHash(access) {
+  return digest(String(access?.subject || access?.tier || "customer"));
+}
+
+async function reserveJobQuota(access) {
+  if (access?.admin) return;
+  const token = String(access?._customer_token || "");
+  if (!token) throw new Error("job quota credential unavailable");
+  const result = await validateCustomerToken(token, true);
+  if (!result.ok) throw new Error(result.error || "job quota unavailable");
+}
 
 function digest(value) {
   return crypto.createHash("sha256").update(value || "").digest("hex");
@@ -597,7 +705,8 @@ async function authorise(req, consume = false) {
     }
   }
 
-  return validateCustomerToken(token, consume);
+  const access = await validateCustomerToken(token, consume);
+  return access.ok ? { ...access, _customer_token: token } : access;
 }
 
 function outputText(data) {
@@ -731,10 +840,53 @@ async function waitForJob(jobId, waitSeconds = 20) {
   };
 }
 
+async function startPersistentJobCompat(args, access) {
+  if (!V12_ENABLED) {
+    return startJob({
+      ...args,
+      tier: access.tier || "pro",
+      safetyIdentifier: "kg_" + digest(String(access.subject || access.tier || "customer")).slice(0, 32)
+    });
+  }
+  const runtime = getV12Runtime();
+  return runtime.service.start({
+    goal: args.goal,
+    definitionOfDone: args.definitionOfDone,
+    mode: args.mode,
+    allowWeb: args.allowWeb,
+    tier: access.tier || "pro",
+    ownerSubjectHash: durableOwnerHash(access),
+    clientRequestId: args.clientRequestId || null,
+    beforeCreateSession: async () => reserveJobQuota(access)
+  });
+}
+
+async function getPersistentJobCompat(jobId, access) {
+  if (!V12_ENABLED) return getJob(jobId);
+  return getV12Runtime().service.get(jobId, durableOwnerHash(access), Boolean(access.admin));
+}
+
+async function waitPersistentJobCompat(jobId, waitSeconds, access) {
+  if (!V12_ENABLED) return waitForJob(jobId, waitSeconds);
+  return getV12Runtime().service.wait(
+    jobId,
+    durableOwnerHash(access),
+    Boolean(access.admin),
+    waitSeconds
+  );
+}
+
+async function cancelPersistentJobCompat(jobId, access) {
+  if (!V12_ENABLED) return cancelJob(jobId);
+  return getV12Runtime().service.cancel(jobId, durableOwnerHash(access), Boolean(access.admin));
+}
+
 function createMcpServer(access = {}) {
   const server = new McpServer(
-    { name: "KeepGoing", version: "1.1.0" },
-    { instructions: "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
+    { name: "KeepGoing", version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0" },
+    { instructions: V12_ENABLED
+      ? "Use KeepGoing for substantial work that should survive normal chat-turn boundaries. Start one durable job and preserve its job_id. The server uses recovery/watchdog logic to continue partial work safely; status polling is only for visibility. Reuse the same job_id and never create duplicate jobs."
+      : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
   server.registerTool("start_persistent_job", {
@@ -743,7 +895,8 @@ function createMcpServer(access = {}) {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
-      allowWeb: z.boolean().default(true)
+      allowWeb: z.boolean().default(true),
+      clientRequestId: z.string().min(1).max(200).optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -752,8 +905,13 @@ function createMcpServer(access = {}) {
       tier: z.string(),
       limits: z.object({
         max_output_tokens: z.number(),
-        max_tool_calls: z.number()
+        max_tool_calls: z.number(),
+        max_attempts: z.number().optional(),
+        max_total_tokens: z.number().optional(),
+        max_total_tool_calls: z.number().optional(),
+        max_wall_seconds: z.number().optional()
       }),
+      duplicate: z.boolean().optional(),
       message: z.string()
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
@@ -761,11 +919,7 @@ function createMcpServer(access = {}) {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (args) => {
     try {
-      const result = await startJob({
-        ...args,
-        tier: access.tier || "pro",
-        safetyIdentifier: "kg_" + digest(String(access.subject || access.tier || "customer")).slice(0, 32)
-      });
+      const result = await startPersistentJobCompat(args, access);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -787,7 +941,7 @@ function createMcpServer(access = {}) {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id }) => {
     try {
-      const result = await getJob(job_id);
+      const result = await getPersistentJobCompat(job_id, access);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -814,7 +968,7 @@ function createMcpServer(access = {}) {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id, wait_seconds }) => {
     try {
-      const result = await waitForJob(job_id, wait_seconds);
+      const result = await waitPersistentJobCompat(job_id, wait_seconds, access);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -833,7 +987,7 @@ function createMcpServer(access = {}) {
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id }) => {
     try {
-      const result = await cancelJob(job_id);
+      const result = await cancelPersistentJobCompat(job_id, access);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -858,7 +1012,8 @@ function createMcpServer(access = {}) {
             goal: { type: "string", minLength: 1, maxLength: 12000 },
             definitionOfDone: { type: "string", minLength: 1, maxLength: 4000, default: "All requested work completed and verified" },
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
-            allowWeb: { type: "boolean", default: true }
+            allowWeb: { type: "boolean", default: true },
+            clientRequestId: { type: "string", minLength: 1, maxLength: 200 }
           },
           required: ["goal"],
           additionalProperties: false
@@ -874,11 +1029,16 @@ function createMcpServer(access = {}) {
               type: "object",
               properties: {
                 max_output_tokens: { type: "number" },
-                max_tool_calls: { type: "number" }
+                max_tool_calls: { type: "number" },
+                max_attempts: { type: "number" },
+                max_total_tokens: { type: "number" },
+                max_total_tool_calls: { type: "number" },
+                max_wall_seconds: { type: "number" }
               },
               required: ["max_output_tokens", "max_tool_calls"],
               additionalProperties: false
             },
+            duplicate: { type: "boolean" },
             message: { type: "string" }
           },
           required: ["job_id", "status", "model", "tier", "limits", "message"],
@@ -1398,8 +1558,11 @@ app.get("/readiness", async (_req, res) => {
   );
   res.json({
     ok: engineReady && billingBackendReady,
-    version: "1.1.0",
+    version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0",
     engine_ready: engineReady,
+    durable_engine_enabled: V12_ENABLED,
+    durable_engine_ready: v12Configured(),
+    openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
     oauth_ready: Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
@@ -1414,8 +1577,11 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     name: "KeepGoing MCP",
-    version: "1.1.0",
+    version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0",
     openaiConfigured: Boolean(OPENAI_API_KEY),
+    durableEngineEnabled: V12_ENABLED,
+    durableEngineReady: v12Configured(),
+    openaiWebhookConfigured: Boolean(OPENAI_WEBHOOK_SECRET),
     protected: true,
     model: MODEL,
     paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
@@ -1428,7 +1594,7 @@ app.get("/health", (_req, res) => {
 
 app.post("/mcp", async (req, res) => {
   const isStart = req.body?.method === "tools/call" && req.body?.params?.name === "start_persistent_job";
-  const access = await authorise(req, isStart);
+  const access = await authorise(req, isStart && !V12_ENABLED);
   if (!access.ok) {
     oauthChallenge(res, access.error === "oauth_token_invalid_scope" ? "insufficient_scope" : "invalid_token", access.error || "Authentication required");
     return res.status(access.status || 401).json({ error: access.error || "unauthorized", tier: access.tier, used: access.used, limit: access.limit });
@@ -1457,7 +1623,25 @@ app.get("/mcp", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP v1.1.0 listening on " + PORT);
+  console.log("KeepGoing MCP " + (V12_ENABLED ? "v1.2.0-beta.1" : "v1.1.0") + " listening on " + PORT);
+
+  if (V12_ENABLED) {
+    try {
+      const runtime = getV12Runtime();
+      const watchdogTimer = setInterval(() => {
+        runtime.watchdog.runOnce().catch((error) => {
+          console.error("keepgoing_v12_watchdog_error", safeLogError(error));
+        });
+      }, V12_WATCHDOG_INTERVAL_MS);
+      watchdogTimer.unref();
+      runtime.watchdog.runOnce().catch((error) => {
+        console.error("keepgoing_v12_watchdog_startup_error", safeLogError(error));
+      });
+    } catch (error) {
+      console.error("keepgoing_v12_startup_error", safeLogError(error));
+    }
+  }
+
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
     ensurePayPalSetup()
       .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
