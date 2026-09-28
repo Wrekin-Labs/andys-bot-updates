@@ -88,6 +88,24 @@ assert.equal(paged.truncated, false);
 assert.equal(pagedCalls.length, 2);
 assert.match(pagedCalls[1], /after=i1/);
 
+const recoveryCalls = [];
+const recoveryEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (url) => {
+    recoveryCalls.push(url);
+    const parsed = new URL(url);
+    const after = parsed.searchParams.get("after");
+    const page = after
+      ? { data: [{ id: "sess_target", metadata: { keepgoing_job_id: "kgj_target" } }], has_more: false, last_id: "sess_target" }
+      : { data: [{ id: "sess_other", metadata: { keepgoing_job_id: "kgj_other" } }], has_more: true, last_id: "sess_other" };
+    return { ok: true, status: 200, async json() { return page; } };
+  }
+});
+const recovered = await recoveryEngine.findSessionByMetadata("keepgoing_job_id", "kgj_target");
+assert.equal(recovered.id, "sess_target");
+assert.equal(recoveryCalls.length, 2);
+assert.match(recoveryCalls[1], /after=sess_other/);
+
 const session = await engine.getSession("sess_abc");
 assert.deepEqual(
   classifySession(session, "done", turns, items),
