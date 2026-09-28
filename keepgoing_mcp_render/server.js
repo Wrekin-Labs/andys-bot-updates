@@ -613,7 +613,7 @@ async function waitForJob(jobId, waitSeconds = 20) {
 
 function createMcpServer() {
   const server = new McpServer(
-    { name: "KeepGoing", version: "1.0.0" },
+    { name: "KeepGoing", version: "1.1.0" },
     { instructions: "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -945,7 +945,7 @@ app.post("/paypal/claim", async (req, res) => {
 app.get("/billing/success", (req, res) => {
   const sessionId = String(req.query.session_id || "");
   const sessionJson = JSON.stringify(sessionId);
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing subscription</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:680px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:18px;width:100%;box-sizing:border-box}button,a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:14px;border-radius:10px;margin:14px 0}.ok{color:#3fb950}.muted{color:#8b949e}</style></head><body><div class="card"><h1>KeepGoing subscription</h1><p id="status">Confirming your Stripe subscription…</p><div id="result"></div><p><a href="/">Return to plans</a></p></div><script>const sessionId=' + sessionJson + ';(async()=>{const status=document.getElementById("status"),result=document.getElementById("result");if(!sessionId){status.textContent="Missing checkout session.";return;}for(let i=0;i<12;i++){const r=await fetch("/billing/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:sessionId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){const mcp=location.origin+"/mcp?token="+encodeURIComponent(j.token);status.innerHTML="<span class=\"ok\">Subscription active.</span>";result.innerHTML="<p>Your "+j.tier+" plan includes "+j.monthly_limit+" KeepGoing jobs per month.</p><p>Copy this private MCP address into ChatGPT:</p><code id=\"mcp\"></code><button id=\"copy\">Copy MCP address</button><p class=\"muted\">Keep this address private. Claiming again rotates the token.</p>";document.getElementById("mcp").textContent=mcp;document.getElementById("copy").onclick=()=>navigator.clipboard.writeText(mcp);return;}if(j.error!=="subscription_not_found"){status.textContent=j.error||"Could not activate subscription.";return;}await new Promise(r=>setTimeout(r,1500));}status.textContent="Payment completed, but activation is still processing. Refresh this page in a moment.";})().catch(()=>{document.getElementById("status").textContent="Could not confirm subscription.";});</script></body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing subscription</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:680px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:18px;width:100%;box-sizing:border-box}button,a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:14px;border-radius:10px;margin:14px 0}.ok{color:#3fb950}.muted{color:#8b949e}</style></head><body><div class="card"><h1>KeepGoing subscription</h1><p id="status">Confirming your Stripe subscription…</p><div id="result"></div><p><a href="/">Return to plans</a></p></div><script>const sessionId=' + sessionJson + ';(async()=>{const status=document.getElementById("status"),result=document.getElementById("result");if(!sessionId){status.textContent="Missing checkout session.";return;}for(let i=0;i<12;i++){const r=await fetch("/billing/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:sessionId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){status.innerHTML="<span class=\"ok\">Subscription active.</span>";result.innerHTML="<p>Your "+j.tier+" plan includes "+j.monthly_limit+" KeepGoing jobs per month.</p><p>Save this private activation token. ChatGPT asks for it when you connect KeepGoing:</p><code id=\"mcp\"></code><button id=\"copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p><p class=\"muted\">Keep the token private. Claiming again rotates it.</p>";document.getElementById("mcp").textContent=j.token;document.getElementById("copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error!=="subscription_not_found"){status.textContent=j.error||"Could not activate subscription.";return;}await new Promise(r=>setTimeout(r,1500));}status.textContent="Payment completed, but activation is still processing. Refresh this page in a moment.";})().catch(()=>{document.getElementById("status").textContent="Could not confirm subscription.";});</script></body></html>';
   res.type("html").send(html);
 });
 
@@ -960,7 +960,7 @@ app.get("/", async (_req, res) => {
     ? '<script src="https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=GBP&components=buttons&vault=true&intent=subscription"></script>'
     : '';
   const buttons = paypalReady
-    ? '<script>function kgApprove(data){const result=document.getElementById("kg-result");result.textContent="Activating subscription…";fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:data.subscriptionID})}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok||!j.token)throw new Error(j.error||"Activation failed");const mcp=location.origin+"/mcp?token="+encodeURIComponent(j.token);result.innerHTML="<strong>Subscription active.</strong><br>Your private MCP address:<code id=\"kg-mcp\"></code><button id=\"kg-copy\">Copy MCP address</button>";document.getElementById("kg-mcp").textContent=mcp;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(mcp);}).catch(e=>{result.textContent=e.message;});}paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.pro_plan_id) + '}),onApprove:kgApprove}).render("#paypal-pro");paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.business_plan_id) + '}),onApprove:kgApprove}).render("#paypal-business");</script>'
+    ? '<script>function kgApprove(data){const result=document.getElementById("kg-result");result.textContent="Activating subscription…";fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:data.subscriptionID})}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok||!j.token)throw new Error(j.error||"Activation failed");result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);}).catch(e=>{result.textContent=e.message;});}paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.pro_plan_id) + '}),onApprove:kgApprove}).render("#paypal-pro");paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.business_plan_id) + '}),onApprove:kgApprove}).render("#paypal-business");</script>'
     : '';
 
   const setupMessage = paypalReady
@@ -970,8 +970,66 @@ app.get("/", async (_req, res) => {
   const proAction = paypalReady ? '<div id="paypal-pro"></div>' : '<span class="muted">Payment button appears after PayPal credentials are added.</span>';
   const bizAction = paypalReady ? '<div id="paypal-business"></div>' : '<span class="muted">Payment button appears after PayPal credentials are added.</span>';
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><h1>KeepGoing</h1><p>Persistent AI background jobs. Start the job once and KeepGoing keeps checking it without repeated “continue” prompts.</p>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free account rollout follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month</p>' + bizAction + '</div></div><div id="kg-result"></div></div>' + buttons + '</body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial model work and research. KeepGoing preserves the same background job so ChatGPT can resume and check it instead of repeatedly restarting the work.</p>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free account rollout follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div>' + buttons + '</body></html>';
   res.type("html").send(html);
+});
+
+
+function infoPage(title, body) {
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#58a6ff}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/">← KeepGoing</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
+}
+
+app.get("/install", (_req, res) => {
+  res.type("html").send(infoPage("Install KeepGoing", [
+    "<p><strong>Connection endpoint:</strong> <code>" + htmlEscape(PUBLIC_BASE_URL + "/mcp") + "</code></p>",
+    "<p>KeepGoing uses OAuth. When ChatGPT opens the KeepGoing connection page, enter the private activation token issued after subscription. Do not put the token in the MCP URL.</p>",
+    "<h2>Private beta / developer connection</h2>",
+    "<ol><li>In an eligible ChatGPT account, create or connect a custom MCP app.</li><li>Use the endpoint shown above.</li><li>Select OAuth when prompted.</li><li>Complete the KeepGoing connection page with your activation token.</li><li>Scan the tools and confirm <code>start_persistent_job</code>, <code>get_persistent_job</code>, <code>wait_for_persistent_job</code>, and <code>cancel_persistent_job</code>.</li></ol>",
+    "<p class=\"muted\">ChatGPT plan, workspace and plugin/app availability can affect whether custom MCP connections are available. The public Plugin Directory release will use the same hosted service after approval.</p>",
+    "<h2>What KeepGoing does</h2><p>It runs supported work as an OpenAI background response, stores the job ID and lets ChatGPT poll or resume that same job. It does not control ChatGPT's private reasoning, bypass product limits, or force a new chat turn after ChatGPT has already ended one.</p>"
+  ].join("")));
+});
+
+app.get("/privacy", (_req, res) => {
+  res.type("html").send(infoPage("Privacy policy", [
+    "<p><strong>Last updated:</strong> 28 September 2026</p>",
+    "<p>KeepGoing processes the minimum information needed to operate subscriptions and persistent jobs.</p>",
+    "<h2>Information processed</h2>",
+    "<ul><li>Subscription identifiers, plan status and usage counters.</li><li>A private KeepGoing activation token and service access tokens.</li><li>The goal, definition of done and options you submit for a persistent job.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
+    "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
+    "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
+    "<h2>Your choices</h2><p>Do not submit information you do not want processed by the service. You can cancel a subscription through the available billing provider. For account or privacy questions, contact <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>",
+    "<p class=\"muted\">KeepGoing is in commercial beta. This policy will be updated if the data flow or providers materially change.</p>"
+  ].join("")));
+});
+
+app.get("/terms", (_req, res) => {
+  res.type("html").send(infoPage("Terms of service", [
+    "<p><strong>Last updated:</strong> 28 September 2026</p>",
+    "<p>KeepGoing is a subscription software service for persistent AI background jobs. By purchasing or using a paid plan you agree to these terms.</p>",
+    "<h2>Plans and billing</h2><p>Paid plans renew monthly until cancelled. Current advertised limits are 100 jobs/month for Pro and 500 jobs/month for Business. A job is counted when a new persistent background job is started.</p>",
+    "<h2>Cancellation</h2><p>You may cancel future renewal through the available billing provider. Any rights you have under applicable consumer law are not excluded. Where applicable law provides a cooling-off or cancellation right, that right continues to apply.</p>",
+    "<h2>Acceptable use</h2><p>You must not use KeepGoing for unlawful activity, to bypass platform safeguards, to attack or disrupt systems, or to access accounts or information without permission.</p>",
+    "<h2>Service limitations</h2><p>KeepGoing depends on third-party services including ChatGPT/OpenAI, hosting and payment providers. Availability can therefore be affected by their outages, limits, plan rules or product changes. KeepGoing cannot guarantee that ChatGPT will continue making tool calls after a chat turn has ended.</p>",
+    "<h2>Liability</h2><p>KeepGoing is provided as a productivity tool. You remain responsible for reviewing important outputs and actions. Nothing in these terms excludes liability that cannot legally be excluded.</p>",
+    "<h2>Contact</h2><p>Questions about these terms: <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>"
+  ].join("")));
+});
+
+app.get("/support", (_req, res) => {
+  res.type("html").send(infoPage("Support", [
+    "<p>Email: <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a></p>",
+    "<h2>Before contacting support</h2><ol><li>Check that your subscription is active.</li><li>Reconnect KeepGoing if ChatGPT reports an expired connection.</li><li>Use the same job ID when checking a running job; do not start a duplicate.</li><li>Never email your activation token, ChatGPT password, payment password or API keys.</li></ol>",
+    "<p class=\"muted\">For payment-account security, KeepGoing support will never ask for a PayPal, bank or ChatGPT password.</p>"
+  ].join("")));
+});
+
+app.get("/security", (_req, res) => {
+  res.type("html").send(infoPage("Security", [
+    "<p>KeepGoing uses HTTPS, OAuth authorization-code flow with PKCE for ChatGPT connections, short-lived access tokens, refresh tokens, subscription validation, no-store caching on sensitive routes and signed payment webhooks where configured.</p>",
+    "<h2>Secrets</h2><p>Activation tokens and OAuth tokens are credentials. Keep them private. KeepGoing does not require your ChatGPT password.</p>",
+    "<h2>Reporting a security issue</h2><p>Please email <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a> with enough detail to reproduce the issue. Do not include live passwords, payment credentials or other people's personal information.</p>"
+  ].join("")));
 });
 
 app.get("/billing/plans", async (_req, res) => {
@@ -1026,7 +1084,7 @@ app.get("/readiness", async (_req, res) => {
   );
   res.json({
     ok: engineReady && billingBackendReady,
-    version: "1.0.0",
+    version: "1.1.0",
     engine_ready: engineReady,
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
@@ -1042,7 +1100,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     name: "KeepGoing MCP",
-    version: "1.0.0",
+    version: "1.1.0",
     openaiConfigured: Boolean(OPENAI_API_KEY),
     protected: true,
     model: MODEL,
@@ -1084,7 +1142,7 @@ app.get("/mcp", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP v1.0.0 listening on " + PORT);
+  console.log("KeepGoing MCP v1.1.0 listening on " + PORT);
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
     ensurePayPalSetup()
       .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
