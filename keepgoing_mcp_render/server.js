@@ -1023,8 +1023,6 @@ function createMcpServer(access = {}) {
         jobs: z.array(z.object({
           job_id: z.string(),
           status: z.string(),
-          started_at: z.string().nullable(),
-          updated_at: z.string().nullable(),
           attempt: z.number(),
           max_attempts: z.number(),
           completion_marker: z.string().nullable(),
@@ -1222,16 +1220,13 @@ function createMcpServer(access = {}) {
                 properties: {
                   job_id: { type: "string" },
                   status: { type: "string" },
-                  started_at: { type: ["string", "null"] },
-                  updated_at: { type: ["string", "null"] },
                   attempt: { type: "number" },
                   max_attempts: { type: "number" },
                   completion_marker: { type: ["string", "null"] },
                   error: { type: ["string", "null"] }
                 },
                 required: [
-                  "job_id","status","started_at","updated_at",
-                  "attempt","max_attempts","completion_marker","error"
+                  "job_id","status","attempt","max_attempts","completion_marker","error"
                 ],
                 additionalProperties: false
               }
