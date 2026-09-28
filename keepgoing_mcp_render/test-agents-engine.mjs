@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText, turnHasFailedWork } from "./agents_engine.js";
+import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText, turnHasFailedWork, turnToolCallCount } from "./agents_engine.js";
 
 const calls = [];
 const fakeFetch = async (url, init) => {
@@ -91,7 +91,7 @@ assert.match(pagedCalls[1], /after=i1/);
 const session = await engine.getSession("sess_abc");
 assert.deepEqual(
   classifySession(session, "done", turns, items),
-  { providerStatus: "completed", output: "done", turnId: "turn_root", tokensUsed: 30, toolFailureDetected: false }
+  { providerStatus: "completed", output: "done", turnId: "turn_root", tokensUsed: 30, toolCallsUsed: 0, toolFailureDetected: false }
 );
 
 const failedItems = {
@@ -100,6 +100,7 @@ const failedItems = {
   ]
 };
 assert.equal(turnHasFailedWork(failedItems, "turn_root"), true);
+assert.equal(turnToolCallCount(failedItems, "turn_root"), 1);
 assert.equal(
   classifySession(session, "done\nSTATUS: COMPLETED", turns, failedItems).providerStatus,
   "incomplete"
