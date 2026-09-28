@@ -65,6 +65,29 @@ assert.equal(latestSessionText(items), "done\nSTATUS: COMPLETED");
 const turns = await engine.listTurns("sess_abc");
 assert.equal(latestRootTurn(turns).id, "turn_root");
 
+const allItems = await engine.listAllItems("sess_abc");
+assert.equal(allItems.data.length, 1);
+assert.equal(allItems.truncated, false);
+
+const pagedCalls = [];
+const pagedEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (url, init) => {
+    pagedCalls.push(url);
+    const parsed = new URL(url);
+    const after = parsed.searchParams.get("after");
+    const page = after
+      ? { data: [{ id: "i2", type: "message", turn_id: "t", status: "completed", content: [{ type: "output_text", text: "second" }] }], has_more: false, last_id: "i2" }
+      : { data: [{ id: "i1", type: "message", turn_id: "t", status: "completed", content: [{ type: "output_text", text: "first" }] }], has_more: true, last_id: "i1" };
+    return { ok: true, status: 200, async json() { return page; } };
+  }
+});
+const paged = await pagedEngine.listAllItems("sess_abc", { maxPages: 5 });
+assert.equal(paged.data.length, 2);
+assert.equal(paged.truncated, false);
+assert.equal(pagedCalls.length, 2);
+assert.match(pagedCalls[1], /after=i1/);
+
 const session = await engine.getSession("sess_abc");
 assert.deepEqual(
   classifySession(session, "done", turns, items),
