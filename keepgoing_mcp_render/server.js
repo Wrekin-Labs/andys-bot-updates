@@ -842,11 +842,16 @@ async function waitForJob(jobId, waitSeconds = 20) {
 
 async function startPersistentJobCompat(args, access) {
   if (!V12_ENABLED) {
-    return startJob({
+    const legacy = await startJob({
       ...args,
       tier: access.tier || "pro",
       safetyIdentifier: "kg_" + digest(String(access.subject || access.tier || "customer")).slice(0, 32)
     });
+    return {
+      job_id: legacy.job_id,
+      status: legacy.status,
+      message: legacy.message
+    };
   }
   const runtime = getV12Runtime();
   return runtime.service.start({
@@ -870,12 +875,30 @@ async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
 }
 
 async function getPersistentJobCompat(jobId, access) {
-  if (!V12_ENABLED) return getJob(jobId);
+  if (!V12_ENABLED) {
+    const legacy = await getJob(jobId);
+    return {
+      job_id: legacy.job_id,
+      status: legacy.status,
+      output: legacy.output,
+      error: legacy.error
+    };
+  }
   return getV12Runtime().service.get(jobId, durableOwnerHash(access), Boolean(access.admin));
 }
 
 async function waitPersistentJobCompat(jobId, waitSeconds, access) {
-  if (!V12_ENABLED) return waitForJob(jobId, waitSeconds);
+  if (!V12_ENABLED) {
+    const legacy = await waitForJob(jobId, waitSeconds);
+    return {
+      job_id: legacy.job_id,
+      status: legacy.status,
+      output: legacy.output,
+      error: legacy.error,
+      should_continue_polling: legacy.should_continue_polling,
+      message: legacy.message
+    };
+  }
   return getV12Runtime().service.wait(
     jobId,
     durableOwnerHash(access),
@@ -952,16 +975,6 @@ function createMcpServer(access = {}) {
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
-      model: z.string(),
-      tier: z.string(),
-      limits: z.object({
-        max_output_tokens: z.number(),
-        max_tool_calls: z.number(),
-        max_attempts: z.number().optional(),
-        max_total_tokens: z.number().optional(),
-        max_total_tool_calls: z.number().optional(),
-        max_wall_seconds: z.number().optional()
-      }),
       duplicate: z.boolean().optional(),
       message: z.string()
     },
@@ -986,7 +999,10 @@ function createMcpServer(access = {}) {
       status: z.string(),
       output: z.string(),
       error: z.string().nullable(),
-      incomplete_details: z.any().nullable()
+      progress: z.object({
+        attempt: z.number(),
+        max_attempts: z.number()
+      }).optional()
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
@@ -1012,7 +1028,10 @@ function createMcpServer(access = {}) {
       status: z.string(),
       output: z.string(),
       error: z.string().nullable(),
-      incomplete_details: z.any().nullable(),
+      progress: z.object({
+        attempt: z.number(),
+        max_attempts: z.number()
+      }).optional(),
       should_continue_polling: z.boolean(),
       message: z.string()
     },
@@ -1062,7 +1081,6 @@ function createMcpServer(access = {}) {
           status: z.string(),
           attempt: z.number(),
           max_attempts: z.number(),
-          completion_marker: z.string().nullable(),
           error: z.string().nullable()
         }))
       },
@@ -1130,25 +1148,10 @@ function createMcpServer(access = {}) {
           properties: {
             job_id: { type: "string" },
             status: { type: "string" },
-            model: { type: "string" },
-            tier: { type: "string" },
-            limits: {
-              type: "object",
-              properties: {
-                max_output_tokens: { type: "number" },
-                max_tool_calls: { type: "number" },
-                max_attempts: { type: "number" },
-                max_total_tokens: { type: "number" },
-                max_total_tool_calls: { type: "number" },
-                max_wall_seconds: { type: "number" }
-              },
-              required: ["max_output_tokens", "max_tool_calls"],
-              additionalProperties: false
-            },
             duplicate: { type: "boolean" },
             message: { type: "string" }
           },
-          required: ["job_id", "status", "model", "tier", "limits", "message"],
+          required: ["job_id", "status", "message"],
           additionalProperties: false
         },
         securitySchemes: oauthSecuritySchemes,
@@ -1172,7 +1175,15 @@ function createMcpServer(access = {}) {
             status: { type: "string" },
             output: { type: "string" },
             error: { type: ["string", "null"] },
-            incomplete_details: {}
+            progress: {
+              type: "object",
+              properties: {
+                attempt: { type: "number" },
+                max_attempts: { type: "number" }
+              },
+              required: ["attempt", "max_attempts"],
+              additionalProperties: false
+            }
           },
           required: ["job_id", "status", "output", "error"],
           additionalProperties: false
@@ -1201,7 +1212,15 @@ function createMcpServer(access = {}) {
             status: { type: "string" },
             output: { type: "string" },
             error: { type: ["string", "null"] },
-            incomplete_details: {},
+            progress: {
+              type: "object",
+              properties: {
+                attempt: { type: "number" },
+                max_attempts: { type: "number" }
+              },
+              required: ["attempt", "max_attempts"],
+              additionalProperties: false
+            },
             should_continue_polling: { type: "boolean" },
             message: { type: "string" }
           },
@@ -1232,7 +1251,7 @@ function createMcpServer(access = {}) {
           additionalProperties: false
         },
         securitySchemes: oauthSecuritySchemes,
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
         _meta: oauthMeta
       }
     ];
@@ -1290,11 +1309,10 @@ function createMcpServer(access = {}) {
                   status: { type: "string" },
                   attempt: { type: "number" },
                   max_attempts: { type: "number" },
-                  completion_marker: { type: ["string", "null"] },
                   error: { type: ["string", "null"] }
                 },
                 required: [
-                  "job_id","status","attempt","max_attempts","completion_marker","error"
+                  "job_id","status","attempt","max_attempts","error"
                 ],
                 additionalProperties: false
               }
