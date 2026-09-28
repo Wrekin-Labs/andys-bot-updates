@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText } from "./agents_engine.js";
+import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText, turnHasFailedWork } from "./agents_engine.js";
 
 const calls = [];
 const fakeFetch = async (url, init) => {
@@ -67,8 +67,19 @@ assert.equal(latestRootTurn(turns).id, "turn_root");
 
 const session = await engine.getSession("sess_abc");
 assert.deepEqual(
-  classifySession(session, "done", turns),
-  { providerStatus: "completed", output: "done", turnId: "turn_root", tokensUsed: 30 }
+  classifySession(session, "done", turns, items),
+  { providerStatus: "completed", output: "done", turnId: "turn_root", tokensUsed: 30, toolFailureDetected: false }
+);
+
+const failedItems = {
+  data: [
+    { type: "mcp_call", turn_id: "turn_root", status: "failed", error: "tool failed" }
+  ]
+};
+assert.equal(turnHasFailedWork(failedItems, "turn_root"), true);
+assert.equal(
+  classifySession(session, "done\nSTATUS: COMPLETED", turns, failedItems).providerStatus,
+  "incomplete"
 );
 
 // Idle alone is not proof of success.
