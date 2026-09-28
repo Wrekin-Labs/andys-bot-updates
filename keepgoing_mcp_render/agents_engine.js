@@ -72,6 +72,17 @@ export function createAgentsEngine({
     );
   }
 
+  async function listTurns(sessionId, { order = "desc", limit = 10 } = {}) {
+    requireSessionId(sessionId);
+    const safeOrder = order === "asc" ? "asc" : "desc";
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 10));
+    return request(
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/turns?order=" + safeOrder + "&limit=" + safeLimit,
+      { method: "GET" }
+    );
+  }
+
   async function sendMessage(sessionId, text) {
     requireSessionId(sessionId);
     const value = String(text || "").trim();
@@ -100,15 +111,11 @@ export function createAgentsEngine({
     });
   }
 
-  return { createSession, getSession, listItems, sendMessage, cancelTurn };
+  return { createSession, getSession, listItems, listTurns, sendMessage, cancelTurn };
 }
 
 export function latestSessionText(itemsResponse) {
-  const items = Array.isArray(itemsResponse)
-    ? itemsResponse
-    : Array.isArray(itemsResponse?.data) ? itemsResponse.data
-    : Array.isArray(itemsResponse?.items) ? itemsResponse.items
-    : [];
+  const items = collection(itemsResponse);
 
   for (let i = items.length - 1; i >= 0; i--) {
     const texts = [];
@@ -119,16 +126,60 @@ export function latestSessionText(itemsResponse) {
   return "";
 }
 
-export function classifySession(session, latestText = "") {
+export function latestRootTurn(turnsResponse) {
+  const turns = collection(turnsResponse);
+  if (!turns.length) return null;
+  return turns.find((turn) => turn?.subagent_id == null) || turns[0] || null;
+}
+
+export function classifySession(session, latestText = "", turnsResponse = null) {
   const status = String(session?.status || "").toLowerCase();
   const required = session?.required_actions;
   if (Array.isArray(required) && required.length > 0) {
-    return { providerStatus: "action_required", output: latestText };
+    return { providerStatus: "action_required", output: latestText, turnId: null, tokensUsed: 0 };
   }
-  if (status === "failed") return { providerStatus: "failed", output: latestText };
-  if (status === "cancelled") return { providerStatus: "cancelled", output: latestText };
-  if (status === "idle") return { providerStatus: "completed", output: latestText };
-  return { providerStatus: "working", output: latestText };
+  if (status === "failed") {
+    return { providerStatus: "failed", output: latestText, turnId: null, tokensUsed: 0 };
+  }
+
+  const turn = latestRootTurn(turnsResponse);
+  const turnStatus = String(turn?.status || "").toLowerCase();
+  const tokensUsed = turnTokens(turn);
+
+  if (turnStatus === "completed") {
+    return { providerStatus: "completed", output: latestText, turnId: turn?.id || null, tokensUsed };
+  }
+  if (turnStatus === "failed") {
+    return { providerStatus: "failed", output: latestText, turnId: turn?.id || null, tokensUsed };
+  }
+  if (turnStatus === "cancelled") {
+    return { providerStatus: "cancelled", output: latestText, turnId: turn?.id || null, tokensUsed };
+  }
+  if (["queued", "in_progress", "waiting"].includes(turnStatus)) {
+    return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed };
+  }
+
+  // Session idle means no turn is currently running; it does not prove the
+  // last turn succeeded. Without a terminal root turn, fail safe as working.
+  return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed };
+}
+
+function collection(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
+}
+
+function turnTokens(turn) {
+  const usage = turn?.usage;
+  if (!usage || typeof usage !== "object") return 0;
+  const total = Number(usage.total_tokens);
+  if (Number.isFinite(total) && total >= 0) return Math.trunc(total);
+  const input = Number(usage.input_tokens);
+  const output = Number(usage.output_tokens);
+  const sum = (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0);
+  return Math.max(0, Math.trunc(sum));
 }
 
 function collectText(value, out) {
