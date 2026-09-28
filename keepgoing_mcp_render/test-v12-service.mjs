@@ -86,6 +86,119 @@ assert.equal(resumed.status, JOB_STATES.WORKING);
 assert.equal(sent.at(-1).id, "sess_service");
 assert.match(sent.at(-1).key, /^kg-user-/);
 
+
+// Concurrent user-input resumes: only one delivery may reach the provider.
+{
+  const raceStore = new MemoryJobStore();
+  let releaseSend;
+  const sendGate = new Promise((resolve) => { releaseSend = resolve; });
+  let sendCount = 0;
+  const raceEngine = {
+    async createSession() { return { id: "sess_race" }; },
+    async getSession() { return { status: "idle", required_actions: [] }; },
+    async listItems() { return { data: [] }; },
+    async listTurns() { return { data: [] }; },
+    async sendMessage() {
+      sendCount++;
+      await sendGate;
+    },
+    async cancelTurn() {}
+  };
+  let raceClock = 10_000;
+  const raceOrchestrator = new KeepGoingOrchestrator({
+    engine: raceEngine,
+    store: raceStore,
+    now: () => ++raceClock
+  });
+  const raceService = createV12Service({
+    engine: raceEngine,
+    store: raceStore,
+    orchestrator: raceOrchestrator,
+    now: () => ++raceClock,
+    sleep: async () => {}
+  });
+  const raceJob = newJobRecord({
+    id: "kgj_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    ownerSubjectHash: "ownerhash",
+    now: 10_000
+  });
+  raceJob.status = JOB_STATES.INPUT_REQUIRED;
+  raceJob.providerSessionId = "sess_race";
+  raceJob.lastAssessedTurnId = "turn_race";
+  await raceStore.createOrGet({ job: raceJob, ownerSubjectHash: "ownerhash" });
+
+  const firstResume = raceService.resume(raceJob.id, "same answer", "ownerhash");
+  await new Promise((resolve) => setImmediate(resolve));
+  const secondResume = await raceService.resume(raceJob.id, "same answer", "ownerhash");
+  assert.equal(sendCount, 1);
+  assert.match(secondResume.message, /already being delivered/i);
+  releaseSend();
+  const firstResult = await firstResume;
+  assert.equal(firstResult.status, JOB_STATES.WORKING);
+}
+
+// If delivery outcome is unknown, only the exact same input may be retried,
+// and it reuses the same provider idempotency key.
+{
+  const retryStore = new MemoryJobStore();
+  let fail = true;
+  const keys = [];
+  const retryEngine = {
+    async createSession() { return { id: "sess_retry" }; },
+    async getSession() { return { status: "idle", required_actions: [] }; },
+    async listItems() { return { data: [] }; },
+    async listTurns() { return { data: [] }; },
+    async sendMessage(_id, _text, key) {
+      keys.push(key);
+      if (fail) {
+        fail = false;
+        throw new Error("connection dropped");
+      }
+    },
+    async cancelTurn() {}
+  };
+  let retryClock = 20_000;
+  const retryOrchestrator = new KeepGoingOrchestrator({
+    engine: retryEngine,
+    store: retryStore,
+    now: () => ++retryClock
+  });
+  const retryService = createV12Service({
+    engine: retryEngine,
+    store: retryStore,
+    orchestrator: retryOrchestrator,
+    now: () => ++retryClock,
+    sleep: async () => {}
+  });
+  const retryJob = newJobRecord({
+    id: "kgj_ffffffffffffffffffffffffffffffff",
+    ownerSubjectHash: "ownerhash",
+    now: 20_000
+  });
+  retryJob.status = JOB_STATES.INPUT_REQUIRED;
+  retryJob.providerSessionId = "sess_retry";
+  retryJob.lastAssessedTurnId = "turn_retry";
+  await retryStore.createOrGet({ job: retryJob, ownerSubjectHash: "ownerhash" });
+
+  await assert.rejects(
+    () => retryService.resume(retryJob.id, "answer one", "ownerhash"),
+    /connection dropped/
+  );
+  const afterUnknown = await retryStore.get(retryJob.id);
+  assert.equal(afterUnknown.status, JOB_STATES.INPUT_REQUIRED);
+  assert.equal(afterUnknown.safeErrorCode, "user_input_send_unknown");
+
+  await assert.rejects(
+    () => retryService.resume(retryJob.id, "different answer", "ownerhash"),
+    /Previous user input delivery is unresolved/
+  );
+
+  const retriedInput = await retryService.resume(retryJob.id, "answer one", "ownerhash");
+  assert.equal(retriedInput.status, JOB_STATES.WORKING);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1]);
+}
+
 const limits = planLimits("business", true);
 assert.equal(limits.max_attempts, 10);
 assert.equal(limits.max_total_tool_calls, 50);
