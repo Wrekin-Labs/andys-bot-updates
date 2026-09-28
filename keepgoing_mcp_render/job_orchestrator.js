@@ -86,15 +86,26 @@ export class KeepGoingOrchestrator {
         }
       });
     } catch (error) {
-      const failed = {
-        ...reserved.job,
-        status: JOB_STATES.FAILED,
-        startLeaseUntil: null,
-        safeErrorCode: "start_failed",
-        safeErrorMessage: "KeepGoing could not start the model session.",
-        updatedAt: this.now()
-      };
-      await this.store.compareAndSet(jobId, reserved.job.version, failed);
+      const status = Number(error?.status || 0);
+      const definitelyRejected = status >= 400 && status < 500;
+      const next = definitelyRejected
+        ? {
+            ...reserved.job,
+            status: JOB_STATES.FAILED,
+            startLeaseUntil: null,
+            safeErrorCode: "start_rejected",
+            safeErrorMessage: "The model provider rejected the session start.",
+            updatedAt: this.now()
+          }
+        : {
+            ...reserved.job,
+            status: JOB_STATES.QUEUED,
+            startLeaseUntil: this.now() + CONTINUATION_LEASE_MS,
+            safeErrorCode: "start_outcome_unknown",
+            safeErrorMessage: "Session start acknowledgement was lost; KeepGoing will recover by durable job metadata.",
+            updatedAt: this.now()
+          };
+      await this.store.compareAndSet(jobId, reserved.job.version, next);
       throw error;
     }
 
@@ -130,6 +141,57 @@ export class KeepGoingOrchestrator {
 
   async get(jobId) {
     return this.store.get(jobId);
+  }
+
+  async recoverStart(jobId) {
+    const current = await this.store.get(jobId);
+    if (!current) throw new Error("job not found");
+    if (current.providerSessionId) return { job: current, action: "already_attached" };
+    if (current.status !== JOB_STATES.QUEUED) return { job: current, action: "not_queued" };
+    if (typeof this.engine.findSessionByMetadata !== "function") {
+      return { job: current, action: "recovery_unavailable" };
+    }
+
+    const session = await this.engine.findSessionByMetadata(
+      "keepgoing_job_id",
+      jobId,
+      { maxPages: 3, pageSize: 100 }
+    );
+
+    if (session?.id) {
+      const working = {
+        ...current,
+        status: JOB_STATES.WORKING,
+        providerSessionId: session.id,
+        currentRunId: session.id,
+        startLeaseUntil: null,
+        safeErrorCode: null,
+        safeErrorMessage: null,
+        updatedAt: this.now(),
+        lastProgressAt: this.now()
+      };
+      const saved = await this.store.compareAndSet(jobId, current.version, working);
+      return saved.ok
+        ? { job: saved.job, action: "start_recovered" }
+        : { job: saved.job || current, action: "already_updated" };
+    }
+
+    if (Number(current.startLeaseUntil || 0) > this.now()) {
+      return { job: current, action: "start_pending" };
+    }
+
+    const failed = {
+      ...current,
+      status: JOB_STATES.FAILED,
+      startLeaseUntil: null,
+      safeErrorCode: "start_not_recovered",
+      safeErrorMessage: "KeepGoing could not find a provider session for the reserved durable job.",
+      updatedAt: this.now()
+    };
+    const saved = await this.store.compareAndSet(jobId, current.version, failed);
+    return saved.ok
+      ? { job: saved.job, action: "start_not_recovered" }
+      : { job: saved.job || current, action: "already_updated" };
   }
 
   async reconcile(jobId) {
