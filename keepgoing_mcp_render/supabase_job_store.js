@@ -60,6 +60,20 @@ export class SupabaseJobStore {
     return Array.isArray(rows) && rows[0] ? fromRow(rows[0]) : null;
   }
 
+  async listRecoverableJobs({ before, limit = 50 } = {}) {
+    const cutoff = Number(before);
+    if (!Number.isFinite(cutoff)) throw new Error("recovery cutoff required");
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+    const q = new URLSearchParams({
+      status: "in.(queued,working,continuing)",
+      updated_at: "lte." + new Date(cutoff).toISOString(),
+      order: "updated_at.asc",
+      limit: String(safeLimit)
+    });
+    const rows = await this.request("/rest/v1/keepgoing_jobs?" + q.toString(), { method: "GET" });
+    return Array.isArray(rows) ? rows.map(fromRow) : [];
+  }
+
   async compareAndSet(jobId, expectedVersion, next) {
     const q = new URLSearchParams({
       job_id: "eq." + jobId,
