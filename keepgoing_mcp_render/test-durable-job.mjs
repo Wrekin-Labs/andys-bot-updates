@@ -46,6 +46,16 @@ budget.maxAttempts = 1;
 budget = assessRun(budget, { providerStatus: "completed", output: "partial\nSTATUS: PARTIAL", now: 2_000 });
 assert.equal(budget.status, JOB_STATES.BUDGET_EXHAUSTED);
 
+let finalAttempt = base();
+finalAttempt.maxAttempts = 1;
+finalAttempt = assessRun(finalAttempt, { providerStatus: "completed", output: "done\nSTATUS: COMPLETED", now: 2_000 });
+assert.equal(finalAttempt.status, JOB_STATES.COMPLETED);
+
+let noTools = base();
+noTools.toolCallBudgetTotal = 0;
+noTools = assessRun(noTools, { providerStatus: "completed", output: "half\nSTATUS: PARTIAL", toolCallsUsed: 0, now: 2_000 });
+assert.equal(noTools.status, JOB_STATES.CONTINUING);
+
 const prompt = continuationPrompt("checkpoint text", 1, 4);
 assert.match(prompt, /PREVIOUS CHECKPOINT/);
 assert.match(prompt, /attempt 2 of at most 4/i);
