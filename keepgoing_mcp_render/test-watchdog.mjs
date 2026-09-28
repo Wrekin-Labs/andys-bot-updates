@@ -59,4 +59,51 @@ assert.equal(failedStart.safeErrorCode, "ambiguous_start_outcome");
 const untouchedFresh = await store.get("kgj_cccccccccccccccccccccccccccccccc");
 assert.equal(untouchedFresh.status, JOB_STATES.WORKING);
 
+
+// Retention cleanup runs on its own cadence and never deletes active jobs.
+{
+  const retentionStore = new MemoryJobStore();
+  const retentionNow = 200_000_000;
+
+  const oldDone = newJobRecord({
+    id: "kgj_dddddddddddddddddddddddddddddddd",
+    ownerSubjectHash: "ownerhash00000004",
+    now: 1_000
+  });
+  oldDone.status = JOB_STATES.COMPLETED;
+  oldDone.updatedAt = 1_000;
+  await retentionStore.createOrGet({ job: oldDone, ownerSubjectHash: oldDone.ownerSubjectHash });
+
+  const oldActive = newJobRecord({
+    id: "kgj_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    ownerSubjectHash: "ownerhash00000005",
+    now: 1_000
+  });
+  oldActive.status = JOB_STATES.WORKING;
+  oldActive.providerSessionId = "sess_old_active";
+  oldActive.updatedAt = 1_000;
+  await retentionStore.createOrGet({ job: oldActive, ownerSubjectHash: oldActive.ownerSubjectHash });
+
+  const retentionWatchdog = createWatchdog({
+    store: retentionStore,
+    orchestrator: {
+      async reconcile(jobId) {
+        return { action: "working", job: await retentionStore.get(jobId) };
+      }
+    },
+    now: () => retentionNow,
+    staleAfterMs: 30_000,
+    cleanupEveryMs: 60_000,
+    jobRetentionDays: 1
+  });
+
+  const firstCleanup = await retentionWatchdog.runOnce();
+  assert.equal(firstCleanup.cleanup.deleted_jobs, 1);
+  assert.equal(await retentionStore.get(oldDone.id), null);
+  assert.equal((await retentionStore.get(oldActive.id)).status, JOB_STATES.WORKING);
+
+  const secondCleanup = await retentionWatchdog.runOnce();
+  assert.equal(secondCleanup.cleanup, null);
+}
+
 console.log("watchdog tests passed");
