@@ -10,6 +10,15 @@ export class MemoryJobStore {
     return id ? this.get(id) : null;
   }
 
+  async findByProviderSessionId(providerSessionId) {
+    const wanted = String(providerSessionId || "");
+    if (!wanted) return null;
+    for (const row of this.jobs.values()) {
+      if (row.providerSessionId === wanted) return structuredClone(row);
+    }
+    return null;
+  }
+
   async createOrGet({ job, ownerSubjectHash, clientRequestId = null }) {
     const key = clientRequestId ? requestKey(ownerSubjectHash, clientRequestId) : null;
 
