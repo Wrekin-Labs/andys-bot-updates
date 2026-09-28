@@ -1786,9 +1786,22 @@ app.get("/readiness", async (_req, res) => {
     PAYPAL_CLIENT_SECRET &&
     paypalSetupComplete
   );
+  let durableStoreReady = !V12_ENABLED;
+  if (V12_ENABLED && v12Configured()) {
+    try {
+      const runtime = getV12Runtime();
+      durableStoreReady = Boolean(
+        runtime.store?.healthCheck &&
+        (await runtime.store.healthCheck()).ok
+      );
+    } catch {
+      durableStoreReady = false;
+    }
+  }
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
-    OPENAI_WEBHOOK_SECRET
+    OPENAI_WEBHOOK_SECRET &&
+    durableStoreReady
   );
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
@@ -1796,6 +1809,7 @@ app.get("/readiness", async (_req, res) => {
     engine_ready: engineReady,
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
+    durable_store_ready: durableStoreReady,
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
