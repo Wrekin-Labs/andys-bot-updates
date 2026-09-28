@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { MemoryJobStore } from "./durable_store.js";
-import { JOB_STATES } from "./durable_job.js";
+import { JOB_STATES, newJobRecord } from "./durable_job.js";
 
 function engineWith({ failFirstSend = false } = {}) {
   let sends = 0;
@@ -154,6 +154,34 @@ async function startJob(kg, beforeCreateSession = null) {
   engine.advance();
   const done = await kg.reconcile(jobId);
   assert.equal(done.job.status, JOB_STATES.COMPLETED);
+}
+
+// Active-turn budget enforcement cancels runaway provider work.
+{
+  const store = new MemoryJobStore();
+  let cancelled = 0;
+  const engine = {
+    async getSession() { return { status: "in_progress", required_actions: [] }; },
+    async listItems() { return { data: [] }; },
+    async listTurns() {
+      return { data: [{ id: "turn_hot", status: "in_progress", subagent_id: null, usage: { total_tokens: 1200 } }] };
+    },
+    async cancelTurn() { cancelled++; }
+  };
+  const job = newJobRecord({
+    id: "kgj_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    ownerSubjectHash: "ownerhash",
+    now: 1_000,
+    limits: { maxTotalTokens: 1000, maxWallMs: 600_000, maxAttempts: 4 }
+  });
+  job.status = JOB_STATES.WORKING;
+  job.providerSessionId = "sess_hot";
+  await store.createOrGet({ job, ownerSubjectHash: "ownerhash" });
+
+  const kg = new KeepGoingOrchestrator({ engine, store, now: () => 2_000 });
+  const result = await kg.reconcile(job.id);
+  assert.equal(result.job.status, JOB_STATES.BUDGET_EXHAUSTED);
+  assert.equal(cancelled, 1);
 }
 
 console.log("orchestrator tests passed");
