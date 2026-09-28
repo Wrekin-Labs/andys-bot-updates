@@ -41,6 +41,21 @@ export class MemoryJobStore {
     return row ? structuredClone(row) : null;
   }
 
+  async listOwnerJobs(ownerSubjectHash, { limit = 20, activeOnly = false } = {}) {
+    const owner = String(ownerSubjectHash || "");
+    if (!owner) throw new Error("owner subject hash required");
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+    const active = new Set(["queued", "working", "continuing", "input_required"]);
+    const rows = [...this.jobs.values()]
+      .filter((row) =>
+        row.ownerSubjectHash === owner &&
+        (!activeOnly || active.has(row.status))
+      )
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+      .slice(0, safeLimit);
+    return structuredClone(rows);
+  }
+
   async listRecoverableJobs({ before, limit = 50 } = {}) {
     const cutoff = Number(before);
     const rows = [...this.jobs.values()]
