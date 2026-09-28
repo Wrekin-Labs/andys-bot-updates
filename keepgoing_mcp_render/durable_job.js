@@ -94,17 +94,6 @@ export function assessRun(job, {
     return next;
   }
 
-  if (now >= next.wallDeadlineAt ||
-      next.attempt >= next.maxAttempts ||
-      next.tokensUsed >= next.tokenBudgetTotal ||
-      next.toolCallsUsed >= next.toolCallBudgetTotal) {
-    next.status = JOB_STATES.BUDGET_EXHAUSTED;
-    next.safeErrorCode = "budget_exhausted";
-    next.safeErrorMessage = "KeepGoing reached its configured continuation budget.";
-    next.continuationNeeded = false;
-    return next;
-  }
-
   const marker = parseCompletionMarker(output);
   next.completionMarker = marker;
 
@@ -114,14 +103,6 @@ export function assessRun(job, {
   } else {
     next.repeatedOutputCount = 0;
     next.lastOutputHash = outputHash;
-  }
-
-  if (next.repeatedOutputCount >= 2) {
-    next.status = JOB_STATES.FAILED;
-    next.safeErrorCode = "continuation_loop";
-    next.safeErrorMessage = "KeepGoing stopped after repeated identical output.";
-    next.continuationNeeded = false;
-    return next;
   }
 
   if (marker === "COMPLETED" && providerStatus === "completed") {
@@ -135,7 +116,37 @@ export function assessRun(job, {
     return next;
   }
 
-  if (marker === "PARTIAL" || providerStatus === "incomplete" || marker === null) {
+  if (next.repeatedOutputCount >= 2) {
+    next.status = JOB_STATES.FAILED;
+    next.safeErrorCode = "continuation_loop";
+    next.safeErrorMessage = "KeepGoing stopped after repeated identical output.";
+    next.continuationNeeded = false;
+    return next;
+  }
+
+  const wantsContinuation =
+    marker === "PARTIAL" ||
+    providerStatus === "incomplete" ||
+    (providerStatus === "completed" && marker === null);
+
+  if (wantsContinuation) {
+    const toolBudgetReached =
+      next.toolCallBudgetTotal > 0 &&
+      next.toolCallsUsed >= next.toolCallBudgetTotal;
+
+    if (
+      now >= next.wallDeadlineAt ||
+      next.attempt >= next.maxAttempts ||
+      next.tokensUsed >= next.tokenBudgetTotal ||
+      toolBudgetReached
+    ) {
+      next.status = JOB_STATES.BUDGET_EXHAUSTED;
+      next.safeErrorCode = "budget_exhausted";
+      next.safeErrorMessage = "KeepGoing reached its configured continuation budget.";
+      next.continuationNeeded = false;
+      return next;
+    }
+
     next.status = JOB_STATES.CONTINUING;
     next.continuationNeeded = true;
     return next;
