@@ -18,6 +18,7 @@ const PORTAL_URL = process.env.KEEPGOING_PORTAL_URL || "";
 const PUBLIC_BASE_URL = (process.env.KEEPGOING_PUBLIC_BASE_URL || "https://keepgoing-mcp.onrender.com").replace(/\/$/, "");
 const OAUTH_SECRET = process.env.KEEPGOING_OAUTH_SECRET || "";
 const OAUTH_SCOPE = "keepgoing.jobs";
+const OPENAI_APPS_CHALLENGE = process.env.OPENAI_APPS_CHALLENGE || "";
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -713,6 +714,12 @@ function createMcpServer() {
 }
 
 
+app.get("/.well-known/openai-apps-challenge", (_req, res) => {
+  if (!OPENAI_APPS_CHALLENGE) return res.status(404).type("text/plain").send("not configured");
+  res.set("Cache-Control", "no-store");
+  res.type("text/plain").send(OPENAI_APPS_CHALLENGE);
+});
+
 app.get("/.well-known/oauth-protected-resource", (_req, res) => {
   res.json({
     resource: PUBLIC_BASE_URL,
@@ -1029,9 +1036,10 @@ app.get("/privacy", (_req, res) => {
     "<p><strong>Last updated:</strong> 28 September 2026</p>",
     "<p>KeepGoing processes the minimum information needed to operate subscriptions and persistent jobs.</p>",
     "<h2>Information processed</h2>",
-    "<ul><li>Subscription identifiers, plan status and usage counters.</li><li>A private KeepGoing activation token and service access tokens.</li><li>The goal, definition of done and options you submit for a persistent job.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
+    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done and options submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
     "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
+    "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes and inactive subscription records are retained for up to 24 months for billing reconciliation, support, fraud prevention and security, unless a longer period is required by law or an unresolved dispute. OAuth access tokens expire after one hour and refresh tokens after 30 days. Hosting and API providers may retain technical logs or background-response data according to their own published retention policies.</p>",
     "<h2>Your choices</h2><p>Do not submit information you do not want processed by the service. You can cancel a subscription through the available billing provider. For account or privacy questions, contact <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>",
     "<p class=\"muted\">KeepGoing is in commercial beta. This policy will be updated if the data flow or providers materially change.</p>"
   ].join("")));
