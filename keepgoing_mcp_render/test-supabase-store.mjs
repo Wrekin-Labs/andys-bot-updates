@@ -41,6 +41,12 @@ const fakeFetch = async (url, init) => {
     assert.notEqual(body.p_client_request_hash, "req-secret");
     return reply([baseRow]);
   }
+  if (url.includes("/rpc/cleanup_keepgoing_durable_state")) {
+    const body = JSON.parse(init.body);
+    assert.equal(body.p_job_retention_days, 30);
+    assert.equal(body.p_event_retention_days, 14);
+    return reply([{ deleted_jobs: 2, deleted_events: 4 }]);
+  }
   if (init.method === "PATCH") {
     const body = JSON.parse(init.body);
     assert.equal(body.version, 2);
@@ -97,6 +103,12 @@ const listCall = calls.find((c) =>
 );
 assert.ok(listCall, "owner-scoped active job query was not issued");
 assert.ok(listCall.url.includes("limit=10"));
+
+const cleanup = await store.cleanupRetention({
+  jobRetentionDays: 30,
+  eventRetentionDays: 14
+});
+assert.deepEqual(cleanup, { deleted_jobs: 2, deleted_events: 4 });
 
 const event = await store.recordEvent({
   jobId: baseRow.job_id,
