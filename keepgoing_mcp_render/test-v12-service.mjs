@@ -199,6 +199,28 @@ assert.match(sent.at(-1).key, /^kg-user-/);
   assert.equal(keys[0], keys[1]);
 }
 
+
+// Job recovery listing is owner-scoped and does not expose prompt content.
+{
+  const other = newJobRecord({
+    id: "kgj_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ownerSubjectHash: "other-owner",
+    now: 30_000
+  });
+  other.status = JOB_STATES.WORKING;
+  await store.createOrGet({ job: other, ownerSubjectHash: "other-owner" });
+
+  const listed = await service.list("ownerhash", { limit: 20, activeOnly: false });
+  assert.ok(listed.jobs.some((job) => job.job_id === started.job_id));
+  assert.ok(listed.jobs.some((job) => job.job_id === paused.id));
+  assert.ok(!listed.jobs.some((job) => job.job_id === other.id));
+  assert.ok(listed.jobs.every((job) => !("goal" in job) && !("definitionOfDone" in job)));
+
+  const active = await service.list("ownerhash", { limit: 20, activeOnly: true });
+  assert.ok(active.jobs.some((job) => job.job_id === paused.id));
+  assert.ok(!active.jobs.some((job) => job.job_id === started.job_id));
+}
+
 const limits = planLimits("business", true);
 assert.equal(limits.max_attempts, 10);
 assert.equal(limits.max_total_tool_calls, 50);
