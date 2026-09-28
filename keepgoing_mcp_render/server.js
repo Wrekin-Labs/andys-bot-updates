@@ -15,6 +15,9 @@ const CLAIM_URL = process.env.KEEPGOING_CLAIM_URL || "";
 const AUTH_URL = process.env.KEEPGOING_AUTH_URL || "";
 const BILLING_CONFIG_URL = process.env.KEEPGOING_CONFIG_URL || "";
 const PORTAL_URL = process.env.KEEPGOING_PORTAL_URL || "";
+const PUBLIC_BASE_URL = (process.env.KEEPGOING_PUBLIC_BASE_URL || "https://keepgoing-mcp.onrender.com").replace(/\/$/, "");
+const OAUTH_SECRET = process.env.KEEPGOING_OAUTH_SECRET || "";
+const OAUTH_SCOPE = "keepgoing.jobs";
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -160,6 +163,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
 });
 
 app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -182,6 +186,78 @@ const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa64
 
 function digest(value) {
   return crypto.createHash("sha256").update(value || "").digest("hex");
+}
+
+function base64url(buffer) {
+  return Buffer.from(buffer).toString("base64url");
+}
+
+function oauthKey() {
+  if (!OAUTH_SECRET) throw new Error("oauth_not_configured");
+  return crypto.createHash("sha256").update(OAUTH_SECRET, "utf8").digest();
+}
+
+function sealToken(prefix, payload) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", oauthKey(), iv);
+  const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return prefix + base64url(Buffer.concat([iv, tag, ciphertext]));
+}
+
+function unsealToken(prefix, value) {
+  if (!value || !String(value).startsWith(prefix)) throw new Error("invalid_token_format");
+  const packed = Buffer.from(String(value).slice(prefix.length), "base64url");
+  if (packed.length < 29) throw new Error("invalid_token_format");
+  const iv = packed.subarray(0, 12);
+  const tag = packed.subarray(12, 28);
+  const ciphertext = packed.subarray(28);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", oauthKey(), iv);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  return JSON.parse(plaintext);
+}
+
+function validChatGptRedirect(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || url.hostname !== "chatgpt.com") return false;
+    return url.pathname === "/connector_platform_oauth_redirect" ||
+      url.pathname.startsWith("/connector/oauth/");
+  } catch {
+    return false;
+  }
+}
+
+function validChatGptClientId(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" &&
+      url.hostname === "chatgpt.com" &&
+      url.pathname.startsWith("/oauth/") &&
+      url.pathname.endsWith("/client.json");
+  } catch {
+    return false;
+  }
+}
+
+function safeResource(value) {
+  return !value || String(value).replace(/\/$/, "") === PUBLIC_BASE_URL;
+}
+
+function oauthChallenge(res, error = "invalid_token", description = "Authentication is required") {
+  const metadata = PUBLIC_BASE_URL + "/.well-known/oauth-protected-resource";
+  res.set("WWW-Authenticate", 'Bearer resource_metadata="' + metadata + '", error="' + error + '", error_description="' + String(description).replace(/"/g, "") + '"');
+}
+
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function forwardBillingEvent(provider, type, object, tier) {
@@ -378,10 +454,11 @@ function requestToken(req) {
   return [queryToken, headerToken, bearer].find(Boolean) || "";
 }
 
-async function authorise(req, consume = false) {
-  const token = requestToken(req);
+async function validateCustomerToken(token, consume = false) {
   if (!token) return { ok: false, error: "token_required" };
-  if (digest(token) === TOKEN_HASH) return { ok: true, admin: true, tier: "owner", remaining: null };
+  if (digest(token) === TOKEN_HASH) {
+    return { ok: true, admin: true, tier: "owner", remaining: null, subject: "owner" };
+  }
   if (!AUTH_URL) return { ok: false, error: "billing_auth_not_configured" };
   try {
     const response = await fetch(AUTH_URL, {
@@ -391,10 +468,37 @@ async function authorise(req, consume = false) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.allowed) return { ok: false, status: response.status, ...data };
-    return { ok: true, admin: false, ...data };
+    return {
+      ok: true,
+      admin: false,
+      ...data,
+      subject: String(data.subject || data.customer_id || data.subscription_id || digest(token).slice(0, 24))
+    };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
+}
+
+async function authorise(req, consume = false) {
+  let token = requestToken(req);
+  if (!token) return { ok: false, error: "token_required" };
+
+  if (token.startsWith("kgat_")) {
+    try {
+      const payload = unsealToken("kgat_", token);
+      if (payload.type !== "access" || Number(payload.exp || 0) < Math.floor(Date.now() / 1000)) {
+        return { ok: false, error: "oauth_token_expired" };
+      }
+      if (!safeResource(payload.resource) || !String(payload.scope || "").split(" ").includes(OAUTH_SCOPE)) {
+        return { ok: false, error: "oauth_token_invalid_scope" };
+      }
+      token = String(payload.customer_token || "");
+    } catch {
+      return { ok: false, error: "oauth_token_invalid" };
+    }
+  }
+
+  return validateCustomerToken(token, consume);
 }
 
 function outputText(data) {
@@ -520,7 +624,9 @@ function createMcpServer() {
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true)
-    }
+    },
+    securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (args) => {
     try {
       const result = await startJob(args);
@@ -532,7 +638,9 @@ function createMcpServer() {
 
   server.registerTool("get_persistent_job", {
     description: "Check the current state and output of an existing KeepGoing job. Keep polling the same job_id until it completes or needs the user.",
-    inputSchema: { job_id: z.string().min(1).max(200) }
+    inputSchema: { job_id: z.string().min(1).max(200) },
+    securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id }) => {
     try {
       const result = await getJob(job_id);
@@ -547,7 +655,9 @@ function createMcpServer() {
     inputSchema: {
       job_id: z.string().min(1).max(200),
       wait_seconds: z.number().int().min(1).max(25).default(20)
-    }
+    },
+    securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id, wait_seconds }) => {
     try {
       const result = await waitForJob(job_id, wait_seconds);
@@ -559,7 +669,9 @@ function createMcpServer() {
 
   server.registerTool("cancel_persistent_job", {
     description: "Cancel a KeepGoing background job.",
-    inputSchema: { job_id: z.string().min(1).max(200) }
+    inputSchema: { job_id: z.string().min(1).max(200) },
+    securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id }) => {
     try {
       const result = await cancelJob(job_id);
@@ -571,6 +683,210 @@ function createMcpServer() {
 
   return server;
 }
+
+
+app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+  res.json({
+    resource: PUBLIC_BASE_URL,
+    authorization_servers: [PUBLIC_BASE_URL],
+    scopes_supported: [OAUTH_SCOPE],
+    bearer_methods_supported: ["header"]
+  });
+});
+
+app.get("/.well-known/oauth-authorization-server", (_req, res) => {
+  res.json({
+    issuer: PUBLIC_BASE_URL,
+    authorization_endpoint: PUBLIC_BASE_URL + "/oauth/authorize",
+    token_endpoint: PUBLIC_BASE_URL + "/oauth/token",
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"],
+    scopes_supported: [OAUTH_SCOPE],
+    authorization_response_iss_parameter_supported: true
+  });
+});
+
+app.get("/oauth/authorize", (req, res) => {
+  const responseType = String(req.query.response_type || "");
+  const clientId = String(req.query.client_id || "");
+  const redirectUri = String(req.query.redirect_uri || "");
+  const state = String(req.query.state || "");
+  const codeChallenge = String(req.query.code_challenge || "");
+  const method = String(req.query.code_challenge_method || "");
+  const resource = String(req.query.resource || PUBLIC_BASE_URL);
+  const scope = String(req.query.scope || OAUTH_SCOPE);
+
+  if (
+    responseType !== "code" ||
+    !validChatGptClientId(clientId) ||
+    !validChatGptRedirect(redirectUri) ||
+    !state ||
+    !codeChallenge ||
+    method !== "S256" ||
+    !safeResource(resource) ||
+    !scope.split(" ").includes(OAUTH_SCOPE)
+  ) {
+    return res.status(400).type("html").send("<h1>Invalid authorization request</h1><p>Please restart the KeepGoing connection from ChatGPT.</p>");
+  }
+
+  const hidden = {
+    response_type: responseType,
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: method,
+    resource: PUBLIC_BASE_URL,
+    scope: OAUTH_SCOPE
+  };
+
+  const fields = Object.entries(hidden)
+    .map(([k, v]) => '<input type="hidden" name="' + htmlEscape(k) + '" value="' + htmlEscape(v) + '">')
+    .join("");
+
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:560px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px;box-sizing:border-box}input{width:100%;padding:13px;border-radius:10px;border:1px solid #444;background:#0d1117;color:#fff;box-sizing:border-box;margin:10px 0 14px}button{width:100%;padding:12px;border:0;border-radius:10px;font-weight:700}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect KeepGoing</h1><p>Enter the private activation token issued with your KeepGoing subscription.</p><form method="post" action="/oauth/authorize">' + fields + '<label>Activation token</label><input name="activation_token" type="password" autocomplete="off" required><button type="submit">Connect to ChatGPT</button></form><p class="muted">KeepGoing never asks for your ChatGPT password. This page only verifies your KeepGoing subscription.</p></div></body></html>';
+  res.type("html").send(html);
+});
+
+app.post("/oauth/authorize", async (req, res) => {
+  const clientId = String(req.body.client_id || "");
+  const redirectUri = String(req.body.redirect_uri || "");
+  const state = String(req.body.state || "");
+  const codeChallenge = String(req.body.code_challenge || "");
+  const method = String(req.body.code_challenge_method || "");
+  const resource = String(req.body.resource || PUBLIC_BASE_URL);
+  const scope = String(req.body.scope || OAUTH_SCOPE);
+  const activationToken = String(req.body.activation_token || "").trim();
+
+  if (
+    !OAUTH_SECRET ||
+    !validChatGptClientId(clientId) ||
+    !validChatGptRedirect(redirectUri) ||
+    !state ||
+    !codeChallenge ||
+    method !== "S256" ||
+    !safeResource(resource) ||
+    !scope.split(" ").includes(OAUTH_SCOPE)
+  ) {
+    return res.status(400).type("html").send("<h1>Invalid authorization request</h1>");
+  }
+
+  const access = await validateCustomerToken(activationToken, false);
+  if (!access.ok) {
+    return res.status(401).type("html").send('<!doctype html><html><body style="font-family:system-ui;padding:32px"><h1>KeepGoing could not be connected</h1><p>The activation token is invalid or the subscription is not active.</p><p>Return to ChatGPT and try again.</p></body></html>');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const code = sealToken("kgc_", {
+    type: "code",
+    customer_token: activationToken,
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: codeChallenge,
+    resource: PUBLIC_BASE_URL,
+    scope: OAUTH_SCOPE,
+    iat: now,
+    exp: now + 300
+  });
+
+  const target = new URL(redirectUri);
+  target.searchParams.set("code", code);
+  target.searchParams.set("state", state);
+  target.searchParams.set("iss", PUBLIC_BASE_URL);
+  return res.redirect(303, target.toString());
+});
+
+function issueOAuthTokens(customerToken) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    access_token: sealToken("kgat_", {
+      type: "access",
+      customer_token: customerToken,
+      resource: PUBLIC_BASE_URL,
+      scope: OAUTH_SCOPE,
+      iat: now,
+      exp: now + 3600
+    }),
+    token_type: "Bearer",
+    expires_in: 3600,
+    scope: OAUTH_SCOPE,
+    refresh_token: sealToken("kgrt_", {
+      type: "refresh",
+      customer_token: customerToken,
+      resource: PUBLIC_BASE_URL,
+      scope: OAUTH_SCOPE,
+      iat: now,
+      exp: now + 2592000
+    })
+  };
+}
+
+app.post("/oauth/token", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!OAUTH_SECRET) return res.status(503).json({ error: "temporarily_unavailable" });
+
+  const grantType = String(req.body.grant_type || "");
+
+  if (grantType === "authorization_code") {
+    try {
+      const code = unsealToken("kgc_", String(req.body.code || ""));
+      const clientId = String(req.body.client_id || "");
+      const redirectUri = String(req.body.redirect_uri || "");
+      const verifier = String(req.body.code_verifier || "");
+      const resource = String(req.body.resource || PUBLIC_BASE_URL);
+      const now = Math.floor(Date.now() / 1000);
+
+      if (
+        code.type !== "code" ||
+        Number(code.exp || 0) < now ||
+        code.client_id !== clientId ||
+        code.redirect_uri !== redirectUri ||
+        !safeResource(resource) ||
+        !validChatGptClientId(clientId) ||
+        !validChatGptRedirect(redirectUri) ||
+        !verifier
+      ) {
+        return res.status(400).json({ error: "invalid_grant" });
+      }
+
+      const computed = base64url(crypto.createHash("sha256").update(verifier, "utf8").digest());
+      const expected = Buffer.from(String(code.code_challenge || ""), "utf8");
+      const actual = Buffer.from(computed, "utf8");
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+        return res.status(400).json({ error: "invalid_grant" });
+      }
+
+      const access = await validateCustomerToken(String(code.customer_token || ""), false);
+      if (!access.ok) return res.status(401).json({ error: "invalid_grant" });
+      return res.json(issueOAuthTokens(String(code.customer_token || "")));
+    } catch {
+      return res.status(400).json({ error: "invalid_grant" });
+    }
+  }
+
+  if (grantType === "refresh_token") {
+    try {
+      const refresh = unsealToken("kgrt_", String(req.body.refresh_token || ""));
+      const now = Math.floor(Date.now() / 1000);
+      if (
+        refresh.type !== "refresh" ||
+        Number(refresh.exp || 0) < now ||
+        !safeResource(refresh.resource)
+      ) {
+        return res.status(400).json({ error: "invalid_grant" });
+      }
+      const access = await validateCustomerToken(String(refresh.customer_token || ""), false);
+      if (!access.ok) return res.status(401).json({ error: "invalid_grant" });
+      return res.json(issueOAuthTokens(String(refresh.customer_token || "")));
+    } catch {
+      return res.status(400).json({ error: "invalid_grant" });
+    }
+  }
+
+  return res.status(400).json({ error: "unsupported_grant_type" });
+});
 
 app.post("/billing/claim", async (req, res) => {
   const sessionId = String(req.body?.session_id || "");
@@ -714,7 +1030,8 @@ app.get("/readiness", async (_req, res) => {
     engine_ready: engineReady,
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
-    sell_ready: engineReady && billingBackendReady && checkoutReady,
+    oauth_ready: Boolean(OAUTH_SECRET),
+    sell_ready: engineReady && billingBackendReady && checkoutReady && Boolean(OAUTH_SECRET),
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
     protected: true
@@ -731,14 +1048,18 @@ app.get("/health", (_req, res) => {
     model: MODEL,
     paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
     paypalReady: paypalSetupComplete,
-    paypalMode: PAYPAL_MODE
+    paypalMode: PAYPAL_MODE,
+    oauthConfigured: Boolean(OAUTH_SECRET)
   });
 });
 
 app.post("/mcp", async (req, res) => {
   const isStart = req.body?.method === "tools/call" && req.body?.params?.name === "start_persistent_job";
   const access = await authorise(req, isStart);
-  if (!access.ok) return res.status(access.status || 401).json({ error: access.error || "unauthorized", tier: access.tier, used: access.used, limit: access.limit });
+  if (!access.ok) {
+    oauthChallenge(res, access.error === "oauth_token_invalid_scope" ? "insufficient_scope" : "invalid_token", access.error || "Authentication required");
+    return res.status(access.status || 401).json({ error: access.error || "unauthorized", tier: access.tier, used: access.used, limit: access.limit });
+  }
   const server = createMcpServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", async () => {
@@ -755,7 +1076,10 @@ app.post("/mcp", async (req, res) => {
 
 app.get("/mcp", async (req, res) => {
   const access = await authorise(req, false);
-  if (!access.ok) return res.status(access.status || 401).json({ error: access.error || "unauthorized" });
+  if (!access.ok) {
+    oauthChallenge(res, "invalid_token", access.error || "Authentication required");
+    return res.status(access.status || 401).json({ error: access.error || "unauthorized" });
+  }
   res.status(405).json({ error: "Use POST for stateless MCP" });
 });
 
