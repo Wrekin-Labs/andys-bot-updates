@@ -6,11 +6,26 @@ import { JOB_STATES, newJobRecord } from "./durable_job.js";
 
 let turn = 1;
 const sent = [];
+const viewedTurns = [];
 const engine = {
   async createSession() { return { id: "sess_service" }; },
   async getSession() { return { status: "idle", required_actions: [] }; },
   async listItems() {
     return { data: [{ content: [{ type: "output_text", text: turn === 1 ? "half\nSTATUS: PARTIAL" : "done\nSTATUS: COMPLETED" }] }] };
+  },
+  async listTurnItems(_id, turnId) {
+    viewedTurns.push(turnId);
+    return {
+      data: [{
+        id: "message_" + turn,
+        type: "message",
+        turn_id: turnId,
+        status: "completed",
+        content: [{ type: "output_text", text: turn === 1 ? "half\nSTATUS: PARTIAL" : "done\nSTATUS: COMPLETED" }]
+      }],
+      found: true,
+      truncated: false
+    };
   },
   async listTurns() {
     return { data: [{ id: "turn_" + turn, status: "completed", subagent_id: null, usage: { total_tokens: 20 } }] };
@@ -64,9 +79,11 @@ assert.equal(sent.length, 1);
 
 turn = 2;
 await orchestrator.reconcile(started.job_id);
+viewedTurns.length = 0;
 const finished = await service.get(started.job_id, "ownerhash");
 assert.equal(finished.status, JOB_STATES.COMPLETED);
 assert.match(finished.output, /COMPLETED/);
+assert.deepEqual(viewedTurns, ["turn_2"]);
 
 const noLongerActive = await service.list("ownerhash", { activeOnly: true });
 assert.equal(noLongerActive.jobs.length, 0);
