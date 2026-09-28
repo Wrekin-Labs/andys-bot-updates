@@ -25,6 +25,10 @@ function engineWith(outputs) {
       const text = outputs.shift() ?? "done\nSTATUS: COMPLETED";
       return { data: [{ type: "message", content: [{ type: "output_text", text }] }] };
     },
+    async listTurns(id) {
+      seenProviderIds.push(id);
+      return { data: [{ id: "turn_test", status: "completed", subagent_id: null, usage: { total_tokens: 25 } }] };
+    },
     async sendMessage(id) {
       seenProviderIds.push(id);
       sends++;
