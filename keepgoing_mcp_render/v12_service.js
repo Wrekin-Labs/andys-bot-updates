@@ -103,25 +103,78 @@ export function createV12Service({
       sha256(text).slice(0, 24)
     ].join("-").slice(0, 256);
 
-    await engine.sendMessage(job.providerSessionId, text, key);
+    const claimNow = now();
+    const existingKey = String(job.continuationIdempotencyKey || "");
+    const existingLease = Number(job.continuationLeaseUntil || 0);
+
+    if (existingKey && existingKey.startsWith("kg-user-")) {
+      if (existingKey !== key) {
+        throw new Error(
+          "Previous user input delivery is unresolved. Retry the same input or check job status before changing it."
+        );
+      }
+      if (existingLease > claimNow) {
+        return {
+          job_id: job.id,
+          status: job.status,
+          message: "This user input is already being delivered. Check the same job before retrying."
+        };
+      }
+    }
+
+    const claim = {
+      ...job,
+      continuationClaimId: crypto.randomUUID(),
+      continuationIdempotencyKey: key,
+      continuationLeaseUntil: claimNow + 60_000,
+      safeErrorCode: "user_input_pending",
+      safeErrorMessage: null,
+      updatedAt: claimNow
+    };
+    const claimed = await store.compareAndSet(job.id, job.version, claim);
+    if (!claimed.ok) {
+      return {
+        job_id: claimed.job?.id || job.id,
+        status: claimed.job?.status || job.status,
+        message: "The job changed while input was being claimed. Check its current status before retrying."
+      };
+    }
+
+    try {
+      await engine.sendMessage(claimed.job.providerSessionId, text, key);
+    } catch (error) {
+      const retryable = {
+        ...claimed.job,
+        status: "input_required",
+        continuationLeaseUntil: null,
+        safeErrorCode: "user_input_send_unknown",
+        safeErrorMessage: "User input delivery was not confirmed. Retry the exact same input safely.",
+        updatedAt: now()
+      };
+      await store.compareAndSet(claimed.job.id, claimed.job.version, retryable);
+      throw error;
+    }
 
     const next = {
-      ...job,
+      ...claimed.job,
       status: "working",
       continuationNeeded: false,
+      continuationClaimId: null,
+      continuationIdempotencyKey: null,
+      continuationLeaseUntil: null,
       safeErrorCode: null,
       safeErrorMessage: null,
       updatedAt: now(),
       lastProgressAt: now()
     };
-    const saved = await store.compareAndSet(job.id, job.version, next);
-    const finalJob = saved.job || job;
+    const saved = await store.compareAndSet(claimed.job.id, claimed.job.version, next);
+    const finalJob = saved.job || claimed.job;
     return {
       job_id: finalJob.id,
-      status: finalJob.status,
+      status: saved.ok ? finalJob.status : (saved.job?.status || finalJob.status),
       message: saved.ok
         ? "User input accepted. KeepGoing resumed the same durable job."
-        : "The job changed while input was being accepted; check its current status before retrying."
+        : "The job changed after input delivery. Check its current status before retrying."
     };
   }
 
