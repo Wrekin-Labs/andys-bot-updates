@@ -122,9 +122,12 @@ export class KeepGoingOrchestrator {
 
     const providerId = current.providerSessionId;
     const session = await this.engine.getSession(providerId);
-    const items = await this.engine.listItems(providerId, { order: "asc", limit: 100 });
+    const [items, turns] = await Promise.all([
+      this.engine.listItems(providerId, { order: "asc", limit: 100 }),
+      this.engine.listTurns(providerId, { order: "desc", limit: 10 })
+    ]);
     const output = latestSessionText(items);
-    const provider = classifySession(session, output);
+    const provider = classifySession(session, output, turns);
 
     if (provider.providerStatus === "working") {
       const refreshed = { ...current, updatedAt: this.now(), lastProgressAt: this.now() };
@@ -152,8 +155,9 @@ export class KeepGoingOrchestrator {
     const assessed = assessRun(current, {
       providerStatus: provider.providerStatus,
       output: provider.output,
+      tokensUsed: provider.tokensUsed || 0,
       now: this.now(),
-      runId: providerId
+      runId: provider.turnId || providerId
     });
 
     if (!assessed.continuationNeeded) {
