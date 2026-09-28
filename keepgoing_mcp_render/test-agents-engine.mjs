@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifySession, createAgentsEngine, latestSessionText } from "./agents_engine.js";
+import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText } from "./agents_engine.js";
 
 const calls = [];
 const fakeFetch = async (url, init) => {
@@ -9,7 +9,19 @@ const fakeFetch = async (url, init) => {
     status: 200,
     async json() {
       if (url.endsWith("/agents/sessions")) return { id: "sess_abc", status: "in_progress" };
-      if (url.includes("/items")) return { data: [{ type: "message", content: [{ type: "output_text", text: "done\nSTATUS: COMPLETED" }] }] };
+      if (url.includes("/items")) {
+        return { data: [{ type: "message", content: [{ type: "output_text", text: "done\nSTATUS: COMPLETED" }] }] };
+      }
+      if (url.includes("/turns")) {
+        return {
+          data: [{
+            id: "turn_root",
+            status: "completed",
+            subagent_id: null,
+            usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 }
+          }]
+        };
+      }
       if (init?.method === "GET") return { id: "sess_abc", status: "idle", required_actions: [] };
       return { ok: true };
     }
@@ -48,12 +60,35 @@ assert.equal(cancelled.events[0].type, "agent.session.input.cancel");
 const items = await engine.listItems("sess_abc");
 assert.equal(latestSessionText(items), "done\nSTATUS: COMPLETED");
 
+const turns = await engine.listTurns("sess_abc");
+assert.equal(latestRootTurn(turns).id, "turn_root");
+
 const session = await engine.getSession("sess_abc");
-assert.deepEqual(classifySession(session, "done"), { providerStatus: "completed", output: "done" });
-assert.equal(classifySession({ status: "in_progress" }, "").providerStatus, "working");
-assert.equal(classifySession({ status: "failed" }, "").providerStatus, "failed");
-assert.equal(classifySession({ status: "idle", required_actions: [{ type: "function_call" }] }, "").providerStatus, "action_required");
+assert.deepEqual(
+  classifySession(session, "done", turns),
+  { providerStatus: "completed", output: "done", turnId: "turn_root", tokensUsed: 30 }
+);
+
+// Idle alone is not proof of success.
+assert.equal(classifySession({ status: "idle" }, "", { data: [] }).providerStatus, "working");
+assert.equal(
+  classifySession({ status: "idle" }, "", { data: [{ id: "t2", status: "failed", subagent_id: null }] }).providerStatus,
+  "failed"
+);
+assert.equal(
+  classifySession({ status: "idle" }, "", { data: [{ id: "t3", status: "cancelled", subagent_id: null }] }).providerStatus,
+  "cancelled"
+);
+assert.equal(
+  classifySession({ status: "in_progress" }, "", { data: [{ id: "t4", status: "in_progress", subagent_id: null }] }).providerStatus,
+  "working"
+);
+assert.equal(
+  classifySession({ status: "idle", required_actions: [{ type: "function_call" }] }, "", turns).providerStatus,
+  "action_required"
+);
 
 await assert.rejects(() => engine.getSession("../bad"), /valid session id/);
+await assert.rejects(() => engine.listTurns("../bad"), /valid session id/);
 
 console.log("agents engine tests passed");
