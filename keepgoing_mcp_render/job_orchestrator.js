@@ -145,7 +145,7 @@ export class KeepGoingOrchestrator {
       this.engine.listTurns(providerId, { order: "desc", limit: 10 })
     ]);
     const output = latestSessionText(items);
-    const provider = classifySession(session, output, turns);
+    const provider = classifySession(session, output, turns, items);
     const now = this.now();
 
     if (provider.providerStatus === "working") {
