@@ -85,6 +85,19 @@ assert.equal(saved.ok, true);
 assert.equal(saved.job.version, 2);
 assert.equal(saved.job.providerSessionId, "sess_abc");
 
+const listed = await store.listOwnerJobs(baseRow.owner_subject_hash, {
+  limit: 10,
+  activeOnly: true
+});
+assert.equal(listed.length, 1);
+assert.equal(listed[0].id, baseRow.job_id);
+const listCall = calls.find((c) =>
+  c.url.includes("owner_subject_hash=eq.") &&
+  c.url.includes("status=in.%28queued%2Cworking%2Ccontinuing%2Cinput_required%29")
+);
+assert.ok(listCall, "owner-scoped active job query was not issued");
+assert.ok(listCall.url.includes("limit=10"));
+
 const event = await store.recordEvent({
   jobId: baseRow.job_id,
   providerEventId: "evt_1",
