@@ -225,7 +225,8 @@ Code completion is not the same as live readiness. Before enabling v1.2 for cust
 11. Test retention against disposable terminal jobs.
 12. Complete live subscription/claim/cancellation testing.
 13. Complete branded domain, publisher identity, reviewer credentials and OpenAI domain verification.
-14. Record reviewer demo and run the portal tool scan.
+14. Disable canary-only mode only after all owner/live durability drills pass.
+15. Record reviewer demo and run the portal tool scan.
 
 ## Definition of done for v1.2
 
