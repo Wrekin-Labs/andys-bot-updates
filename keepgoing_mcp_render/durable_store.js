@@ -4,13 +4,17 @@ export class MemoryJobStore {
     this.requests = new Map();
   }
 
-  async createOrGet({ job, ownerSubjectHash, clientRequestId = null }) {
-    const requestKey = clientRequestId
-      ? String(ownerSubjectHash || "") + ":" + String(clientRequestId)
-      : null;
+  async findByRequest(ownerSubjectHash, clientRequestId) {
+    if (!clientRequestId) return null;
+    const id = this.requests.get(requestKey(ownerSubjectHash, clientRequestId));
+    return id ? this.get(id) : null;
+  }
 
-    if (requestKey && this.requests.has(requestKey)) {
-      const existingId = this.requests.get(requestKey);
+  async createOrGet({ job, ownerSubjectHash, clientRequestId = null }) {
+    const key = clientRequestId ? requestKey(ownerSubjectHash, clientRequestId) : null;
+
+    if (key && this.requests.has(key)) {
+      const existingId = this.requests.get(key);
       return { created: false, job: structuredClone(this.jobs.get(existingId)) };
     }
     if (this.jobs.has(job.id)) {
@@ -19,7 +23,7 @@ export class MemoryJobStore {
 
     const record = { ...structuredClone(job), version: 1 };
     this.jobs.set(record.id, record);
-    if (requestKey) this.requests.set(requestKey, record.id);
+    if (key) this.requests.set(key, record.id);
     return { created: true, job: structuredClone(record) };
   }
 
@@ -38,4 +42,8 @@ export class MemoryJobStore {
     this.jobs.set(current.id, record);
     return { ok: true, job: structuredClone(record) };
   }
+}
+
+function requestKey(ownerSubjectHash, clientRequestId) {
+  return String(ownerSubjectHash || "") + ":" + String(clientRequestId || "");
 }
