@@ -178,26 +178,101 @@ async function plaidPost(path, body) {
   return data;
 }
 
+async function gcCreateTokenWithSecrets(secretId, secretKey) {
+  const response = await fetch('https://bankaccountdata.gocardless.com/api/v2/token/new/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ secret_id: secretId, secret_key: secretKey })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || data.summary || ('GoCardless authentication failed (' + response.status + ')'));
+  if (!data.access) throw new Error('GoCardless did not return an access token');
+  return data;
+}
+
+async function gcAccessToken() {
+  const config = await getConfig();
+  if (!config || config.provider !== 'gocardless') throw new Error('GoCardless is not configured');
+  const secretId = decryptSecret(config.encrypted_gc_secret_id);
+  const secretKey = decryptSecret(config.encrypted_gc_secret_key);
+  const tokens = await gcCreateTokenWithSecrets(secretId, secretKey);
+  return tokens.access;
+}
+
+async function gcFetch(path, options = {}, accessToken = null) {
+  const token = accessToken || await gcAccessToken();
+  const response = await fetch('https://bankaccountdata.gocardless.com' + path, {
+    method: options.method || 'GET',
+    headers: {
+      accept: 'application/json',
+      authorization: 'Bearer ' + token,
+      ...(options.body ? { 'content-type': 'application/json' } : {})
+    },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {})
+  });
+  const raw = await response.text();
+  const data = raw ? (() => { try { return JSON.parse(raw); } catch { return { detail: raw }; } })() : {};
+  if (!response.ok) throw new Error(data.detail || data.summary || ('GoCardless request failed (' + response.status + ')'));
+  return data;
+}
+
+function gcAccountIds(connection) {
+  const data = connection && connection.provider_data && typeof connection.provider_data === 'object' ? connection.provider_data : {};
+  return Array.isArray(data.accounts) ? data.accounts : [];
+}
+
+function maskIdentifier(value) {
+  const v = String(value || '').replace(/\s+/g, '');
+  if (!v) return null;
+  return v.length <= 4 ? v : '••••' + v.slice(-4);
+}
+
 async function getConnection() {
   const row = await dbRpc('get_connection');
   if (!row) return null;
-  return { ...row, access_token: decryptSecret(row.encrypted_access_token) };
+  if (row.provider === 'plaid' && row.encrypted_access_token) {
+    return { ...row, access_token: decryptSecret(row.encrypted_access_token) };
+  }
+  return row;
 }
 
 async function bankStatus() {
   const c = await getConnection();
+  const gcAccounts = c && c.provider === 'gocardless' ? gcAccountIds(c) : [];
+  const connected = Boolean(c && (c.provider !== 'gocardless' || gcAccounts.length));
   return {
-    connected: Boolean(c),
+    connected,
     provider: c ? c.provider : null,
     institution_id: c ? c.institution_id : null,
     institution_name: c ? c.institution_name : null,
-    consent_expiration_time: c ? c.consent_expiration_time : null
+    consent_expiration_time: c ? c.consent_expiration_time : null,
+    accounts_connected: c && c.provider === 'gocardless' ? gcAccounts.length : undefined
   };
 }
 
 async function listAccounts() {
   const c = await getConnection();
   if (!c) throw new Error('No bank is connected yet');
+
+  if (c.provider === 'gocardless') {
+    const ids = gcAccountIds(c);
+    if (!ids.length) throw new Error('Barclays authorisation has not completed yet');
+    const access = await gcAccessToken();
+    const rows = [];
+    for (const id of ids) {
+      const a = await gcFetch('/api/v2/accounts/' + encodeURIComponent(id) + '/', {}, access);
+      rows.push({
+        account_id: a.id || id,
+        name: a.name || a.owner_name || 'Barclays account',
+        owner_name: a.owner_name || null,
+        iban_masked: maskIdentifier(a.iban),
+        status: a.status || null,
+        institution_id: a.institution_id || c.institution_id
+      });
+    }
+    return rows;
+  }
+
   const data = await plaidPost('/accounts/get', { access_token: c.access_token });
   return (data.accounts || []).map((a) => ({
     account_id: a.account_id,
@@ -213,6 +288,19 @@ async function listAccounts() {
 async function getBalances() {
   const c = await getConnection();
   if (!c) throw new Error('No bank is connected yet');
+
+  if (c.provider === 'gocardless') {
+    const ids = gcAccountIds(c);
+    if (!ids.length) throw new Error('Barclays authorisation has not completed yet');
+    const access = await gcAccessToken();
+    const rows = [];
+    for (const id of ids) {
+      const data = await gcFetch('/api/v2/accounts/' + encodeURIComponent(id) + '/balances/', {}, access);
+      rows.push({ account_id: id, balances: data.balances || [] });
+    }
+    return rows;
+  }
+
   const data = await plaidPost('/accounts/balance/get', { access_token: c.access_token });
   return (data.accounts || []).map((a) => ({
     account_id: a.account_id,
@@ -225,10 +313,49 @@ async function getBalances() {
   }));
 }
 
+function gcTransaction(row, accountId, pending) {
+  const amountObj = row.transactionAmount || row.transaction_amount || {};
+  const amount = Number(amountObj.amount ?? row.amount ?? 0);
+  return {
+    transaction_id: row.transactionId || row.entryReference || row.internalTransactionId || null,
+    account_id: accountId,
+    date: row.bookingDate || row.valueDate || row.transactionDate || null,
+    name: row.remittanceInformationUnstructured || row.additionalInformation || row.creditorName || row.debtorName || row.bankTransactionCode || 'Transaction',
+    counterparty: row.creditorName || row.debtorName || null,
+    amount,
+    iso_currency_code: amountObj.currency || null,
+    direction: amount < 0 ? 'out' : amount > 0 ? 'in' : 'unknown',
+    pending,
+    bank_transaction_code: row.bankTransactionCode || null
+  };
+}
+
 async function getTransactions(input) {
   const c = await getConnection();
   if (!c) throw new Error('No bank is connected yet');
   const wanted = Math.max(1, Math.min(Number(input.limit || 100), 500));
+
+  if (c.provider === 'gocardless') {
+    const ids = gcAccountIds(c);
+    if (!ids.length) throw new Error('Barclays authorisation has not completed yet');
+    const selected = Array.isArray(input.account_ids) && input.account_ids.length
+      ? ids.filter((id) => input.account_ids.includes(id))
+      : ids;
+    const access = await gcAccessToken();
+    const result = [];
+    for (const id of selected) {
+      const qs = new URLSearchParams();
+      if (input.start_date) qs.set('date_from', input.start_date);
+      if (input.end_date) qs.set('date_to', input.end_date);
+      const data = await gcFetch('/api/v2/accounts/' + encodeURIComponent(id) + '/transactions/?' + qs.toString(), {}, access);
+      const tx = data.transactions || {};
+      for (const row of tx.booked || []) result.push(gcTransaction(row, id, false));
+      for (const row of tx.pending || []) result.push(gcTransaction(row, id, true));
+    }
+    result.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    return result.slice(0, wanted);
+  }
+
   const result = [];
   let offset = 0;
   let total = Number.POSITIVE_INFINITY;
@@ -277,17 +404,33 @@ function setupPage(message = '') {
     '<h1>Barclays Bridge</h1><p>Secure one-time setup. Your Barclays password, PIN and one-time codes are never entered here.</p>' +
     (message ? '<div class="err">' + esc(message) + '</div>' : '') +
     '<form method="post" action="/setup"><label>One-time setup code</label><input name="bootstrap_code" required autocomplete="one-time-code">' +
-    '<label>Plaid Client ID</label><input name="plaid_client_id" required autocomplete="off">' +
-    '<label>Plaid Secret</label><input name="plaid_secret" type="password" required autocomplete="new-password">' +
-    '<label>Plaid environment</label><select name="plaid_env"><option value="production">Production (real Barclays account)</option><option value="sandbox">Sandbox (testing only)</option></select>' +
+    '<label>Open Banking provider</label><select id="provider" name="provider"><option value="gocardless" selected>GoCardless Bank Account Data — recommended for UK Barclays</option><option value="plaid">Plaid — fallback</option></select>' +
+    '<div id="gc-fields"><label>GoCardless User Secret ID</label><input id="gc-id" name="gc_secret_id" autocomplete="off">' +
+    '<label>GoCardless Secret Key</label><input id="gc-key" name="gc_secret_key" type="password" autocomplete="new-password">' +
+    '<p class="muted">Get these from the GoCardless Bank Account Data portal → User Secrets. Enter them here directly; do not send them in chat.</p></div>' +
+    '<div id="plaid-fields" style="display:none"><label>Plaid Client ID</label><input id="plaid-id" name="plaid_client_id" autocomplete="off">' +
+    '<label>Plaid Secret</label><input id="plaid-key" name="plaid_secret" type="password" autocomplete="new-password">' +
+    '<label>Plaid environment</label><select name="plaid_env"><option value="production">Production (real Barclays account)</option><option value="sandbox">Sandbox (testing only)</option></select></div>' +
     '<label>Bridge passphrase</label><input name="bridge_secret" type="password" minlength="12" required autocomplete="new-password">' +
     '<p class="muted">Choose a new passphrase used only to approve ChatGPT read-only access to this bridge. Do not reuse your Barclays password.</p>' +
-    '<button type="submit">Save secure setup</button></form>');
+    '<button type="submit">Save secure setup</button></form>' +
+    '<script>const p=document.getElementById("provider"),g=document.getElementById("gc-fields"),q=document.getElementById("plaid-fields"),gi=document.getElementById("gc-id"),gk=document.getElementById("gc-key"),pi=document.getElementById("plaid-id"),pk=document.getElementById("plaid-key");function t(){const x=p.value==="gocardless";g.style.display=x?"block":"none";q.style.display=x?"none":"block";gi.required=x;gk.required=x;pi.required=!x;pk.required=!x}p.onchange=t;t();</script>');
 }
 
-function connectPage() {
+function connectPage(config) {
+  if (config && config.provider === 'gocardless') {
+    return pageShell('Connect Barclays',
+      '<h1>Connect Barclays</h1><p>This uses UK Open Banking through GoCardless. Barclays authentication happens on the bank connection flow; this bridge never receives your Barclays password or PIN.</p>' +
+      '<label>Bridge passphrase</label><input id="secret" type="password" autocomplete="current-password"><button id="load">Find Barclays connections</button>' +
+      '<div id="pick" style="display:none"><label>Barclays connection</label><select id="bank"></select><button id="connect">Continue to Barclays</button></div>' +
+      '<div id="status" class="muted" style="margin-top:14px"></div>' +
+      '<script>const status=document.getElementById("status"),secret=document.getElementById("secret"),pick=document.getElementById("pick"),bank=document.getElementById("bank");' +
+      'document.getElementById("load").onclick=async()=>{try{status.textContent="Checking available Barclays connections...";const r=await fetch("/gocardless/banks",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bridge_secret:secret.value})});const j=await r.json();if(!r.ok)throw new Error(j.error||"Could not load banks");bank.innerHTML="";for(const x of j.banks){const o=document.createElement("option");o.value=x.id;o.textContent=x.name;bank.appendChild(o)}if(!j.banks.length)throw new Error("No Barclays connection is currently available");pick.style.display="block";status.textContent="Choose the Barclays connection that matches your account."; }catch(e){status.textContent=e.message}};' +
+      'document.getElementById("connect").onclick=async()=>{try{const opt=bank.options[bank.selectedIndex];status.textContent="Creating secure Barclays authorisation...";const r=await fetch("/gocardless/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bridge_secret:secret.value,institution_id:bank.value,institution_name:opt&&opt.textContent})});const j=await r.json();if(!r.ok)throw new Error(j.error||"Could not start");location.href=j.link}catch(e){status.textContent=e.message}};</script>');
+  }
+
   return pageShell('Connect Barclays',
-    '<h1>Connect Barclays</h1><p>This uses UK Open Banking through Plaid. You authenticate with Barclays on Barclays\' own screen.</p>' +
+    '<h1>Connect Barclays</h1><p>This uses UK Open Banking through Plaid. You authenticate with Barclays on the bank connection screen.</p>' +
     '<label>Bridge passphrase</label><input id="secret" type="password" autocomplete="current-password"><button id="connect">Connect Barclays</button>' +
     '<div id="status" class="muted" style="margin-top:14px"></div>' +
     '<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script><script>' +
@@ -343,7 +486,7 @@ async function handle(req, res) {
   const url = new URL(req.url || '/', baseUrl(req));
   const path = url.pathname;
 
-  if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true, service: 'barclays-bridge', version: '0.3.0' });
+  if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true, service: 'barclays-bridge', version: '0.4.0' });
 
   if (req.method === 'GET' && path === '/') {
     const config = await getConfig().catch(() => null);
@@ -361,25 +504,128 @@ async function handle(req, res) {
     const code = String(form.bootstrap_code || '').trim().toUpperCase();
     const bootstrap = await dbRpc('get_bootstrap', { code });
     if (!bootstrap || bootstrap.used || new Date(bootstrap.expires_at).getTime() <= Date.now()) return html(res, 403, setupPage('Setup code is invalid, expired or already used.'));
-    const clientId = String(form.plaid_client_id || '').trim();
-    const plaidSecret = String(form.plaid_secret || '').trim();
-    const plaidEnv = form.plaid_env === 'sandbox' ? 'sandbox' : 'production';
+
+    const provider = form.provider === 'plaid' ? 'plaid' : 'gocardless';
     const bridgeSecret = String(form.bridge_secret || '');
-    if (!clientId || !plaidSecret || bridgeSecret.length < 12) return html(res, 400, setupPage('Complete all fields and use a bridge passphrase of at least 12 characters.'));
-    await dbRpc('put_config', {
-      plaid_client_id: clientId,
-      encrypted_plaid_secret: encryptSecret(plaidSecret),
-      plaid_env: plaidEnv,
-      bridge_login_hash: makePasswordHash(bridgeSecret)
-    });
+    if (bridgeSecret.length < 12) return html(res, 400, setupPage('Use a bridge passphrase of at least 12 characters.'));
+
+    if (provider === 'gocardless') {
+      const secretId = String(form.gc_secret_id || '').trim();
+      const secretKey = String(form.gc_secret_key || '').trim();
+      if (!secretId || !secretKey) return html(res, 400, setupPage('Enter both GoCardless User Secret values.'));
+      try { await gcCreateTokenWithSecrets(secretId, secretKey); }
+      catch (e) { return html(res, 400, setupPage('GoCardless credentials could not be verified: ' + e.message)); }
+      await dbRpc('put_config', {
+        provider: 'gocardless',
+        encrypted_gc_secret_id: encryptSecret(secretId),
+        encrypted_gc_secret_key: encryptSecret(secretKey),
+        plaid_client_id: '',
+        encrypted_plaid_secret: '',
+        plaid_env: '',
+        bridge_login_hash: makePasswordHash(bridgeSecret)
+      });
+    } else {
+      const clientId = String(form.plaid_client_id || '').trim();
+      const plaidSecret = String(form.plaid_secret || '').trim();
+      const plaidEnv = form.plaid_env === 'sandbox' ? 'sandbox' : 'production';
+      if (!clientId || !plaidSecret) return html(res, 400, setupPage('Enter the Plaid Client ID and Secret.'));
+      await dbRpc('put_config', {
+        provider: 'plaid',
+        plaid_client_id: clientId,
+        encrypted_plaid_secret: encryptSecret(plaidSecret),
+        plaid_env: plaidEnv,
+        encrypted_gc_secret_id: '',
+        encrypted_gc_secret_key: '',
+        bridge_login_hash: makePasswordHash(bridgeSecret)
+      });
+    }
+
     const used = await dbRpc('use_bootstrap', { code });
     if (!used || !used.ok) throw new Error('Could not consume setup code');
-    return html(res, 200, pageShell('Setup complete', '<h1>Setup complete</h1><div class="ok">Plaid credentials were stored encrypted. The one-time setup code is now disabled.</div><p><a class="btn" href="/connect">Connect Barclays</a></p>'));
+    return html(res, 200, pageShell('Setup complete', '<h1>Setup complete</h1><div class="ok">Open Banking credentials were verified and stored encrypted. The one-time setup code is now disabled.</div><p><a class="btn" href="/connect">Connect Barclays</a></p>'));
   }
 
-  if (req.method === 'GET' && path === '/connect') return html(res, 200, connectPage());
+  if (req.method === 'GET' && path === '/connect') {
+    const config = await getConfig().catch(() => null);
+    if (!config) return html(res, 400, pageShell('Setup required', '<h1>Setup required</h1><p>Complete the one-time setup first.</p><a class="btn" href="/setup">Open setup</a>'));
+    return html(res, 200, connectPage(config));
+  }
 
-  if (req.method === 'POST' && path === '/link-token') {
+  if (req.method === 'POST' && path === '/gocardless/banks') {
+    const body = await bodyJson(req);
+    const config = await requireBridgeSecret(body.bridge_secret || '');
+    if (config.provider !== 'gocardless') return json(res, 400, { error: 'GoCardless is not the configured provider' });
+    const access = await gcAccessToken();
+    const institutions = await gcFetch('/api/v2/institutions/?country=gb', {}, access);
+    const banks = (Array.isArray(institutions) ? institutions : [])
+      .filter((b) => /barclays/i.test(String(b.name || '')) && !/barclaycard/i.test(String(b.name || '')))
+      .map((b) => ({ id: b.id, name: b.name }))
+      .sort((a,b) => a.name.localeCompare(b.name));
+    return json(res, 200, { banks });
+  }
+
+  if (req.method === 'POST' && path === '/gocardless/start') {
+    const body = await bodyJson(req);
+    const config = await requireBridgeSecret(body.bridge_secret || '');
+    if (config.provider !== 'gocardless') return json(res, 400, { error: 'GoCardless is not the configured provider' });
+    const access = await gcAccessToken();
+    const institutions = await gcFetch('/api/v2/institutions/?country=gb', {}, access);
+    const selected = (Array.isArray(institutions) ? institutions : []).find((b) =>
+      b.id === body.institution_id &&
+      /barclays/i.test(String(b.name || '')) &&
+      !/barclaycard/i.test(String(b.name || ''))
+    );
+    if (!selected) return json(res, 400, { error: 'Choose a valid Barclays connection' });
+    const requisition = await gcFetch('/api/v2/requisitions/', {
+      method: 'POST',
+      body: {
+        redirect: baseUrl(req) + '/gocardless/return',
+        institution_id: selected.id,
+        reference: 'barclays-bridge-' + crypto.randomUUID(),
+        user_language: 'EN'
+      }
+    }, access);
+    await dbRpc('put_connection', {
+      provider: 'gocardless',
+      institution_id: selected.id,
+      institution_name: selected.name,
+      item_id: requisition.id,
+      encrypted_access_token: '',
+      consent_expiration_time: '',
+      provider_data: { status: 'pending', accounts: [] }
+    });
+    return json(res, 200, { link: requisition.link });
+  }
+
+  if (req.method === 'GET' && path === '/gocardless/return') {
+    const c = await getConnection();
+    if (!c || c.provider !== 'gocardless') return html(res, 400, pageShell('No connection', '<h1>No pending Barclays connection</h1>'));
+    try {
+      const access = await gcAccessToken();
+      const requisition = await gcFetch('/api/v2/requisitions/' + encodeURIComponent(c.item_id) + '/', {}, access);
+      const accounts = Array.isArray(requisition.accounts) ? requisition.accounts : [];
+      const status = typeof requisition.status === 'string' ? requisition.status : (requisition.status && (requisition.status.short || requisition.status.code)) || '';
+      if (!accounts.length) {
+        return html(res, 409, pageShell('Barclays connection', '<h1>Authorisation not complete</h1><p>The bank connection returned, but no accounts are linked yet. Status: <strong>' + esc(status || 'unknown') + '</strong>.</p><a class="btn" href="/connect">Try again</a>'));
+      }
+      await dbRpc('put_connection', {
+        provider: 'gocardless',
+        institution_id: c.institution_id,
+        institution_name: c.institution_name,
+        item_id: c.item_id,
+        encrypted_access_token: '',
+        consent_expiration_time: '',
+        provider_data: { status: status || 'LN', accounts }
+      });
+      return html(res, 200, pageShell('Barclays connected', '<h1>Barclays connected</h1><div class="ok">Read-only Open Banking access is active for ' + accounts.length + ' account' + (accounts.length === 1 ? '' : 's') + '.</div><p>You can close this page. Next, connect the MCP endpoint to ChatGPT.</p>'));
+    } catch (e) {
+      return html(res, 500, pageShell('Barclays connection error', '<h1>Could not finish connection</h1><div class="err">' + esc(e.message) + '</div><a class="btn" href="/connect">Try again</a>'));
+    }
+  }
+
+  if (req.method === 'POST' && path === '/link-token')
+
+if (req.method === 'POST' && path === '/link-token') {
     const body = await bodyJson(req);
     await requireBridgeSecret(body.bridge_secret || '');
     const data = await plaidPost('/link/token/create', {
@@ -419,13 +665,20 @@ async function handle(req, res) {
     await requireBridgeSecret(body.bridge_secret || '');
     const c = await getConnection();
     if (c) {
-      try { await plaidPost('/item/remove', { access_token: c.access_token }); } catch {}
+      if (c.provider === 'plaid' && c.access_token) {
+        try { await plaidPost('/item/remove', { access_token: c.access_token }); } catch {}
+      } else if (c.provider === 'gocardless') {
+        try {
+          const access = await gcAccessToken();
+          await gcFetch('/api/v2/requisitions/' + encodeURIComponent(c.item_id) + '/', { method: 'DELETE' }, access);
+        } catch {}
+      }
       await dbRpc('delete_connection');
     }
     return json(res, 200, { ok: true });
   }
 
-  if (req.method === 'GET' && path === '/.well-known/oauth-protected-resource') {
+if (req.method === 'GET' && path === '/.well-known/oauth-protected-resource') {
     const base = baseUrl(req);
     return json(res, 200, { resource: base + '/mcp', authorization_servers: [base], scopes_supported: ['bank.read'], bearer_methods_supported: ['header'] });
   }
@@ -504,7 +757,7 @@ async function handle(req, res) {
   if (path === '/mcp' && req.method === 'POST') {
     let body;
     try { body = await bodyJson(req); } catch { return rpcError(res, null, -32700, 'Parse error', 400); }
-    if (body && body.method === 'initialize') return rpcResponse(res, body.id, { protocolVersion: (body.params && body.params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'barclays-bridge', version: '0.3.0' }, instructions: 'Read-only Barclays bridge. No payment or transfer tools exist.' });
+    if (body && body.method === 'initialize') return rpcResponse(res, body.id, { protocolVersion: (body.params && body.params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'barclays-bridge', version: '0.4.0' }, instructions: 'Read-only Barclays bridge. No payment or transfer tools exist.' });
     if (body && body.method === 'notifications/initialized') { res.writeHead(204); return res.end(); }
     const auth = String(req.headers.authorization || '');
     try {
