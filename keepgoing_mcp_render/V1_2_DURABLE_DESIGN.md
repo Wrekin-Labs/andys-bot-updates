@@ -1,133 +1,239 @@
 # KeepGoing v1.2 durable continuation design
 
-## Why this upgrade
+## Status
 
-KeepGoing v1.1 correctly avoids duplicate background starts by preserving a single OpenAI response ID and polling it. The weakness is that a single response can finish incomplete or PARTIAL, and the service itself does not yet own a durable multi-attempt job lifecycle.
+Implementation status: **feature-flagged beta candidate on `keepgoing-v1.2-durable-agent`**.
 
-v1.2 separates the KeepGoing job from any one model response.
+The production v1.1 path remains available. v1.2 must not be enabled for paid traffic until the durable SQL migration, OpenAI webhook, live readiness probe and end-to-end production drills are complete.
 
-## Research-backed design
+## Why v1.2 exists
 
-### MCP Tasks patterns to adopt
-The official MCP Tasks extension uses a stable task ID, durable states, tasks/get polling, explicit input_required state, cancellation, and a recommended polling interval. KeepGoing should mirror those semantics internally even while exposing ordinary MCP tools for broad ChatGPT compatibility.
+KeepGoing v1.1 preserves one OpenAI background Response ID and polls it. That removes many manual “continue” prompts, but one Response is still one finite model run.
 
-References:
-- https://github.com/modelcontextprotocol/ext-tasks
-- https://tasks.extensions.modelcontextprotocol.io/
+v1.2 introduces a KeepGoing-owned durable job that can span multiple OpenAI Agent turns. The stable KeepGoing job ID survives client/chat disconnects and is independent of the provider session ID.
 
-### Durable execution patterns
-Long-running workflow systems converge on:
-- checkpoint completed work;
-- retry only the failed/unfinished step;
-- use idempotency keys;
-- persist state before acknowledging work;
-- hard concurrency/rate/budget limits;
-- durable waits for user/external input;
-- replay/reconcile after crashes.
+## Architecture
 
-References:
-- https://github.com/inngest/inngest
-- https://github.com/temporalio/sdk-typescript
-- https://github.com/AndresSaa/mcp-durable-tasks
+### Stable KeepGoing job
 
-### Recommended OpenAI engine direction
-Use a stable KeepGoing-owned job ID and map it to a durable OpenAI session/conversation when available. Each continuation becomes another turn/response under that job. Polling remains a client convenience; a server-side worker/webhook path should own progress.
+A durable job is created with an internal `kgj_...` ID before provider work begins.
 
-Fallback: keep the existing Responses API background engine during migration.
+The database stores only safe orchestration metadata:
+- hashed owner/customer identifier;
+- hashed client request identifier;
+- provider session ID;
+- state/version;
+- attempt and budget counters;
+- leases and idempotency keys;
+- safe error codes/messages;
+- timestamps and completion marker hashes/state.
 
-## Job state machine
+It deliberately does not store raw prompts, model output, OAuth tokens, activation tokens or passwords.
+
+### Provider engine
+
+The v1.2 provider engine uses an OpenAI Agents API session:
+- one durable KeepGoing job maps to one provider session;
+- each continuation is another input/turn in that session;
+- live web search can be enabled for the agent;
+- provider turn status, tool outcomes and saved items are inspected before declaring completion;
+- latest-turn items are paged newest-first by `turn_id`, so long session history does not hide the current result or tool usage.
+
+### Job state machine
 
 States:
-- queued
-- working
-- continuing
-- input_required
-- completed
-- failed
-- cancelled
-- budget_exhausted
+- `queued`
+- `working`
+- `continuing`
+- `input_required`
+- `completed`
+- `failed`
+- `cancelled`
+- `budget_exhausted`
 
-Every model attempt must end with:
-- STATUS: COMPLETED
-- STATUS: NEEDS_USER
-- STATUS: PARTIAL
+Every root turn is instructed to end with exactly one marker:
+- `STATUS: COMPLETED`
+- `STATUS: NEEDS_USER`
+- `STATUS: PARTIAL`
 
-The server validates the marker against provider status and budgets. It does not trust text alone.
-
-## Hard safety/cost stops
-
-Each job has:
-- maximum continuation attempts;
-- total token budget;
-- total tool-call budget;
+The marker is not trusted by itself. KeepGoing also checks:
+- root turn status;
+- failed/incomplete tool work;
+- token/tool budgets;
 - wall-clock deadline;
-- repeated-output loop detector.
+- attempt count;
+- duplicate/repeated output.
 
-A job stops rather than continuing forever when any hard limit is reached.
+## Concurrency and idempotency
 
-## Duplicate prevention
+### Start
+1. Atomically reserve owner + hashed client request in Supabase.
+2. Only the winning caller consumes one job quota allowance.
+3. Only the winning caller creates the provider session.
+4. Persist provider session ID using compare-and-set.
+5. If the provider acknowledgement is lost, watchdog recovery searches provider session metadata by KeepGoing job ID rather than blindly starting a second session.
 
-Add a client_request_id/idempotency key to start_persistent_job. Repeated starts with the same customer + client_request_id return the existing job instead of consuming another job quota.
+### Automatic continuation
+1. Assess a terminal root turn exactly once using `lastAssessedTurnId`.
+2. If PARTIAL/incomplete and within budgets, CAS-claim a continuation lease.
+3. Generate deterministic provider idempotency key.
+4. Send continuation.
+5. If acknowledgement is lost, preserve the same key and retry that same continuation later.
 
-## Recovery/watchdog
+### User-input resume
+1. Job must be `input_required`.
+2. Hash the supplied input into a deterministic resume idempotency key.
+3. CAS-claim delivery before sending provider input.
+4. Concurrent duplicate resumes do not both reach the provider.
+5. If outcome is unknown, only the exact same input can be retried with the same key.
 
-A watchdog should periodically reconcile non-terminal jobs:
-1. read persisted job state;
-2. fetch current provider state;
-3. update progress;
-4. if PARTIAL/incomplete and under budget, enqueue exactly one continuation;
-5. if NEEDS_USER, stop in input_required;
-6. if stale but provider still working, leave it alone;
-7. if webhook/poll was missed, repair state idempotently.
+## Recovery
 
-## Observability
+### Signed OpenAI webhook
+The webhook endpoint:
+- receives raw request body before JSON middleware;
+- verifies the OpenAI signature;
+- deduplicates provider event IDs;
+- maps provider session to durable job;
+- stores safe event metadata only;
+- reconciles relevant session lifecycle events.
 
-Record only safe metadata:
-- job ID;
-- hashed customer subject;
-- provider run/session IDs;
-- state transitions;
-- attempt number;
-- token/tool usage;
-- timestamps;
-- safe error code.
+### Watchdog
+The watchdog scans stale non-terminal jobs and:
+- attaches a provider session after a lost start acknowledgement when it can be recovered safely;
+- reconciles working/continuing jobs;
+- never blindly creates a second provider session for an ambiguous start;
+- repairs progress after missed webhook/client polling;
+- runs bounded durable metadata retention on a slower cadence.
 
-Do not log activation tokens, OAuth tokens, passwords or raw private credentials.
+## Job recovery across chats
 
-## Implementation sequence
+`list_persistent_jobs` returns only the authenticated customer's own safe job metadata.
 
-### Phase A — prototype (this branch)
-- durable_job.js state machine;
-- completion marker parser;
+A later/new ChatGPT conversation can:
+1. list active jobs;
+2. select the existing stable job ID;
+3. get/wait for the current result;
+4. resume it if it is `input_required`;
+5. cancel it if needed.
+
+Raw original prompts are not returned by the job list.
+
+## Safety and cost boundaries
+
+Commercial default model: GPT-6 Luna unless explicitly overridden.
+
+Current per-job ceilings:
+
+### Pro
+- 6 attempts/turns maximum;
+- 20,000 aggregate model tokens;
+- up to 3 web/tool calls when web is enabled;
+- 2-hour wall-clock window.
+
+### Business / owner
+- 8 attempts/turns maximum;
+- 30,000 aggregate model tokens;
+- up to 5 web/tool calls when web is enabled;
+- 4-hour wall-clock window.
+
+These are hard ceilings, not target usage. Jobs stop earlier on completion or genuine user-input need.
+
+## Durable schema security
+
+`sql/durable_jobs.sql` implements:
+- RLS on durable job/event tables;
+- no anon/authenticated access;
+- explicit service-role-only grants;
+- atomic reservation RPC using `SECURITY INVOKER`;
+- bounded retention cleanup RPC using `SECURITY INVOKER`;
+- unique provider event IDs;
+- unique owner + client-request hash;
+- provider session uniqueness;
+- optimistic versioning.
+
+CI contains source guards for the RLS/grant/function boundaries.
+
+## Production readiness
+
+When v1.2 is enabled, `/readiness` requires:
+- OpenAI API key;
+- billing/auth backend configuration;
+- durable Supabase configuration;
+- successful live read-only access to both durable tables;
+- OpenAI webhook secret.
+
+Paid `sell_ready` also requires:
+- checkout provider ready;
+- OAuth configuration ready.
+
+## Completed implementation phases
+
+### Phase A — state machine and tests
+Completed:
+- durable job record/state machine;
+- marker parser;
 - loop detection;
-- hard budgets;
+- hard attempt/token/tool/wall budgets;
 - unit tests.
 
 ### Phase B — server integration
-- persist job records in the billing/backend store;
-- add client_request_id;
-- return completion_state and continuation_needed from get/wait;
-- continuation worker creates the next provider run automatically;
-- expose progress/attempt/budget summary.
+Completed:
+- stable KeepGoing-owned job IDs;
+- durable Supabase store;
+- atomic start reservation;
+- client-request deduplication;
+- quota reservation after durable claim;
+- v1.2 MCP compatibility layer;
+- job list/get/wait/cancel/resume;
+- owner isolation;
+- v1.1 fallback behind feature flag.
 
-### Phase C — durability
-- signed OpenAI webhook receiver;
+### Phase C — durability/recovery
+Completed in code:
+- signed OpenAI webhook verification;
 - webhook deduplication;
-- watchdog/reconciliation endpoint or scheduled worker;
-- retry/backoff for transient provider failures;
-- crash/restart tests.
+- watchdog reconciliation;
+- lost-start recovery by provider metadata;
+- provider idempotency keys;
+- duplicate continuation prevention;
+- race-safe user-input resume;
+- long-session latest-turn paging;
+- bounded metadata retention;
+- live durable-store readiness probe;
+- CI coverage for the above.
 
-### Phase D — protocol upgrade
-- optionally support MCP Tasks when client capability negotiation confirms support;
-- retain current ordinary tools for compatibility.
+### Phase D — protocol evolution
+Future/optional:
+- native MCP Tasks extension support when client capability negotiation and plugin-review compatibility justify it.
+- Keep the current ordinary MCP tools as a compatibility surface.
+
+## Remaining live deployment gates
+
+Code completion is not the same as live readiness. Before enabling v1.2 for customers:
+
+1. Apply `sql/durable_jobs.sql` through the normal production Supabase migration workflow.
+2. Configure v1.2 Supabase service credentials only in secret storage.
+3. Create/configure the OpenAI Agents webhook and save `OPENAI_WEBHOOK_SECRET`.
+4. Enable `KEEPGOING_V12_ENABLED=true` in a staging/deployment slot first.
+5. Confirm live `/readiness` including `durable_store_ready`.
+6. Run real PARTIAL -> continuation -> COMPLETED.
+7. Test duplicate start/continuation/resume under concurrency.
+8. Test lost provider acknowledgement recovery.
+9. Test missed webhook recovery through watchdog.
+10. Test NEEDS_USER -> resume.
+11. Test retention against disposable terminal jobs.
+12. Complete live subscription/claim/cancellation testing.
+13. Complete branded domain, publisher identity, reviewer credentials and OpenAI domain verification.
+14. Record reviewer demo and run the portal tool scan.
 
 ## Definition of done for v1.2
 
-A user can start one KeepGoing job, close or stop interacting with the chat, and the server can safely advance that job through multiple model attempts until:
+A user can start one KeepGoing job, stop interacting with the chat, and the server can safely advance the job through multiple model turns until it becomes:
 - completed;
-- user input is genuinely required;
+- input_required;
 - cancelled;
-- failed;
-- or a hard configured budget is reached.
+- failed; or
+- budget_exhausted.
 
-It must never create duplicate continuations for the same attempt and must never continue indefinitely.
+The system must not create duplicate starts, duplicate continuation turns, or duplicate user-input deliveries for one durable step, and it must not continue indefinitely.
