@@ -60,6 +60,22 @@ export class SupabaseJobStore {
     return Array.isArray(rows) && rows[0] ? fromRow(rows[0]) : null;
   }
 
+  async listOwnerJobs(ownerSubjectHash, { limit = 20, activeOnly = false } = {}) {
+    const owner = String(ownerSubjectHash || "").trim();
+    if (!owner) throw new Error("owner subject hash required");
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+    const q = new URLSearchParams({
+      owner_subject_hash: "eq." + owner,
+      order: "updated_at.desc",
+      limit: String(safeLimit)
+    });
+    if (activeOnly) {
+      q.set("status", "in.(queued,working,continuing,input_required)");
+    }
+    const rows = await this.request("/rest/v1/keepgoing_jobs?" + q.toString(), { method: "GET" });
+    return Array.isArray(rows) ? rows.map(fromRow) : [];
+  }
+
   async listRecoverableJobs({ before, limit = 50 } = {}) {
     const cutoff = Number(before);
     if (!Number.isFinite(cutoff)) throw new Error("recovery cutoff required");
