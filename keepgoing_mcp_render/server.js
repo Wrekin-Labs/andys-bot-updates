@@ -900,12 +900,44 @@ async function resumePersistentJobCompat(jobId, input, access) {
 }
 
 function createMcpServer(access = {}) {
+  const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
+  const oauthMeta = { securitySchemes: oauthSecuritySchemes };
+
   const server = new McpServer(
     { name: "KeepGoing", version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0" },
     { instructions: V12_ENABLED
       ? "Use KeepGoing for substantial work that should survive normal chat-turn boundaries. Start one durable job and preserve its job_id. The server uses recovery/watchdog logic to continue partial work safely; status polling is only for visibility. Reuse the same job_id and never create duplicate jobs."
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
+
+  if (V12_ENABLED) {
+    server.registerTool("get_profile", {
+      title: "Get KeepGoing profile",
+      description: "Return the authenticated KeepGoing account identity so connected accounts can be distinguished. Does not modify account or job data.",
+      inputSchema: {},
+      outputSchema: {
+        id: z.string(),
+        nickname: z.string()
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: { ...oauthMeta, "openai/profile": true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    }, async () => {
+      const profile = {
+        id: "kg_" + digest(String(access.subject || "customer")).slice(0, 24),
+        nickname: "KeepGoing " + String(access.tier || "account")
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(profile) }],
+        structuredContent: profile
+      };
+    });
+  }
 
   server.registerTool("start_persistent_job", {
     description: "Start a persistent OpenAI background job so substantial model work or research can continue without repeated continue prompts.",
@@ -956,7 +988,7 @@ function createMcpServer(access = {}) {
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ job_id }) => {
     try {
       const result = await getPersistentJobCompat(job_id, access);
@@ -983,7 +1015,7 @@ function createMcpServer(access = {}) {
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ job_id, wait_seconds }) => {
     try {
       const result = await waitPersistentJobCompat(job_id, wait_seconds, access);
@@ -1069,9 +1101,6 @@ function createMcpServer(access = {}) {
   // MCP SDK v1 currently drops that root extension from tools/list while
   // preserving the compatibility copy under _meta. Override only tools/list;
   // registered tools/call still uses McpServer's Zod input validation.
-  const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
-  const oauthMeta = { securitySchemes: oauthSecuritySchemes };
-
   server.server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools = [
       {
@@ -1199,6 +1228,34 @@ function createMcpServer(access = {}) {
     ];
 
     if (V12_ENABLED) {
+      tools.unshift({
+        name: "get_profile",
+        title: "Get KeepGoing profile",
+        description: "Return the authenticated KeepGoing account identity so connected accounts can be distinguished. Does not modify account or job data.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            nickname: { type: "string" }
+          },
+          required: ["id", "nickname"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: { ...oauthMeta, "openai/profile": true }
+      });
+
       tools.push({
         name: "list_persistent_jobs",
         description: "List your recent durable KeepGoing jobs so an existing job can be recovered in a new chat without exposing raw prompts.",
