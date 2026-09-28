@@ -248,9 +248,11 @@ The v1.1 Responses path remains available while v1.2 is feature-flagged for stag
 ## Remaining launch gates
 
 - Apply the reviewed `sql/durable_jobs.sql` migration to the intended production Supabase project.
-- Configure `KEEPGOING_V12_ENABLED=true`, the durable Supabase service credentials and `OPENAI_WEBHOOK_SECRET` only after the migration exists.
+- Configure `KEEPGOING_V12_ENABLED=true` with `KEEPGOING_V12_CANARY_ONLY=true`, the durable Supabase service credentials and `OPENAI_WEBHOOK_SECRET` only after the migration exists.
 - Configure the OpenAI Agents session webhook for the production `/openai/webhook` endpoint and subscribed session events.
 - Confirm `/readiness` is green, including live `durable_store_ready`.
+- Run the durability drills through the owner account while canary-only mode keeps ordinary subscribers on v1.1.
+- Disable canary-only mode only after those drills pass.
 - Run a real end-to-end PARTIAL -> continuation -> COMPLETED test against the production OpenAI account.
 - Run real duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
 - Authorise/live-test the selected payment provider and subscription claim/cancellation flow.
