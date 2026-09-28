@@ -19,6 +19,7 @@ const PUBLIC_BASE_URL = (process.env.KEEPGOING_PUBLIC_BASE_URL || "https://keepg
 const OAUTH_SECRET = process.env.KEEPGOING_OAUTH_SECRET || "";
 const OAUTH_SCOPE = "keepgoing.jobs";
 const OPENAI_APPS_CHALLENGE = process.env.OPENAI_APPS_CHALLENGE || "";
+const OAUTH_CODE_URL = process.env.KEEPGOING_OAUTH_CODE_URL || "";
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -483,6 +484,25 @@ function requestToken(req) {
   return [queryToken, headerToken, bearer].find(Boolean) || "";
 }
 
+async function oauthCodeLedger(action, value, expiresInSeconds = 300) {
+  if (!OAUTH_CODE_URL || !BILLING_INGEST_TOKEN) throw new Error("oauth_code_ledger_not_configured");
+  const response = await fetch(OAUTH_CODE_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-keepgoing-ingest-token": BILLING_INGEST_TOKEN
+    },
+    body: JSON.stringify({
+      action,
+      value,
+      expires_in_seconds: expiresInSeconds
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error || ("oauth code ledger failed (" + response.status + ")"));
+  return data;
+}
+
 async function validateCustomerToken(token, consume = false) {
   if (!token) return { ok: false, error: "token_required" };
   if (digest(token) === TOKEN_HASH) {
@@ -818,8 +838,10 @@ app.post("/oauth/authorize", async (req, res) => {
   }
 
   const now = Math.floor(Date.now() / 1000);
+  const jti = base64url(crypto.randomBytes(24));
   const code = sealToken("kgc_", {
     type: "code",
+    jti,
     customer_token: activationToken,
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -829,6 +851,12 @@ app.post("/oauth/authorize", async (req, res) => {
     iat: now,
     exp: now + 300
   });
+
+  try {
+    await oauthCodeLedger("store", jti, 300);
+  } catch {
+    return res.status(503).type("html").send("<h1>KeepGoing connection temporarily unavailable</h1><p>Please return to ChatGPT and try again.</p>");
+  }
 
   const target = new URL(redirectUri);
   target.searchParams.set("code", code);
@@ -892,12 +920,17 @@ app.post("/oauth/token", async (req, res) => {
         return res.status(400).json({ error: "invalid_client" });
       }
 
+      if (!code.jti) return res.status(400).json({ error: "invalid_grant" });
+
       const computed = base64url(crypto.createHash("sha256").update(verifier, "utf8").digest());
       const expected = Buffer.from(String(code.code_challenge || ""), "utf8");
       const actual = Buffer.from(computed, "utf8");
       if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
         return res.status(400).json({ error: "invalid_grant" });
       }
+
+      const consumed = await oauthCodeLedger("consume", String(code.jti));
+      if (!consumed?.ok) return res.status(400).json({ error: "invalid_grant" });
 
       const access = await validateCustomerToken(String(code.customer_token || ""), false);
       if (!access.ok) return res.status(401).json({ error: "invalid_grant" });
@@ -1068,7 +1101,7 @@ app.get("/support", (_req, res) => {
 
 app.get("/security", (_req, res) => {
   res.type("html").send(infoPage("Security", [
-    "<p>KeepGoing uses HTTPS, OAuth authorization-code flow with PKCE for ChatGPT connections, short-lived access tokens, refresh tokens, subscription validation, no-store caching on sensitive routes and signed payment webhooks where configured.</p>",
+    "<p>KeepGoing uses HTTPS, OAuth authorization-code flow with PKCE for ChatGPT connections, single-use authorization codes backed by a server-only ledger, short-lived access tokens, refresh tokens, subscription validation, no-store caching on sensitive routes and signed payment webhooks where configured.</p>",
     "<h2>Secrets</h2><p>Activation tokens and OAuth tokens are credentials. Keep them private. KeepGoing does not require your ChatGPT password.</p>",
     "<h2>Reporting a security issue</h2><p>Please email <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a> with enough detail to reproduce the issue. Do not include live passwords, payment credentials or other people's personal information.</p>"
   ].join("")));
@@ -1130,8 +1163,8 @@ app.get("/readiness", async (_req, res) => {
     engine_ready: engineReady,
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
-    oauth_ready: Boolean(OAUTH_SECRET),
-    sell_ready: engineReady && billingBackendReady && checkoutReady && Boolean(OAUTH_SECRET),
+    oauth_ready: Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
+    sell_ready: engineReady && billingBackendReady && checkoutReady && Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
     protected: true
@@ -1149,7 +1182,8 @@ app.get("/health", (_req, res) => {
     paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
     paypalReady: paypalSetupComplete,
     paypalMode: PAYPAL_MODE,
-    oauthConfigured: Boolean(OAUTH_SECRET)
+    oauthConfigured: Boolean(OAUTH_SECRET),
+    oauthCodeLedgerConfigured: Boolean(OAUTH_CODE_URL)
   });
 });
 
