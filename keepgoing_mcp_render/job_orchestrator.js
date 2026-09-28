@@ -8,6 +8,8 @@ import {
 } from "./durable_job.js";
 import { latestSessionText, classifySession } from "./agents_engine.js";
 
+const CONTINUATION_LEASE_MS = 60_000;
+
 export class KeepGoingOrchestrator {
   constructor({ engine, store, now = () => Date.now() } = {}) {
     if (!engine) throw new Error("engine required");
@@ -41,10 +43,8 @@ export class KeepGoingOrchestrator {
     });
     job.status = JOB_STATES.QUEUED;
     job.providerSessionId = null;
-    job.startLeaseUntil = now + 60_000;
+    job.startLeaseUntil = now + CONTINUATION_LEASE_MS;
 
-    // Reserve the idempotency key before the external model call. This is what
-    // prevents simultaneous retries from creating duplicate paid sessions.
     const reserved = await this.store.createOrGet({
       job,
       ownerSubjectHash,
@@ -104,7 +104,7 @@ export class KeepGoingOrchestrator {
     };
     const saved = await this.store.compareAndSet(jobId, reserved.job.version, working);
     if (!saved.ok) {
-      try { await this.engine.cancelTurn(session.id); } catch {}
+      try { await this.engine.cancelTurn(session.id, "kg-cancel-start-" + jobId); } catch {}
       return { created: false, job: saved.job || reserved.job };
     }
     return { created: true, job: saved.job };
@@ -115,7 +115,7 @@ export class KeepGoingOrchestrator {
   }
 
   async reconcile(jobId) {
-    const current = await this.store.get(jobId);
+    let current = await this.store.get(jobId);
     if (!current) throw new Error("job not found");
     if (isTerminal(current.status)) return { job: current, action: "terminal" };
     if (!current.providerSessionId) return { job: current, action: "queued" };
@@ -128,9 +128,17 @@ export class KeepGoingOrchestrator {
     ]);
     const output = latestSessionText(items);
     const provider = classifySession(session, output, turns);
+    const now = this.now();
 
     if (provider.providerStatus === "working") {
-      const refreshed = { ...current, updatedAt: this.now(), lastProgressAt: this.now() };
+      const refreshed = {
+        ...current,
+        status: JOB_STATES.WORKING,
+        currentRunId: provider.turnId || current.currentRunId,
+        continuationLeaseUntil: null,
+        updatedAt: now,
+        lastProgressAt: now
+      };
       const saved = await this.store.compareAndSet(jobId, current.version, refreshed);
       return saved.ok
         ? { job: saved.job, action: "working" }
@@ -144,7 +152,7 @@ export class KeepGoingOrchestrator {
         continuationNeeded: false,
         safeErrorCode: "provider_action_required",
         safeErrorMessage: "The agent requires external input or a tool result before it can continue.",
-        updatedAt: this.now()
+        updatedAt: now
       };
       const saved = await this.store.compareAndSet(jobId, current.version, blocked);
       return saved.ok
@@ -152,13 +160,57 @@ export class KeepGoingOrchestrator {
         : { job: saved.job || current, action: "already_updated" };
     }
 
+    const terminalTurnId = provider.turnId || null;
+
+    // The same completed turn may be observed repeatedly through polling or
+    // duplicate webhooks. Never assess/count it twice.
+    if (terminalTurnId && current.lastAssessedTurnId === terminalTurnId) {
+      if (current.status === JOB_STATES.CONTINUING) {
+        if (now >= current.wallDeadlineAt) {
+          const exhausted = {
+            ...current,
+            status: JOB_STATES.BUDGET_EXHAUSTED,
+            continuationNeeded: false,
+            continuationLeaseUntil: null,
+            safeErrorCode: "budget_exhausted",
+            safeErrorMessage: "KeepGoing reached its configured continuation deadline.",
+            updatedAt: now
+          };
+          const saved = await this.store.compareAndSet(jobId, current.version, exhausted);
+          return saved.ok
+            ? { job: saved.job, action: JOB_STATES.BUDGET_EXHAUSTED }
+            : { job: saved.job || current, action: "already_updated" };
+        }
+
+        if (Number(current.continuationLeaseUntil || 0) > now) {
+          return { job: current, action: "continuation_pending" };
+        }
+
+        const key = current.continuationIdempotencyKey || continuationKey(jobId, terminalTurnId);
+        const retryClaim = {
+          ...current,
+          continuationLeaseUntil: now + CONTINUATION_LEASE_MS,
+          continuationIdempotencyKey: key,
+          updatedAt: now
+        };
+        const claimed = await this.store.compareAndSet(jobId, current.version, retryClaim);
+        if (!claimed.ok) {
+          return { job: claimed.job || current, action: "already_claimed" };
+        }
+        return this._sendClaimedContinuation(claimed.job, provider.output);
+      }
+
+      return { job: current, action: "already_assessed" };
+    }
+
     const assessed = assessRun(current, {
       providerStatus: provider.providerStatus,
       output: provider.output,
       tokensUsed: provider.tokensUsed || 0,
-      now: this.now(),
-      runId: provider.turnId || providerId
+      now,
+      runId: terminalTurnId || providerId
     });
+    assessed.lastAssessedTurnId = terminalTurnId || assessed.lastAssessedTurnId;
 
     if (!assessed.continuationNeeded) {
       const saved = await this.store.compareAndSet(jobId, current.version, assessed);
@@ -167,44 +219,66 @@ export class KeepGoingOrchestrator {
         : { job: saved.job || current, action: "already_updated" };
     }
 
+    const idempotencyKey = continuationKey(
+      jobId,
+      terminalTurnId || ("attempt-" + assessed.attempt)
+    );
     const claim = {
       ...assessed,
       status: JOB_STATES.CONTINUING,
       continuationNeeded: false,
-      continuationLeaseUntil: this.now() + 60_000,
-      continuationClaimId: crypto.randomUUID()
+      continuationLeaseUntil: now + CONTINUATION_LEASE_MS,
+      continuationClaimId: crypto.randomUUID(),
+      continuationIdempotencyKey: idempotencyKey
     };
     const claimed = await this.store.compareAndSet(jobId, current.version, claim);
     if (!claimed.ok) {
-      return { job: claimed.job, action: "already_claimed" };
+      return { job: claimed.job || current, action: "already_claimed" };
     }
 
+    return this._sendClaimedContinuation(claimed.job, provider.output);
+  }
+
+  async _sendClaimedContinuation(claimedJob, previousOutput) {
+    const providerId = claimedJob.providerSessionId;
+    const key = claimedJob.continuationIdempotencyKey;
     try {
       await this.engine.sendMessage(
         providerId,
-        continuationPrompt(provider.output, claimed.job.attempt, claimed.job.maxAttempts)
+        continuationPrompt(previousOutput, claimedJob.attempt, claimedJob.maxAttempts),
+        key
       );
+
       const working = {
-        ...claimed.job,
+        ...claimedJob,
         status: JOB_STATES.WORKING,
         continuationNeeded: false,
         continuationLeaseUntil: null,
+        safeErrorCode: null,
+        safeErrorMessage: null,
         updatedAt: this.now()
       };
-      const saved = await this.store.compareAndSet(jobId, claimed.job.version, working);
+      const saved = await this.store.compareAndSet(
+        claimedJob.id,
+        claimedJob.version,
+        working
+      );
       return saved.ok
         ? { job: saved.job, action: "continued" }
-        : { job: saved.job || claimed.job, action: "already_updated" };
+        : { job: saved.job || claimedJob, action: "already_updated" };
     } catch (error) {
-      const failed = {
-        ...claimed.job,
-        status: JOB_STATES.FAILED,
+      // The request outcome may be unknown. Keep the claim durable and retry
+      // the same idempotency key later instead of risking a duplicate turn.
+      const retryable = {
+        ...claimedJob,
+        status: JOB_STATES.CONTINUING,
+        continuationNeeded: false,
         continuationLeaseUntil: null,
-        safeErrorCode: "continuation_send_failed",
-        safeErrorMessage: "KeepGoing could not start the next continuation turn.",
+        safeErrorCode: "continuation_send_unknown",
+        safeErrorMessage: "Continuation delivery was not confirmed; KeepGoing can safely retry it.",
         updatedAt: this.now()
       };
-      await this.store.compareAndSet(jobId, claimed.job.version, failed);
+      await this.store.compareAndSet(claimedJob.id, claimedJob.version, retryable);
       throw error;
     }
   }
@@ -214,7 +288,10 @@ export class KeepGoingOrchestrator {
     if (!current) throw new Error("job not found");
     if (isTerminal(current.status)) return current;
     if (current.providerSessionId) {
-      await this.engine.cancelTurn(current.providerSessionId);
+      await this.engine.cancelTurn(
+        current.providerSessionId,
+        "kg-cancel-" + jobId
+      );
     }
     const next = {
       ...current,
@@ -227,6 +304,10 @@ export class KeepGoingOrchestrator {
     const saved = await this.store.compareAndSet(jobId, current.version, next);
     return saved.job || current;
   }
+}
+
+function continuationKey(jobId, turnId) {
+  return ("kg-cont-" + jobId + "-" + String(turnId || "unknown")).slice(0, 256);
 }
 
 function sha256(value) {
