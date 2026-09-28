@@ -699,7 +699,19 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true)
     },
+    outputSchema: {
+      job_id: z.string(),
+      status: z.string(),
+      model: z.string(),
+      tier: z.string(),
+      limits: z.object({
+        max_output_tokens: z.number(),
+        max_tool_calls: z.number()
+      }),
+      message: z.string()
+    },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (args) => {
     try {
@@ -717,7 +729,15 @@ function createMcpServer(access = {}) {
   server.registerTool("get_persistent_job", {
     description: "Check the current state and output of an existing KeepGoing job. Keep polling the same job_id until it completes or needs the user.",
     inputSchema: { job_id: z.string().min(1).max(200) },
+    outputSchema: {
+      job_id: z.string(),
+      status: z.string(),
+      output: z.string(),
+      error: z.string().nullable(),
+      incomplete_details: z.any().nullable()
+    },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id }) => {
     try {
@@ -734,7 +754,17 @@ function createMcpServer(access = {}) {
       job_id: z.string().min(1).max(200),
       wait_seconds: z.number().int().min(1).max(25).default(20)
     },
+    outputSchema: {
+      job_id: z.string(),
+      status: z.string(),
+      output: z.string(),
+      error: z.string().nullable(),
+      incomplete_details: z.any().nullable(),
+      should_continue_polling: z.boolean(),
+      message: z.string()
+    },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id, wait_seconds }) => {
     try {
@@ -748,7 +778,12 @@ function createMcpServer(access = {}) {
   server.registerTool("cancel_persistent_job", {
     description: "Cancel a KeepGoing background job.",
     inputSchema: { job_id: z.string().min(1).max(200) },
+    outputSchema: {
+      job_id: z.string(),
+      status: z.string()
+    },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
   }, async ({ job_id }) => {
     try {
