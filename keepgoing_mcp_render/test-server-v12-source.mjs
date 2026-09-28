@@ -4,6 +4,11 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 
 assert.match(source, /KEEPGOING_V12_ENABLED/);
+assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
+assert.match(source, /function v12ForAccess\(access\)/);
+assert.match(source, /if \(isStart && V12_ENABLED && !v12ForAccess\(access\)\)/);
+assert.match(source, /validateCustomerToken\(access\._customer_token, true\)/);
+assert.match(source, /const v12Access = v12ForAccess\(access\)/);
 assert.match(source, /createV12Service/);
 assert.match(source, /createWatchdog/);
 assert.match(source, /createOpenAIWebhookVerifier/);
