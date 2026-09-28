@@ -261,7 +261,16 @@ assert.match(sent.at(-1).key, /^kg-user-/);
 }
 
 const limits = planLimits("business", true);
-assert.equal(limits.max_attempts, 10);
-assert.equal(limits.max_total_tool_calls, 50);
+assert.equal(limits.max_attempts, 8);
+assert.equal(limits.max_total_tokens, 30_000);
+assert.equal(limits.max_total_tool_calls, 5);
+
+const proLimits = planLimits("pro", true);
+assert.equal(proLimits.max_attempts, 6);
+assert.equal(proLimits.max_total_tokens, 20_000);
+assert.equal(proLimits.max_total_tool_calls, 3);
+
+const offlineLimits = planLimits("pro", false);
+assert.equal(offlineLimits.max_total_tool_calls, 0);
 
 console.log("v1.2 service tests passed");
