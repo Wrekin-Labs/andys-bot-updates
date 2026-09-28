@@ -28,40 +28,86 @@ export class KeepGoingOrchestrator {
   }) {
     if (!String(initialPrompt || "").trim()) throw new Error("initial prompt required");
 
-    if (clientRequestId && typeof this.store.findByRequest === "function") {
-      const existing = await this.store.findByRequest(ownerSubjectHash, clientRequestId);
-      if (existing) return { created: false, job: existing };
-    }
-
-    const session = await this.engine.createSession({
-      prompt: initialPrompt,
-      instructions,
-      allowWeb,
-      reasoningEffort,
-      metadata: {
-        keepgoing: "v1.2",
-        request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined
-      }
-    });
-
-    if (!session?.id) throw new Error("Agents API did not return a session id");
+    const now = this.now();
+    const jobId = "kgj_" + crypto.randomUUID().replace(/-/g, "");
     const job = newJobRecord({
-      id: session.id,
+      id: jobId,
       goalHash: sha256(initialPrompt),
       definitionHash: sha256(instructions || ""),
       ownerSubjectHash,
       engine: "agents",
-      now: this.now(),
+      now,
       limits
     });
-    job.status = JOB_STATES.WORKING;
-    job.currentRunId = session.id;
+    job.status = JOB_STATES.QUEUED;
+    job.providerSessionId = null;
+    job.startLeaseUntil = now + 60_000;
 
-    return this.store.createOrGet({
+    // Reserve the idempotency key before the external model call. This is what
+    // prevents simultaneous retries from creating duplicate paid sessions.
+    const reserved = await this.store.createOrGet({
       job,
       ownerSubjectHash,
       clientRequestId
     });
+    if (!reserved.created) {
+      return { created: false, job: reserved.job };
+    }
+
+    let session;
+    try {
+      session = await this.engine.createSession({
+        prompt: initialPrompt,
+        instructions,
+        allowWeb,
+        reasoningEffort,
+        metadata: {
+          keepgoing: "v1.2",
+          keepgoing_job_id: jobId,
+          request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined
+        }
+      });
+    } catch (error) {
+      const failed = {
+        ...reserved.job,
+        status: JOB_STATES.FAILED,
+        startLeaseUntil: null,
+        safeErrorCode: "start_failed",
+        safeErrorMessage: "KeepGoing could not start the model session.",
+        updatedAt: this.now()
+      };
+      await this.store.compareAndSet(jobId, reserved.job.version, failed);
+      throw error;
+    }
+
+    if (!session?.id) {
+      const failed = {
+        ...reserved.job,
+        status: JOB_STATES.FAILED,
+        startLeaseUntil: null,
+        safeErrorCode: "missing_provider_session",
+        safeErrorMessage: "The model provider did not return a session id.",
+        updatedAt: this.now()
+      };
+      await this.store.compareAndSet(jobId, reserved.job.version, failed);
+      throw new Error("Agents API did not return a session id");
+    }
+
+    const working = {
+      ...reserved.job,
+      status: JOB_STATES.WORKING,
+      providerSessionId: session.id,
+      currentRunId: session.id,
+      startLeaseUntil: null,
+      updatedAt: this.now(),
+      lastProgressAt: this.now()
+    };
+    const saved = await this.store.compareAndSet(jobId, reserved.job.version, working);
+    if (!saved.ok) {
+      try { await this.engine.cancelTurn(session.id); } catch {}
+      return { created: false, job: saved.job || reserved.job };
+    }
+    return { created: true, job: saved.job };
   }
 
   async get(jobId) {
@@ -72,9 +118,11 @@ export class KeepGoingOrchestrator {
     const current = await this.store.get(jobId);
     if (!current) throw new Error("job not found");
     if (isTerminal(current.status)) return { job: current, action: "terminal" };
+    if (!current.providerSessionId) return { job: current, action: "queued" };
 
-    const session = await this.engine.getSession(jobId);
-    const items = await this.engine.listItems(jobId, { order: "asc", limit: 100 });
+    const providerId = current.providerSessionId;
+    const session = await this.engine.getSession(providerId);
+    const items = await this.engine.listItems(providerId, { order: "asc", limit: 100 });
     const output = latestSessionText(items);
     const provider = classifySession(session, output);
 
@@ -105,7 +153,7 @@ export class KeepGoingOrchestrator {
       providerStatus: provider.providerStatus,
       output: provider.output,
       now: this.now(),
-      runId: jobId
+      runId: providerId
     });
 
     if (!assessed.continuationNeeded) {
@@ -129,7 +177,7 @@ export class KeepGoingOrchestrator {
 
     try {
       await this.engine.sendMessage(
-        jobId,
+        providerId,
         continuationPrompt(provider.output, claimed.job.attempt, claimed.job.maxAttempts)
       );
       const working = {
@@ -161,20 +209,20 @@ export class KeepGoingOrchestrator {
     const current = await this.store.get(jobId);
     if (!current) throw new Error("job not found");
     if (isTerminal(current.status)) return current;
-    await this.engine.cancelTurn(jobId);
+    if (current.providerSessionId) {
+      await this.engine.cancelTurn(current.providerSessionId);
+    }
     const next = {
       ...current,
       status: JOB_STATES.CANCELLED,
       continuationNeeded: false,
+      startLeaseUntil: null,
+      continuationLeaseUntil: null,
       updatedAt: this.now()
     };
     const saved = await this.store.compareAndSet(jobId, current.version, next);
     return saved.job || current;
   }
-}
-
-export function requestKey(ownerSubjectHash, clientRequestId) {
-  return String(ownerSubjectHash || "") + ":" + String(clientRequestId || "");
 }
 
 function sha256(value) {
