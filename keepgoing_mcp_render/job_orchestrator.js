@@ -26,7 +26,8 @@ export class KeepGoingOrchestrator {
     reasoningEffort = "medium",
     ownerSubjectHash,
     clientRequestId = null,
-    limits = {}
+    limits = {},
+    beforeCreateSession = null
   }) {
     if (!String(initialPrompt || "").trim()) throw new Error("initial prompt required");
 
@@ -52,6 +53,23 @@ export class KeepGoingOrchestrator {
     });
     if (!reserved.created) {
       return { created: false, job: reserved.job };
+    }
+
+    if (beforeCreateSession) {
+      try {
+        await beforeCreateSession({ job: reserved.job });
+      } catch (error) {
+        const failed = {
+          ...reserved.job,
+          status: JOB_STATES.FAILED,
+          startLeaseUntil: null,
+          safeErrorCode: "pre_session_gate_failed",
+          safeErrorMessage: "KeepGoing could not reserve the required job allowance.",
+          updatedAt: this.now()
+        };
+        await this.store.compareAndSet(jobId, reserved.job.version, failed);
+        throw error;
+      }
     }
 
     let session;
