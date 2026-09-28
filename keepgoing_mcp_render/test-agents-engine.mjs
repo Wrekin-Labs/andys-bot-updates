@@ -88,6 +88,53 @@ assert.equal(paged.truncated, false);
 assert.equal(pagedCalls.length, 2);
 assert.match(pagedCalls[1], /after=i1/);
 
+const turnPageCalls = [];
+const turnPageEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (url) => {
+    turnPageCalls.push(url);
+    const parsed = new URL(url);
+    const after = parsed.searchParams.get("after");
+    const page = !after
+      ? {
+          data: [
+            { id: "i5", type: "web_search_call", turn_id: "turn_current", status: "completed" },
+            { id: "i4", type: "message", turn_id: "turn_current", status: "completed", content: [{ type: "output_text", text: "final current" }] }
+          ],
+          has_more: true,
+          last_id: "i4"
+        }
+      : {
+          data: [
+            { id: "i3", type: "reasoning", turn_id: "turn_current", status: "completed", summary: [] },
+            { id: "i2", type: "message", turn_id: "turn_old", status: "completed", content: [{ type: "output_text", text: "old result" }] }
+          ],
+          has_more: true,
+          last_id: "i2"
+        };
+    return { ok: true, status: 200, async json() { return page; } };
+  }
+});
+const currentTurnItems = await turnPageEngine.listTurnItems(
+  "sess_abc",
+  "turn_current",
+  { maxPages: 10 }
+);
+assert.deepEqual(currentTurnItems.data.map((item) => item.id), ["i3", "i4", "i5"]);
+assert.equal(currentTurnItems.found, true);
+assert.equal(currentTurnItems.truncated, false);
+assert.equal(turnPageCalls.length, 2);
+assert.match(turnPageCalls[0], /order=desc/);
+assert.match(turnPageCalls[1], /after=i4/);
+assert.equal(latestSessionText(currentTurnItems), "final current");
+assert.equal(turnToolCallCount(currentTurnItems, "turn_current"), 1);
+assert.ok(!currentTurnItems.data.some((item) => item.turn_id === "turn_old"));
+
+await assert.rejects(
+  () => turnPageEngine.listTurnItems("sess_abc", "../bad"),
+  /valid turn id/
+);
+
 const recoveryCalls = [];
 const recoveryEngine = createAgentsEngine({
   apiKey: "test-key",
