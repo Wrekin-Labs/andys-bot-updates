@@ -196,22 +196,30 @@ export function classifySession(session, latestText = "", turnsResponse = null, 
       output: latestText,
       turnId: turn?.id || null,
       tokensUsed,
+      toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null),
       toolFailureDetected: failedWork
     };
   }
   if (turnStatus === "failed") {
-    return { providerStatus: "failed", output: latestText, turnId: turn?.id || null, tokensUsed };
+    return { providerStatus: "failed", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
   }
   if (turnStatus === "cancelled") {
-    return { providerStatus: "cancelled", output: latestText, turnId: turn?.id || null, tokensUsed };
+    return { providerStatus: "cancelled", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
   }
   if (["queued", "in_progress", "waiting"].includes(turnStatus)) {
-    return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed };
+    return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
   }
 
   // Session idle means no turn is currently running; it does not prove the
   // last turn succeeded. Without a terminal root turn, fail safe as working.
-  return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed };
+  return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
+}
+
+export function turnToolCallCount(itemsResponse, turnId = null) {
+  return collection(itemsResponse).filter((item) => {
+    if (turnId && item?.turn_id && item.turn_id !== turnId) return false;
+    return isToolLikeItem(item);
+  }).length;
 }
 
 export function turnHasFailedWork(itemsResponse, turnId = null) {
@@ -220,14 +228,18 @@ export function turnHasFailedWork(itemsResponse, turnId = null) {
     if (turnId && item?.turn_id && item.turn_id !== turnId) return false;
     const status = String(item?.status || "").toLowerCase();
     if (!failedStatuses.has(status)) return false;
-    const type = String(item?.type || "").toLowerCase();
-    return (
-      type.includes("call") ||
-      type.includes("tool") ||
-      type.includes("execution") ||
-      type.includes("search")
-    );
+    return isToolLikeItem(item);
   });
+}
+
+function isToolLikeItem(item) {
+  const type = String(item?.type || "").toLowerCase();
+  return (
+    type.includes("call") ||
+    type.includes("tool") ||
+    type.includes("execution") ||
+    type.includes("search")
+  );
 }
 
 function collection(response) {
