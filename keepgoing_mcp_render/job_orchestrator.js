@@ -6,7 +6,7 @@ import {
   isTerminal,
   newJobRecord
 } from "./durable_job.js";
-import { latestSessionText, classifySession } from "./agents_engine.js";
+import { latestRootTurn, latestSessionText, classifySession } from "./agents_engine.js";
 
 const CONTINUATION_LEASE_MS = 60_000;
 
@@ -201,14 +201,18 @@ export class KeepGoingOrchestrator {
     if (!current.providerSessionId) return { job: current, action: "queued" };
 
     const providerId = current.providerSessionId;
-    const session = await this.engine.getSession(providerId);
-    const itemRead = this.engine.listAllItems
-      ? this.engine.listAllItems(providerId, { order: "asc", pageSize: 100, maxPages: 5 })
-      : this.engine.listItems(providerId, { order: "asc", limit: 100 });
-    const [items, turns] = await Promise.all([
-      itemRead,
+    const [session, turns] = await Promise.all([
+      this.engine.getSession(providerId),
       this.engine.listTurns(providerId, { order: "desc", limit: 10 })
     ]);
+    const latestTurn = latestRootTurn(turns);
+    const itemRead =
+      latestTurn?.id && typeof this.engine.listTurnItems === "function"
+        ? this.engine.listTurnItems(providerId, latestTurn.id, { pageSize: 100, maxPages: 10 })
+        : this.engine.listAllItems
+          ? this.engine.listAllItems(providerId, { order: "desc", pageSize: 100, maxPages: 5 })
+          : this.engine.listItems(providerId, { order: "desc", limit: 100 });
+    const items = await itemRead;
     const output = latestSessionText(items);
     const provider = classifySession(session, output, turns, items);
     const now = this.now();
