@@ -239,10 +239,12 @@ export function createV12Service({
 export function planLimits(tier, allowWeb = true) {
   const business = tier === "business" || tier === "owner";
   return {
-    max_attempts: business ? 10 : 6,
-    max_total_tokens: business ? 160_000 : 60_000,
-    max_total_tool_calls: allowWeb ? (business ? 50 : 18) : 0,
-    max_wall_seconds: business ? 6 * 60 * 60 : 2 * 60 * 60
+    // Continuations remain multi-turn, but aggregate budgets are deliberately
+    // bounded to keep subscription economics predictable at maximum usage.
+    max_attempts: business ? 8 : 6,
+    max_total_tokens: business ? 30_000 : 20_000,
+    max_total_tool_calls: allowWeb ? (business ? 5 : 3) : 0,
+    max_wall_seconds: business ? 4 * 60 * 60 : 2 * 60 * 60
   };
 }
 
