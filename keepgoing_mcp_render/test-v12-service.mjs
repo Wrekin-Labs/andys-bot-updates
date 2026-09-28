@@ -55,8 +55,10 @@ const started = await service.start({
   beforeCreateSession: async () => { quota++; }
 });
 assert.equal(started.status, JOB_STATES.WORKING);
-assert.equal(started.model, "gpt-test");
 assert.equal(quota, 1);
+assert.equal("model" in started, false);
+assert.equal("tier" in started, false);
+assert.equal("limits" in started, false);
 
 const ownedActive = await service.list("ownerhash", { activeOnly: true });
 assert.equal(ownedActive.jobs.length, 1);
@@ -84,6 +86,9 @@ const finished = await service.get(started.job_id, "ownerhash");
 assert.equal(finished.status, JOB_STATES.COMPLETED);
 assert.match(finished.output, /COMPLETED/);
 assert.deepEqual(viewedTurns, ["turn_2"]);
+assert.deepEqual(Object.keys(finished.progress).sort(), ["attempt", "max_attempts"]);
+assert.equal("incomplete_details" in finished, false);
+assert.equal("tokens_used" in finished.progress, false);
 
 const noLongerActive = await service.list("ownerhash", { activeOnly: true });
 assert.equal(noLongerActive.jobs.length, 0);
@@ -242,7 +247,13 @@ assert.match(sent.at(-1).key, /^kg-user-/);
   assert.ok(listed.jobs.some((job) => job.job_id === started.job_id));
   assert.ok(listed.jobs.some((job) => job.job_id === paused.id));
   assert.ok(!listed.jobs.some((job) => job.job_id === other.id));
-  assert.ok(listed.jobs.every((job) => !("goal" in job) && !("definitionOfDone" in job)));
+  assert.ok(listed.jobs.every((job) =>
+    !("goal" in job) &&
+    !("definitionOfDone" in job) &&
+    !("started_at" in job) &&
+    !("updated_at" in job) &&
+    !("completion_marker" in job)
+  ));
 
   const active = await service.list("ownerhash", { limit: 20, activeOnly: true });
   assert.ok(active.jobs.some((job) => job.job_id === paused.id));
