@@ -83,12 +83,14 @@ export function createAgentsEngine({
     );
   }
 
-  async function sendMessage(sessionId, text) {
+  async function sendMessage(sessionId, text, idempotencyKey = null) {
     requireSessionId(sessionId);
     const value = String(text || "").trim();
     if (!value) throw new Error("message required");
+    const key = normaliseIdempotencyKey(idempotencyKey);
     return request("/agents/sessions/" + encodeURIComponent(sessionId) + "/events", {
       method: "POST",
+      headers: key ? { "Idempotency-Key": key } : undefined,
       body: JSON.stringify({
         events: [{
           type: "agent.session.input.message",
@@ -101,10 +103,12 @@ export function createAgentsEngine({
     });
   }
 
-  async function cancelTurn(sessionId) {
+  async function cancelTurn(sessionId, idempotencyKey = null) {
     requireSessionId(sessionId);
+    const key = normaliseIdempotencyKey(idempotencyKey);
     return request("/agents/sessions/" + encodeURIComponent(sessionId) + "/events", {
       method: "POST",
+      headers: key ? { "Idempotency-Key": key } : undefined,
       body: JSON.stringify({
         events: [{ type: "agent.session.input.cancel" }]
       })
@@ -202,6 +206,14 @@ function collectText(value, out) {
     if (key === "metadata") continue;
     collectText(child, out);
   }
+}
+
+function normaliseIdempotencyKey(value) {
+  if (value == null || value === "") return null;
+  const key = String(value);
+  if (key.length < 1 || key.length > 256) throw new Error("valid idempotency key required");
+  if (/[\r\n\0]/.test(key)) throw new Error("valid idempotency key required");
+  return key;
 }
 
 function requireSessionId(sessionId) {
