@@ -940,7 +940,8 @@ function createMcpServer(access = {}) {
   }
 
   server.registerTool("start_persistent_job", {
-    description: "Start a persistent OpenAI background job so substantial model work or research can continue without repeated continue prompts.",
+    title: "Start persistent job",
+    description: "Use when the user wants substantial model work or research to keep progressing until it completes or genuinely needs user input. Starts one durable job; it may access the public web when allowWeb is true.",
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
@@ -977,7 +978,8 @@ function createMcpServer(access = {}) {
   });
 
   server.registerTool("get_persistent_job", {
-    description: "Check the current state and output of an existing KeepGoing job. Keep polling the same job_id until it completes or needs the user.",
+    title: "Get persistent job",
+    description: "Use when the user wants the current status or available result of a specific KeepGoing job. Reads only that authenticated account's durable job state.",
     inputSchema: { job_id: z.string().min(1).max(200) },
     outputSchema: {
       job_id: z.string(),
@@ -999,7 +1001,8 @@ function createMcpServer(access = {}) {
   });
 
   server.registerTool("wait_for_persistent_job", {
-    description: "Wait and poll an existing KeepGoing job for up to 25 seconds. If should_continue_polling is true, call this tool again with the same job_id automatically instead of asking the user to type continue.",
+    title: "Wait for persistent job",
+    description: "Use when the user wants to wait briefly for an existing KeepGoing job. Reads the same job for up to 25 seconds and never starts a replacement job.",
     inputSchema: {
       job_id: z.string().min(1).max(200),
       wait_seconds: z.number().int().min(1).max(25).default(20)
@@ -1026,7 +1029,8 @@ function createMcpServer(access = {}) {
   });
 
   server.registerTool("cancel_persistent_job", {
-    description: "Cancel a KeepGoing background job.",
+    title: "Cancel persistent job",
+    description: "Use only when the user wants to stop a specific KeepGoing job. Cancels the current durable job and does not create a replacement.",
     inputSchema: { job_id: z.string().min(1).max(200) },
     outputSchema: {
       job_id: z.string(),
@@ -1034,7 +1038,7 @@ function createMcpServer(access = {}) {
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }
   }, async ({ job_id }) => {
     try {
       const result = await cancelPersistentJobCompat(job_id, access);
@@ -1046,7 +1050,8 @@ function createMcpServer(access = {}) {
 
   if (V12_ENABLED) {
     server.registerTool("list_persistent_jobs", {
-      description: "List your recent durable KeepGoing jobs so an existing job can be recovered in a new chat without exposing raw prompts.",
+      title: "List persistent jobs",
+      description: "Use when the user wants to find or recover their own recent KeepGoing jobs, including from a new chat. Returns minimal job metadata and never returns raw prompts.",
       inputSchema: {
         limit: z.number().int().min(1).max(100).default(20),
         activeOnly: z.boolean().default(true)
@@ -1074,7 +1079,8 @@ function createMcpServer(access = {}) {
     });
 
     server.registerTool("resume_persistent_job", {
-      description: "Provide requested user input and resume the same durable KeepGoing job after it enters input_required.",
+      title: "Resume persistent job",
+      description: "Use after a KeepGoing job is waiting for user input and the user has supplied the missing information. Resumes the same durable job rather than starting over.",
       inputSchema: {
         job_id: z.string().min(1).max(200),
         input: z.string().min(1).max(8000)
@@ -1105,7 +1111,8 @@ function createMcpServer(access = {}) {
     const tools = [
       {
         name: "start_persistent_job",
-        description: "Start a persistent OpenAI background job so substantial model work or research can continue without repeated continue prompts.",
+        title: "Start persistent job",
+        description: "Use when the user wants substantial model work or research to keep progressing until it completes or genuinely needs user input. Starts one durable job; it may access the public web when allowWeb is true.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1150,7 +1157,8 @@ function createMcpServer(access = {}) {
       },
       {
         name: "get_persistent_job",
-        description: "Check the current state and output of an existing KeepGoing job. Keep polling the same job_id until it completes or needs the user.",
+        title: "Get persistent job",
+        description: "Use when the user wants the current status or available result of a specific KeepGoing job. Reads only that authenticated account's durable job state.",
         inputSchema: {
           type: "object",
           properties: { job_id: { type: "string", minLength: 1, maxLength: 200 } },
@@ -1170,12 +1178,13 @@ function createMcpServer(access = {}) {
           additionalProperties: false
         },
         securitySchemes: oauthSecuritySchemes,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         _meta: oauthMeta
       },
       {
         name: "wait_for_persistent_job",
-        description: "Wait and poll an existing KeepGoing job for up to 25 seconds. If should_continue_polling is true, call this tool again with the same job_id automatically instead of asking the user to type continue.",
+        title: "Wait for persistent job",
+        description: "Use when the user wants to wait briefly for an existing KeepGoing job. Reads the same job for up to 25 seconds and never starts a replacement job.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1200,12 +1209,13 @@ function createMcpServer(access = {}) {
           additionalProperties: false
         },
         securitySchemes: oauthSecuritySchemes,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         _meta: oauthMeta
       },
       {
         name: "cancel_persistent_job",
-        description: "Cancel a KeepGoing background job.",
+        title: "Cancel persistent job",
+        description: "Use only when the user wants to stop a specific KeepGoing job. Cancels the current durable job and does not create a replacement.",
         inputSchema: {
           type: "object",
           properties: { job_id: { type: "string", minLength: 1, maxLength: 200 } },
@@ -1258,7 +1268,8 @@ function createMcpServer(access = {}) {
 
       tools.push({
         name: "list_persistent_jobs",
-        description: "List your recent durable KeepGoing jobs so an existing job can be recovered in a new chat without exposing raw prompts.",
+        title: "List persistent jobs",
+        description: "Use when the user wants to find or recover their own recent KeepGoing jobs, including from a new chat. Returns minimal job metadata and never returns raw prompts.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1299,7 +1310,8 @@ function createMcpServer(access = {}) {
 
       tools.push({
         name: "resume_persistent_job",
-        description: "Provide requested user input and resume the same durable KeepGoing job after it enters input_required.",
+        title: "Resume persistent job",
+        description: "Use after a KeepGoing job is waiting for user input and the user has supplied the missing information. Resumes the same durable job rather than starting over.",
         inputSchema: {
           type: "object",
           properties: {
