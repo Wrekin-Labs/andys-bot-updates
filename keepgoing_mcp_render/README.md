@@ -1,10 +1,10 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.2` — adds the `continue_until_done` primary entrypoint, host-context passthrough, and stricter only-when-genuinely-blocked user stops.
+**Current beta:** `1.2.0-beta.3` — adds commercial branding, hosted app metadata/icon, refunds & cancellation policy, and keeps the `continue_until_done` durable autopilot entrypoint from beta.2.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
-v1.2 is developed behind `KEEPGOING_V12_ENABLED`. Keep the production v1.1 path available until the v1.2 database migration, webhook and live preflight are complete.
+v1.2 remains feature-flagged behind `KEEPGOING_V12_ENABLED`. Production currently runs the durable engine in owner-canary mode with the durable store and watchdog live. Public paid rollout should keep canary-only mode until the signed OpenAI webhook and a live payment provider are configured and verified.
 
 ## What v1.2 changes
 
@@ -95,6 +95,13 @@ The server validates that marker against provider turn state and tool failures; 
 - `/paypal/claim` — PayPal subscription claim
 - `/paypal/webhook` — PayPal webhook
 - `/stripe/webhook` — Stripe webhook
+- `/icon.svg` — hosted KeepGoing brand icon
+- `/manifest.json` — app/web manifest
+- `/privacy` — privacy policy
+- `/terms` — terms of service
+- `/refunds` — refunds & cancellation policy
+- `/support` — support page
+- `/security` — security overview
 
 ## Required production environment
 
@@ -116,9 +123,8 @@ Core:
 v1.2 durable engine:
 - `KEEPGOING_V12_ENABLED=true`
 - `KEEPGOING_V12_CANARY_ONLY=true` during owner-only staged validation; set false/omit only after the live drills pass
-- `KEEPGOING_SUPABASE_URL` (or `SUPABASE_URL`)
-- `KEEPGOING_SUPABASE_SERVICE_KEY`
-- `OPENAI_WEBHOOK_SECRET`
+- either direct durable-store credentials (`KEEPGOING_SUPABASE_URL` / `SUPABASE_URL` plus `KEEPGOING_SUPABASE_SERVICE_KEY`) **or** the narrow durable-store proxy (`KEEPGOING_DURABLE_STORE_URL` plus `KEEPGOING_DURABLE_STORE_TOKEN`)
+- `OPENAI_WEBHOOK_SECRET` for production signed-webhook processing
 - optional watchdog interval configuration
 
 Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
@@ -166,3 +172,17 @@ Before enabling v1.2 for paid customers, verify:
 8. A missed webhook is repaired by the watchdog.
 9. PayPal/Stripe subscription claim and cancellation flows are tested in the selected live provider.
 10. Privacy, Terms, Support and Security pages match the deployed data flow.
+
+## Current commercial beta status
+
+As of beta.3:
+- OAuth connection is live and verified with the owner account.
+- Durable engine, durable store and watchdog recovery are live in owner-canary mode.
+- CI verification is green on the beta.3 release and branded-homepage hotfix.
+- Product page, hosted icon/manifest, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
+- Automatic subscription-token provisioning is implemented for supported payment providers.
+- Live PayPal checkout is implemented but remains disabled until live PayPal REST credentials are added to Render.
+- The signed OpenAI webhook endpoint is implemented but `OPENAI_WEBHOOK_SECRET` is not yet configured; owner canary currently relies on watchdog recovery.
+- Public directory submission/approval, reviewer credentials and final publisher/domain verification are external release steps and must not be reported as completed until actually approved.
+
+A production readiness response should remain truthful: `checkout_ready` and `sell_ready` stay false until the selected live payment provider is genuinely configured and working.
