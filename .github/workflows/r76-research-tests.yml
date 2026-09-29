@@ -25,6 +25,7 @@ jobs:
           python agentic-r7.6-execution-quality/self_test.py
           python agentic-r7.6-execution-quality/self_test_extended.py
           python agentic-r7.6-execution-quality/self_test_selection_bias.py
+          python agentic-r7.6-execution-quality/self_test_tail_regime.py
       - name: Parse R7.6 PowerShell deployment scripts
         shell: pwsh
         run: |
