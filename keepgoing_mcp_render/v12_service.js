@@ -2,6 +2,19 @@ import crypto from "node:crypto";
 import { isTerminal } from "./durable_job.js";
 import { latestRootTurn, latestSessionText } from "./agents_engine.js";
 
+export const JOB_INSTRUCTIONS = [
+  "Finish the KeepGoing job.",
+  "Preserve completed work across turns and use any supplied brief task checkpoint only as supporting context.",
+  "The checkpoint is intentionally limited and is not full chat history; never infer missing credentials, private data, or unrelated facts from it.",
+  "Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable.",
+  "Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion.",
+  "You do not need a KeepGoing control tool, runner control, or job-state tool to finish the work.",
+  "The KeepGoing server converts your final STATUS marker into the durable job state.",
+  "If the requested work is complete, return STATUS: COMPLETED even when this session exposes no KeepGoing control tool.",
+  "Obey the required STATUS marker."
+].join(" ");
+
+
 export function createV12Service({
   engine,
   store,
@@ -26,7 +39,7 @@ export function createV12Service({
     const limits = planLimits(tier, allowWeb);
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
-      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use any supplied brief task checkpoint only as supporting context. The checkpoint is intentionally limited and is not full chat history; never infer missing credentials, private data, or unrelated facts from it. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
+      instructions: JOB_INSTRUCTIONS,
       allowWeb,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
@@ -279,8 +292,11 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     "Do not stop merely because a normal chat response would have ended.",
     "Never claim actions outside the tools actually available to this session.",
     "If an essential credential, approval, payment, destructive action, private account action, or missing fact prevents completion, state exactly what is required.",
+    "You do not need a KeepGoing control tool, runner control, or job-state tool to finish the work.",
+    "The KeepGoing server converts your final STATUS marker into the durable job state.",
+    "If the requested work is complete, return STATUS: COMPLETED even when this session exposes no KeepGoing control tool.",
     "",
-    "End every root turn with exactly one of:",
+    "End every root turn with exactly one of:"
     "STATUS: COMPLETED",
     "STATUS: NEEDS_USER",
     "STATUS: PARTIAL",
