@@ -305,7 +305,7 @@ button{{width:100%;padding:12px;border:0;border-radius:10px;margin-top:12px;font
 <body>
 <div class="card">
   <div class="brand"><div class="mark">PR</div><div><h1>Connect Project Relay</h1><div class="small">ChatGPT is requesting access to your linked PCs.</div></div></div>
-  <div class="scope"><strong>Requested access</strong><br>Inspect your linked Project Relay workstations using the published non-destructive tool catalogue.</div>
+  <div class="scope"><strong>Requested access</strong><br>Inspect and control your linked Project Relay workstations using the published owner-aware tool catalogue. Sensitive and mutating actions remain subject to workstation ownership and local safety gates.</div>
   <div id="signed" style="display:none"><p>Signed in as <strong id="who"></strong>.</p><button id="allow" class="primary">Allow Project Relay</button><button id="signout" class="secondary">Use another account</button></div>
   <div id="login">
     <label>Email<input id="email" type="email" autocomplete="email"></label>
