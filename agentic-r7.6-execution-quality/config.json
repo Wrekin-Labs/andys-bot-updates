@@ -1,33 +1,43 @@
 {
   "mode": "SHADOW_ONLY",
   "microstructure": {
-    "max_book_age_seconds": 8.0,
-    "max_spread_bps": 25.0,
-    "depth_target_gbp": 500.0,
-    "min_quality_score": 45.0,
-    "max_adverse_selection_risk": 65.0
+    "max_book_age_seconds": 8,
+    "max_spread_bps": 25,
+    "depth_target_gbp": 500,
+    "min_quality_score": 45,
+    "max_adverse_selection_risk": 65
   },
   "promotion": {
     "min_samples": 200,
-    "min_positive_rate_lcb": 0.50,
-    "min_mean_return_pct_lcb": 0.0,
-    "max_drawdown_pct": 10.0,
+    "min_positive_rate_lcb": 0.5,
+    "min_mean_return_pct_lcb": 0,
+    "max_drawdown_pct": 10,
     "recent_window": 40,
     "min_regimes": 2,
-    "min_maker_fill_rate_lcb": 0.10
+    "min_maker_fill_rate_lcb": 0.1
   },
   "correlation_risk": {
-    "max_pair_correlation": 0.80,
-    "max_weighted_positive_correlation": 0.70
+    "max_pair_correlation": 0.8,
+    "max_weighted_positive_correlation": 0.7
   },
   "edge_drift": {
     "baseline_window": 100,
     "recent_window": 40,
-    "negative_z_limit": -2.0,
+    "negative_z_limit": -2,
     "min_mean_drop": 0.05
   },
   "live_tca": {
     "read_only": true,
-    "markout_horizons_seconds": [60, 300, 900, 3600]
+    "markout_horizons_seconds": [
+      60,
+      300,
+      900,
+      3600
+    ]
+  },
+  "selection_bias": {
+    "min_audited_folds": 4,
+    "max_selection_failure_rate": 0.5,
+    "max_untracked_trials": 12
   }
 }
