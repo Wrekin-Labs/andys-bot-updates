@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.6` — separates direct web subscriptions from the public ChatGPT plugin experience and limits host-supplied checkpoint context to the minimum task-specific text.
+**Current beta:** `1.2.0-beta.7` — adds checkout-bound PayPal activation claims on top of beta.6 directory-compliance and data-minimization work.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -148,6 +148,7 @@ PayPal live checkout:
 - The durable database stores orchestration metadata/hashes rather than raw prompts/model output.
 - Sensitive HTTP responses use no-store caching where appropriate.
 - Secrets are redacted from safe watchdog/service errors.
+- PayPal activation-token claims require a browser-generated random claim binding that must match the subscription `custom_id` returned by PayPal.
 
 ## Release check
 
@@ -180,7 +181,7 @@ As of the beta.6 candidate:
 - Durable engine, durable store and watchdog recovery are live in owner-canary mode.
 - The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
 - Direct subscription checkout is isolated from the public plugin/listing experience and remains unavailable until live PayPal REST credentials are added to Render.
-- Automatic subscription-token provisioning and cancellation/suspension revocation are implemented.
+- Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
 - The signed OpenAI webhook endpoint is implemented but `OPENAI_WEBHOOK_SECRET` is not yet configured; owner canary currently relies on watchdog recovery.
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 

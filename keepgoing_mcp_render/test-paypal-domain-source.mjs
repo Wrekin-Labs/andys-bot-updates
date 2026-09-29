@@ -29,3 +29,12 @@ assert.match(source, /if \(status !== "ACTIVE"\)/);
 assert.match(source, /subscription_not_active/);
 assert.match(source, /keepgoing_paypal_subscription/);
 assert.match(source, /Retry activation/);
+
+assert.match(source, /const claimId = String\(req\.body\?\.claim_id/);
+assert.match(source, /claim_id_invalid/);
+assert.match(source, /sub\.custom_id/);
+assert.match(source, /crypto\.timingSafeEqual\(expectedClaim, suppliedClaim\)/);
+assert.match(source, /claim_mismatch/);
+assert.match(source, /keepgoing_paypal_claim_id/);
+assert.match(source, /custom_id:claimId/);
+assert.match(source, /claim_id:claimId/);

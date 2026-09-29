@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.6 commercial beta candidate
+Version: 1.2.0-beta.7 commercial beta candidate
 Updated: 29 September 2026
 
 ## Listing
@@ -281,3 +281,7 @@ External/manual gates still required before broad public sale:
 ## Data minimization note for review
 
 The optional `context` tool input is capped at 4,000 characters and is explicitly described as a brief task-specific checkpoint only. It must not contain full conversation history, raw transcripts, credentials or unrelated personal data. The server truncates the checkpoint to the same 4,000-character bound before building a provider prompt.
+
+## PayPal claim binding
+
+Direct off-plugin PayPal checkout generates a random browser claim identifier and supplies it as PayPal `custom_id`. The server requires the same value when claiming a subscription and compares it with PayPal’s subscription record before issuing or rotating an activation token. This prevents a PayPal subscription ID by itself from acting as a KeepGoing credential.
