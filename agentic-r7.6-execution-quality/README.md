@@ -9,11 +9,14 @@ R7.6 is a **shadow-only** research layer. It is intended to improve the quality 
 - **Depth-walk taker simulation**: marketable buys walk visible asks to estimate volume-weighted fill price and slippage instead of assuming the best ask fills the whole order.
 - **Transaction-cost analysis (TCA)**: implementation shortfall, fee-inclusive entry cost and signed post-fill markouts so live/shadow execution can be attributed separately from strategy alpha.
 - **Stricter statistical promotion**: 90% lower confidence bounds for win rate and mean outcome, recent-sample stability, counterfactual drawdown and regime coverage. Maker routes also require a lower-confidence-bound fill rate.
+- **Correlation-aware shadow risk**: candidate exposure is compared with open positions so several highly correlated coins are not mistaken for diversified bets.
+- **Edge-drift monitoring**: recent forward outcomes are compared with a longer baseline and raise a shadow alarm when mean performance deteriorates materially.
+- **Read-only live TCA daemon**: records observed entry cost plus 1m/5m/15m/60m post-fill markouts from the local API only.
 - **R7.6 shadow overlay**: reads the existing R7.5 candidates plus `/api/live`, adds microstructure evidence and may downgrade shadow readiness. It can never create a candidate or affect the live engine.
 
 ## Why these upgrades
 
-Recent crypto microstructure research reports stable predictive importance for order-flow imbalance, spread and adverse-selection features across multiple assets. Modern execution simulators such as NautilusTrader model queue position, trade-based fills and liquidity consumption because simple touch-fill backtests overstate passive execution quality. Freqtrade likewise recommends explicit lookahead and recursive-bias checks before trusting backtests.
+Recent crypto microstructure research reports stable predictive importance for order-flow imbalance, spread and adverse-selection features across multiple assets. Modern execution simulators such as NautilusTrader model queue position, trade-based fills and liquidity consumption because simple touch-fill backtests overstate passive execution quality. Freqtrade likewise recommends explicit lookahead and recursive-bias checks before trusting backtests. Recent correlation research also shows crypto relationships are regime-dependent, so portfolio concentration should be measured rather than inferred from ticker count.
 
 ## Promotion policy
 
@@ -28,4 +31,4 @@ R7.6 remains research-only until enough forward observations exist. The default 
 - No automatic promotion from shadow to live.
 - Existing Coinbase protection and R7.1/R7.5 live gates remain authoritative.
 
-Run `python self_test.py` before packaging or deployment.
+Run `python self_test.py` and `python self_test_extended.py` before packaging or deployment.
