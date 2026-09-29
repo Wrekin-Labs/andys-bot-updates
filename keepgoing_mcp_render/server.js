@@ -1,5 +1,6 @@
 import express from "express";
 import crypto from "crypto";
+import { fileURLToPath } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -12,6 +13,8 @@ import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
 
 const app = express();
+const APP_VERSION = "1.2.0-beta.3";
+const ICON_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const PRO_PRICE_ID = process.env.KEEPGOING_PRO_PRICE_ID || "price_1UJy24B86Ss16l9WEsqSRxh1";
@@ -1560,7 +1563,7 @@ app.get("/oauth/authorize", async (req, res) => {
     .map(([k, v]) => '<input type="hidden" name="' + htmlEscape(k) + '" value="' + htmlEscape(v) + '">')
     .join("");
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:560px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px;box-sizing:border-box}input{width:100%;padding:13px;border-radius:10px;border:1px solid #444;background:#0d1117;color:#fff;box-sizing:border-box;margin:10px 0 14px}button{width:100%;padding:12px;border:0;border-radius:10px;font-weight:700}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect KeepGoing</h1><p>Enter the private activation token issued with your KeepGoing subscription.</p><form method="post" action="/oauth/authorize">' + fields + '<label>Activation token</label><input name="activation_token" type="password" autocomplete="off" required><button type="submit">Connect to ChatGPT</button></form><p class="muted">KeepGoing never asks for your ChatGPT password. This page only verifies your KeepGoing subscription.</p></div></body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><meta name="description" content="KeepGoing keeps substantial AI jobs progressing without repeated continue prompts."><link rel="icon" href="/icon.png"><link rel="manifest" href="/manifest.json"><title>KeepGoing — persistent AI work</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.hero{display:flex;gap:18px;align-items:center;margin-bottom:24px}.logo{width:86px;height:86px;border-radius:22px}.tag{color:#7ee7df;font-weight:700;letter-spacing:.02em}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><div class="hero"><img class="logo" src="/icon.png" alt="KeepGoing icon"><div><div class="tag">CONTINUE WITHOUT THE CHASING</div><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial work, research and long-running tasks. KeepGoing preserves the same job so ChatGPT can resume, check and continue it instead of repeatedly restarting the work.</p></div></div>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free access follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month · up to 3 hosted web tool calls per job</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month · up to 5 hosted web tool calls per job</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/refunds">Refunds & cancellation</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div>' + buttons + '</body></html>';
   res.type("html").send(html);
 });
 
@@ -1804,6 +1807,24 @@ app.get("/", async (_req, res) => {
 });
 
 
+app.get("/icon.png", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  res.type("png").sendFile(ICON_FILE);
+});
+
+app.get("/manifest.json", (_req, res) => {
+  res.json({
+    name: "KeepGoing",
+    short_name: "KeepGoing",
+    description: "Persistent AI jobs that continue without repeated continue prompts.",
+    start_url: "/",
+    display: "standalone",
+    background_color: "#0d1117",
+    theme_color: "#0d1117",
+    icons: [{ src: "/icon.png", sizes: "256x256", type: "image/png" }]
+  });
+});
+
 function infoPage(title, body) {
   return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#58a6ff}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/">← KeepGoing</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
 }
@@ -1844,6 +1865,16 @@ app.get("/terms", (_req, res) => {
     "<h2>Service limitations</h2><p>KeepGoing depends on third-party services including ChatGPT/OpenAI, hosting and payment providers. Availability can therefore be affected by their outages, limits, plan rules or product changes. KeepGoing cannot guarantee that ChatGPT will continue making tool calls after a chat turn has ended.</p>",
     "<h2>Liability</h2><p>KeepGoing is provided as a productivity tool. You remain responsible for reviewing important outputs and actions. Nothing in these terms excludes liability that cannot legally be excluded.</p>",
     "<h2>Contact</h2><p>Questions about these terms: <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>"
+  ].join("")));
+});
+
+app.get("/refunds", (_req, res) => {
+  res.type("html").send(infoPage("Refunds & cancellation", [
+    "<p><strong>Last updated:</strong> 29 September 2026</p>",
+    "<p>Paid KeepGoing plans renew monthly until cancelled. You can cancel future renewals through the payment provider used for your subscription.</p>",
+    "<h2>Refunds</h2><p>If KeepGoing is materially unavailable or does not provide the paid service described for reasons within our control, contact support and we will review a reasonable refund request. This does not limit any statutory rights you may have.</p>",
+    "<h2>Cooling-off and consumer rights</h2><p>Where applicable law gives you cancellation, cooling-off or refund rights, those rights continue to apply and are not excluded by this policy.</p>",
+    "<h2>How to request help</h2><p>Email <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a> with the payment-provider transaction or subscription reference. Never send passwords, card details or activation tokens.</p>"
   ].join("")));
 });
 
@@ -1932,7 +1963,7 @@ app.get("/readiness", async (_req, res) => {
   );
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
-    version: V12_ENABLED ? "1.2.0-beta.2" : "1.1.0",
+    version: V12_ENABLED ? APP_VERSION : "1.1.0",
     engine_ready: engineReady,
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
@@ -1952,7 +1983,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     name: "KeepGoing MCP",
-    version: V12_ENABLED ? "1.2.0-beta.2" : "1.1.0",
+    version: V12_ENABLED ? APP_VERSION : "1.1.0",
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),
@@ -2022,7 +2053,7 @@ app.get("/mcp", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP " + (V12_ENABLED ? "v1.2.0-beta.2" : "v1.1.0") + " listening on " + PORT);
+  console.log("KeepGoing MCP " + (V12_ENABLED ? "v" + APP_VERSION : "v1.1.0") + " listening on " + PORT);
 
   if (V12_ENABLED) {
     try {
