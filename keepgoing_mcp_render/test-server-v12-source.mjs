@@ -97,7 +97,9 @@ assert.doesNotMatch(source.slice(installStart, installEnd), /\/subscribe|paypal\
 const subscribeStart = source.indexOf('app.get("/subscribe"');
 const subscribeEnd = source.indexOf('app.get("/",', subscribeStart);
 assert.ok(subscribeStart >= 0 && subscribeEnd > subscribeStart, "direct subscribe handler must be present");
-assert.match(source.slice(subscribeStart, subscribeEnd), /paypal\.Buttons/);
+assert.match(source.slice(subscribeStart, subscribeEnd), /\/paypal\/start-subscription/);
+assert.match(source.slice(subscribeStart, subscribeEnd), /Continue with PayPal/);
+assert.doesNotMatch(source.slice(subscribeStart, subscribeEnd), /paypal\.Buttons|paypal\.com\/sdk/);
 assert.match(source, /og:title/);
 assert.match(source, /twitter:card/);
 assert.match(source, /app\.disable\("x-powered-by"\)/);
