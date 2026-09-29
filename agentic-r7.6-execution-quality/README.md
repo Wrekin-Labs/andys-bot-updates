@@ -12,6 +12,7 @@ R7.6 is a **shadow-only** research layer. It is intended to improve the quality 
 - **Correlation-aware shadow risk**: candidate exposure is compared with open positions so several highly correlated coins are not mistaken for diversified bets.
 - **Edge-drift monitoring**: recent forward outcomes are compared with a longer baseline and raise a shadow alarm when mean performance deteriorates materially.
 - **Read-only live TCA daemon**: records observed entry cost plus 1m/5m/15m/60m post-fill markouts from the local API only.
+- **Selection-bias audit**: every R7.4 walk-forward fold now records how the in-sample winner ranks against all tried parameter variants on the unseen fold. R7.6 blocks research promotion when the winner repeatedly falls into the OOS bottom half or when trial metadata is missing.
 - **R7.6 shadow overlay**: reads the existing R7.5 candidates plus `/api/live`, adds microstructure evidence and may downgrade shadow readiness. It can never create a candidate or affect the live engine.
 
 ## Why these upgrades
@@ -31,4 +32,4 @@ R7.6 remains research-only until enough forward observations exist. The default 
 - No automatic promotion from shadow to live.
 - Existing Coinbase protection and R7.1/R7.5 live gates remain authoritative.
 
-Run `python self_test.py` and `python self_test_extended.py` before packaging or deployment.
+Run `python self_test.py`, `python self_test_extended.py` and `python self_test_selection_bias.py` before packaging or deployment. GitHub CI compiles the patched R7.4 lab and all R7.6 modules on every relevant pull request.
