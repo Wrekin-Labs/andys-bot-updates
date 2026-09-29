@@ -23,3 +23,9 @@ assert.match(source, /paypalConfig\.webhook_url = desiredWebhookUrl/);
 assert.match(source, /error\.status = response\.status/);
 
 console.log("PayPal public-domain reconciliation guards passed");
+
+assert.doesNotMatch(source, /\["ACTIVE","APPROVED"\]\.includes\(status\)/);
+assert.match(source, /if \(status !== "ACTIVE"\)/);
+assert.match(source, /subscription_not_active/);
+assert.match(source, /keepgoing_paypal_subscription/);
+assert.match(source, /Retry activation/);
