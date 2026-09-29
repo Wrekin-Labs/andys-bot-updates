@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
-assert.match(source, /APP_VERSION = "1\.2\.0-beta\.17"/);
+assert.match(source, /APP_VERSION = "1\.2\.0-beta\.18"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
@@ -105,7 +105,7 @@ assert.match(source, /KEEPGOING_OWNER_TOKEN_HASH \|\| ""/);
 assert.doesNotMatch(source, /300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697/);
 assert.match(source, /req\.path\.startsWith\("\/oauth\/"\)/);
 assert.match(source, /X-Robots-Tag/);
-assert.match(source, /setup_error: Boolean\(paypalSetupError\)/);
+assert.match(source, /setup_error: Boolean\(paypalSetupError && !paypalSetupComplete\)/);
 assert.doesNotMatch(source, /webhook_id: paypalConfig\.webhook_id/);
 assert.match(source, /Built for work that takes more than one turn/);
 assert.match(source, /Install KeepGoing/);
@@ -178,3 +178,5 @@ console.log("server v1.2 source guards passed");
 
 assert.doesNotMatch(source, /ensureOpenAIWebhookSetup/);
 assert.doesNotMatch(source, /agent\.session\.idle/);
+
+assert.match(source, /setup_error: Boolean\(paypalSetupError && !paypalSetupComplete\)/);
