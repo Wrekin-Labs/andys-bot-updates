@@ -39,5 +39,24 @@
     "min_audited_folds": 4,
     "max_selection_failure_rate": 0.5,
     "max_untracked_trials": 12
+  },
+  "tail_risk": {
+    "min_tail_samples": 100,
+    "expected_shortfall_alpha": 0.05,
+    "capital_fraction": 0.15,
+    "bootstrap_simulations": 2000,
+    "bootstrap_horizon": 100,
+    "bootstrap_block_size": 5,
+    "bootstrap_seed": 760,
+    "ruin_floor_fraction": 0.85,
+    "max_expected_shortfall_loss_pct": 2.5,
+    "max_bootstrap_p95_drawdown_pct": 12,
+    "max_bootstrap_ruin_probability": 0.05
+  },
+  "regime_promotion": {
+    "min_samples_per_regime": 30,
+    "min_mature_regimes": 2,
+    "min_regime_mean_lcb_pct": -0.02,
+    "min_regime_positive_rate_lcb": 0.4
   }
 }
