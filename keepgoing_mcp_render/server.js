@@ -2003,6 +2003,7 @@ app.get("/readiness", async (_req, res) => {
     paypal_mode: PAYPAL_MODE,
     protected: true
   });
+});
 
 app.get("/health", (_req, res) => {
   res.json({
