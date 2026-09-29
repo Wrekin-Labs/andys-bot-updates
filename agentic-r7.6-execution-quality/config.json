@@ -1,0 +1,19 @@
+{
+  "mode": "SHADOW_ONLY",
+  "microstructure": {
+    "max_book_age_seconds": 8.0,
+    "max_spread_bps": 25.0,
+    "depth_target_gbp": 500.0,
+    "min_quality_score": 45.0,
+    "max_adverse_selection_risk": 65.0
+  },
+  "promotion": {
+    "min_samples": 200,
+    "min_positive_rate_lcb": 0.50,
+    "min_mean_return_pct_lcb": 0.0,
+    "max_drawdown_pct": 10.0,
+    "recent_window": 40,
+    "min_regimes": 2,
+    "min_maker_fill_rate_lcb": 0.10
+  }
+}
