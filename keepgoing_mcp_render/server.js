@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.14";
+const APP_VERSION = "1.2.0-beta.15";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -42,7 +42,18 @@ const V12_DURABLE_STORE_URL = process.env.KEEPGOING_DURABLE_STORE_URL || (
     : ""
 );
 const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BILLING_INGEST_TOKEN;
-const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
+let openAIWebhookSecret = process.env.openAIWebhookSecret || "";
+const OPENAI_WEBHOOK_NAME = "KeepGoing production";
+const OPENAI_WEBHOOK_URL = PUBLIC_BASE_URL + "/openai/webhook";
+const OPENAI_WEBHOOK_EVENT_TYPES = [
+  "agent.session.idle",
+  "agent.session.action_required",
+  "agent.session.failed"
+];
+let openAIWebhookEndpointId = "";
+let openAIWebhookSetupPromise = null;
+let openAIWebhookSetupComplete = Boolean(openAIWebhookSecret);
+let openAIWebhookSetupError = "";
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
@@ -353,13 +364,13 @@ function getV12Runtime() {
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
   const service = createV12Service({ engine, store, orchestrator, model: MODEL });
   const watchdog = createWatchdog({ store, orchestrator });
-  const webhookProcessor = OPENAI_WEBHOOK_SECRET
+  const webhookProcessor = openAIWebhookSecret
     ? createWebhookProcessor({
         store,
         orchestrator,
         verify: createOpenAIWebhookVerifier({
           apiKey: OPENAI_API_KEY,
-          webhookSecret: OPENAI_WEBHOOK_SECRET
+          webhookSecret: openAIWebhookSecret
         })
       })
     : null;
@@ -378,6 +389,93 @@ function safeLogError(error) {
 function fetchWithTimeout(url, init = {}, timeoutMs = 10_000) {
   if (init.signal) return fetch(url, init);
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+async function openAIWebhookApi(path, init = {}) {
+  if (!OPENAI_API_KEY) throw new Error("OpenAI API key is not configured");
+  const response = await fetchWithTimeout("https://api.openai.com/v1" + path, {
+    ...init,
+    headers: {
+      Authorization: "Bearer " + OPENAI_API_KEY,
+      "Content-Type": "application/json",
+      ...(init.headers || {})
+    }
+  }, 15_000);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.error?.message || data?.message || ("OpenAI webhook API failed (" + response.status + ")");
+    throw new Error(message);
+  }
+  return data;
+}
+
+async function ensureOpenAIWebhookSetup() {
+  if (!V12_ENABLED || !OPENAI_API_KEY) return false;
+  if (openAIWebhookSetupComplete && openAIWebhookSecret) return true;
+  if (openAIWebhookSetupPromise) return openAIWebhookSetupPromise;
+
+  openAIWebhookSetupPromise = (async () => {
+    openAIWebhookSetupError = "";
+    const listed = await openAIWebhookApi("/webhook_endpoints?limit=100", { method: "GET" });
+    const endpoints = Array.isArray(listed?.data) ? listed.data : [];
+    let endpoint =
+      endpoints.find((item) => item?.url === OPENAI_WEBHOOK_URL && item?.name === OPENAI_WEBHOOK_NAME) ||
+      endpoints.find((item) => item?.url === OPENAI_WEBHOOK_URL) ||
+      null;
+
+    if (!endpoint) {
+      endpoint = await openAIWebhookApi("/webhook_endpoints", {
+        method: "POST",
+        body: JSON.stringify({
+          name: OPENAI_WEBHOOK_NAME,
+          url: OPENAI_WEBHOOK_URL,
+          event_types: OPENAI_WEBHOOK_EVENT_TYPES
+        })
+      });
+      openAIWebhookSecret = String(endpoint?.signing_secret || "");
+    } else {
+      const currentEvents = [...(endpoint.event_types || [])].sort().join("|");
+      const wantedEvents = [...OPENAI_WEBHOOK_EVENT_TYPES].sort().join("|");
+      if (
+        endpoint.name !== OPENAI_WEBHOOK_NAME ||
+        endpoint.url !== OPENAI_WEBHOOK_URL ||
+        currentEvents !== wantedEvents
+      ) {
+        endpoint = await openAIWebhookApi("/webhook_endpoints/" + encodeURIComponent(endpoint.id), {
+          method: "POST",
+          body: JSON.stringify({
+            name: OPENAI_WEBHOOK_NAME,
+            url: OPENAI_WEBHOOK_URL,
+            event_types: OPENAI_WEBHOOK_EVENT_TYPES
+          })
+        });
+      }
+      const rotated = await openAIWebhookApi(
+        "/webhook_endpoints/" + encodeURIComponent(endpoint.id) + "/rotate_secret",
+        { method: "POST", body: "{}" }
+      );
+      openAIWebhookSecret = String(rotated?.signing_secret || "");
+    }
+
+    if (!endpoint?.id || !openAIWebhookSecret) {
+      throw new Error("OpenAI webhook setup did not return an endpoint ID and signing secret");
+    }
+
+    openAIWebhookEndpointId = String(endpoint.id);
+    openAIWebhookSetupComplete = true;
+    v12RuntimeCache = null;
+    return true;
+  })()
+    .catch((error) => {
+      openAIWebhookSetupComplete = false;
+      openAIWebhookSetupError = safeLogError(error);
+      throw error;
+    })
+    .finally(() => {
+      openAIWebhookSetupPromise = null;
+    });
+
+  return openAIWebhookSetupPromise;
 }
 
 function durableOwnerHash(access) {
@@ -1945,7 +2043,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.14 — 29 September 2026</h2><ul><li>Added the official portable OpenAI plugin package manifest.</li><li>Bundled the KeepGoing PNG asset as both the plugin composer icon and logo.</li><li>Added the portable MCP package definition for the live KeepGoing endpoint.</li><li>Added CI validation for plugin package metadata and asset paths.</li></ul><h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.15 — 29 September 2026</h2><ul><li>Added managed OpenAI webhook provisioning using the existing project API key.</li><li>KeepGoing now creates or updates its Agents-session webhook and obtains/rotates the signing secret automatically when no manual secret is configured.</li><li>Readiness exposes only managed/ready/error booleans; the signing secret is never returned.</li></ul><h2>1.2.0-beta.14 — 29 September 2026</h2><ul><li>Added the official portable OpenAI plugin package manifest.</li><li>Bundled the KeepGoing PNG asset as both the plugin composer icon and logo.</li><li>Added the portable MCP package definition for the live KeepGoing endpoint.</li><li>Added CI validation for plugin package metadata and asset paths.</li></ul><h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
@@ -2078,14 +2176,14 @@ app.get("/readiness", async (_req, res) => {
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
-    (V12_CANARY_ONLY || OPENAI_WEBHOOK_SECRET)
+    (V12_CANARY_ONLY || openAIWebhookSecret)
   );
   const oauthReady = Boolean(OAUTH_SECRET && OAUTH_CODE_URL);
   const commercialDurableReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
     !V12_CANARY_ONLY &&
-    OPENAI_WEBHOOK_SECRET
+    openAIWebhookSecret
   );
   const commercialBlockers = [];
   if (!engineReady) commercialBlockers.push("openai_api");
@@ -2095,7 +2193,7 @@ app.get("/readiness", async (_req, res) => {
   if (V12_ENABLED && !v12Configured()) commercialBlockers.push("durable_engine");
   if (V12_ENABLED && !durableStoreReady) commercialBlockers.push("durable_store");
   if (V12_ENABLED && V12_CANARY_ONLY) commercialBlockers.push("v12_owner_canary_only");
-  if (V12_ENABLED && !OPENAI_WEBHOOK_SECRET) commercialBlockers.push("openai_webhook");
+  if (V12_ENABLED && !openAIWebhookSecret) commercialBlockers.push("openai_webhook");
 
   const sellReady = Boolean(
     engineReady &&
@@ -2112,7 +2210,9 @@ app.get("/readiness", async (_req, res) => {
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
     durable_store_ready: durableStoreReady,
-    openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
+    openai_webhook_ready: Boolean(V12_ENABLED && openAIWebhookSecret),
+    openai_webhook_managed: Boolean(V12_ENABLED && openAIWebhookSetupComplete && !process.env.OPENAI_WEBHOOK_SECRET),
+    openai_webhook_setup_error: Boolean(openAIWebhookSetupError),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
     oauth_ready: oauthReady,
@@ -2134,7 +2234,9 @@ app.get("/health", (_req, res) => {
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),
-    openaiWebhookConfigured: Boolean(OPENAI_WEBHOOK_SECRET),
+    openaiWebhookConfigured: Boolean(openAIWebhookSecret),
+    openaiWebhookManaged: Boolean(V12_ENABLED && openAIWebhookSetupComplete && !process.env.OPENAI_WEBHOOK_SECRET),
+    openaiWebhookSetupError: Boolean(openAIWebhookSetupError),
     protected: true,
     model: MODEL,
     paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
@@ -2206,20 +2308,26 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log("KeepGoing MCP " + (V12_ENABLED ? "v" + APP_VERSION : "v1.1.0") + " listening on " + PORT);
 
   if (V12_ENABLED) {
-    try {
-      const runtime = getV12Runtime();
-      watchdogTimer = setInterval(() => {
+    void (async () => {
+      try {
+        if (!openAIWebhookSecret) {
+          await ensureOpenAIWebhookSetup();
+          console.log("keepgoing_openai_webhook_ready", openAIWebhookEndpointId || "managed");
+        }
+        const runtime = getV12Runtime();
+        watchdogTimer = setInterval(() => {
+          runtime.watchdog.runOnce().catch((error) => {
+            console.error("keepgoing_v12_watchdog_error", safeLogError(error));
+          });
+        }, V12_WATCHDOG_INTERVAL_MS);
+        watchdogTimer.unref();
         runtime.watchdog.runOnce().catch((error) => {
-          console.error("keepgoing_v12_watchdog_error", safeLogError(error));
+          console.error("keepgoing_v12_watchdog_startup_error", safeLogError(error));
         });
-      }, V12_WATCHDOG_INTERVAL_MS);
-      watchdogTimer.unref();
-      runtime.watchdog.runOnce().catch((error) => {
-        console.error("keepgoing_v12_watchdog_startup_error", safeLogError(error));
-      });
-    } catch (error) {
-      console.error("keepgoing_v12_startup_error", safeLogError(error));
-    }
+      } catch (error) {
+        console.error("keepgoing_v12_startup_error", safeLogError(error));
+      }
+    })();
   }
 
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
