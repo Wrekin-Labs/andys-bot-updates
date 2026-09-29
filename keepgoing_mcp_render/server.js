@@ -981,7 +981,7 @@ function createMcpServer(access = {}) {
   const oauthMeta = { securitySchemes: oauthSecuritySchemes };
 
   const server = new McpServer(
-    { name: "KeepGoing", version: v12Access ? "1.2.0-beta.1" : "1.1.0" },
+    { name: "KeepGoing", version: v12Access ? "1.2.0-beta.2" : "1.1.0" },
     { instructions: v12Access
       ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Before starting, gather any relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins; pass that context with the job. Prefer continue_until_done for these natural-language requests. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
@@ -1923,7 +1923,7 @@ app.get("/readiness", async (_req, res) => {
   );
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
-    version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0",
+    version: V12_ENABLED ? "1.2.0-beta.2" : "1.1.0",
     engine_ready: engineReady,
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
@@ -1943,7 +1943,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     name: "KeepGoing MCP",
-    version: V12_ENABLED ? "1.2.0-beta.1" : "1.1.0",
+    version: V12_ENABLED ? "1.2.0-beta.2" : "1.1.0",
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),
@@ -2010,7 +2010,7 @@ app.get("/mcp", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP " + (V12_ENABLED ? "v1.2.0-beta.1" : "v1.1.0") + " listening on " + PORT);
+  console.log("KeepGoing MCP " + (V12_ENABLED ? "v1.2.0-beta.2" : "v1.1.0") + " listening on " + PORT);
 
   if (V12_ENABLED) {
     try {
