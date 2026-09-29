@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.8";
+const APP_VERSION = "1.2.0-beta.9";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -479,6 +479,16 @@ function htmlEscape(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function setOAuthPageHeaders(res) {
+  res.set("Cache-Control", "no-store");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  res.set(
+    "Content-Security-Policy",
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+  );
+  return res;
 }
 
 async function forwardBillingEvent(provider, type, object, tier) {
@@ -1550,6 +1560,7 @@ app.get("/.well-known/oauth-authorization-server", (_req, res) => {
 });
 
 app.get("/oauth/authorize", async (req, res) => {
+  setOAuthPageHeaders(res);
   const responseType = String(req.query.response_type || "");
   const clientId = String(req.query.client_id || "");
   const redirectUri = String(req.query.redirect_uri || "");
@@ -1593,6 +1604,7 @@ app.get("/oauth/authorize", async (req, res) => {
 });
 
 app.post("/oauth/authorize", async (req, res) => {
+  setOAuthPageHeaders(res);
   const clientId = String(req.body.client_id || "");
   const redirectUri = String(req.body.redirect_uri || "");
   const state = String(req.body.state || "");
@@ -1761,7 +1773,8 @@ app.post("/billing/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    return res.status(502).json({ error: String(error?.message || error) });
+    console.error("stripe_claim_error", safeLogError(error));
+    return res.status(502).json({ error: "claim_upstream_error" });
   }
 });
 
@@ -1807,7 +1820,8 @@ app.post("/paypal/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    return res.status(502).json({ error: safeLogError(error) });
+    console.error("paypal_claim_error", safeLogError(error));
+    return res.status(502).json({ error: "claim_upstream_error" });
   }
 });
 
@@ -1906,7 +1920,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
@@ -2183,6 +2197,6 @@ app.listen(PORT, "0.0.0.0", () => {
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
     ensurePayPalSetup()
       .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
-      .catch((error) => console.error("PayPal bootstrap failed:", String(error?.message || error)));
+      .catch((error) => console.error("PayPal bootstrap failed:", safeLogError(error)));
   }
 });
