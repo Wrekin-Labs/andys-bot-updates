@@ -21,6 +21,14 @@ v1.2 instead:
 
 KeepGoing does not control ChatGPT's private reasoning, bypass ChatGPT/OpenAI limits, or force a new ChatGPT message after a chat turn has already ended. The durable server job can continue independently; the user/client can later retrieve it by job ID.
 
+## Autopilot host behaviour
+
+When the user says **continue**, **keep going**, **finish it**, **until done**, **don't stop**, or equivalent, the ChatGPT host should prefer `continue_until_done`.
+
+Before starting the durable job, the host may gather relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins, then pass a concise context bundle into the job. The KeepGoing service itself does not have blanket access to private ChatGPT history or every installed plugin; those capabilities remain controlled by the ChatGPT host and their normal permissions.
+
+Once the durable job starts, the server-side webhook/watchdog path advances `STATUS: PARTIAL` work automatically. The user should not need to type "continue" merely to move the same objective forward. A job stops only when it is completed, genuinely needs user input/approval, is cancelled, fails safely, or reaches its configured safety/cost budget.
+
 ## Customer flow
 
 1. Subscribe to KeepGoing.
@@ -47,6 +55,7 @@ These are safety/cost ceilings, not promised consumption targets. A job stops ea
 
 ## MCP tools
 
+- `continue_until_done` — preferred natural-language autopilot entrypoint for "continue / keep going / finish it / until done".
 - `start_persistent_job` — create or idempotently recover a durable job.
 - `get_persistent_job` — read current status/result.
 - `wait_for_persistent_job` — bounded wait on the same job ID.
