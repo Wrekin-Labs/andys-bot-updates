@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.19` — watchdog-first production durability, official plugin/logo packaging, owner auto-continue, secure live PayPal checkout/restart recovery, completion semantics and runtime hardening.
+**Current beta:** `1.2.0-beta.20` — watchdog-first production durability, idempotent/recoverable job startup, official plugin/logo packaging, owner auto-continue, secure live PayPal checkout/restart recovery, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -143,7 +143,7 @@ PayPal live checkout:
 - OAuth 2.1 authorization-code flow with PKCE protects ChatGPT connections.
 - Durable job ownership is scoped to the authenticated customer hash.
 - Client request IDs are hashed before durable storage.
-- Start, continuation and resume paths use durable reservation/CAS plus provider idempotency keys.
+- Start, continuation and resume paths use durable reservation/CAS plus provider idempotency keys. Transient initial-session failures are retried with the same start key and accepted sessions can be recovered by durable job metadata.
 - Signed OpenAI webhooks are verified before processing.
 - Webhook event IDs are deduplicated.
 - The watchdog repairs missed webhook/poll progress without blindly creating a duplicate provider session.
@@ -183,7 +183,7 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.19 candidate:
+As of the beta.20 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
