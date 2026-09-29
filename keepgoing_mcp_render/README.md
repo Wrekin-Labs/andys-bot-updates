@@ -1,10 +1,10 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.10` — adds bounded upstream timeouts on top of beta.9 OAuth CSP/billing redaction, beta.8 OAuth/trust fixes, beta.7 PayPal claim binding, and beta.6 directory-compliance/data-minimization work.
+**Current beta:** `1.2.0-beta.16` — watchdog-first production durability, official plugin/logo packaging, owner auto-continue, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
-v1.2 remains feature-flagged behind `KEEPGOING_V12_ENABLED`. Production currently runs the durable engine in owner-canary mode with the durable store and watchdog live. Public paid rollout should keep canary-only mode until the signed OpenAI webhook and a live payment provider are configured and verified.
+v1.2 remains feature-flagged behind `KEEPGOING_V12_ENABLED`. Production currently runs the durable engine in owner-canary mode with the durable store and watchdog live. Public paid rollout should keep canary-only mode until the live watchdog durability drills and a live payment provider are verified. OpenAI webhook delivery is optional for the current Agents-session engine.
 
 ## What v1.2 changes
 
@@ -126,7 +126,7 @@ v1.2 durable engine:
 - `KEEPGOING_V12_ENABLED=true`
 - `KEEPGOING_V12_CANARY_ONLY=true` during owner-only staged validation; set false/omit only after the live drills pass
 - either direct durable-store credentials (`KEEPGOING_SUPABASE_URL` / `SUPABASE_URL` plus `KEEPGOING_SUPABASE_SERVICE_KEY`) **or** the narrow durable-store proxy (`KEEPGOING_DURABLE_STORE_URL` plus `KEEPGOING_DURABLE_STORE_TOKEN`)
-- `OPENAI_WEBHOOK_SECRET` for production signed-webhook processing
+- optional `OPENAI_WEBHOOK_SECRET` only when a compatible OpenAI webhook event stream is used; watchdog continuation does not require it
 - optional watchdog interval configuration
 
 Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
@@ -170,7 +170,7 @@ Recommended staged rollout: first enable `KEEPGOING_V12_ENABLED=true` together w
 Before enabling v1.2 for paid customers, verify:
 1. CI passes on the exact release commit.
 2. `sql/durable_jobs.sql` is applied to the intended Supabase project.
-3. `/readiness` reports `ok: true`, `durable_engine_ready: true`, `durable_store_ready: true`, and `openai_webhook_ready: true`.
+3. `/readiness` reports `ok: true`, `durable_engine_ready: true`, `durable_store_ready: true`, and `watchdog_ready: true`.
 4. Invalid OAuth/token access is rejected without consuming quota.
 5. A real durable test job progresses PARTIAL -> continuation -> COMPLETED.
 6. Duplicate starts return the original job and consume quota once.
@@ -187,10 +187,10 @@ As of the beta.10 candidate:
 - The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
 - Direct subscription checkout is isolated from the public plugin/listing experience and remains unavailable until live PayPal REST credentials are added to Render.
 - Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
-- The signed OpenAI webhook endpoint is implemented but `OPENAI_WEBHOOK_SECRET` is not yet configured; owner canary currently relies on watchdog recovery.
+- The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 
-Production readiness remains intentionally strict: `sell_ready` must stay false until live checkout, signed webhook delivery and non-canary durable rollout are all genuinely ready.
+Production readiness remains intentionally strict: `sell_ready` stays false until live checkout and non-canary durable rollout are genuinely ready.
 ## Public-plugin commerce boundary
 
 The public ChatGPT plugin/listing experience is informational and authentication-only for existing KeepGoing accounts. It does not initiate a new digital-service subscription or promote an upgrade inside ChatGPT.
