@@ -124,6 +124,35 @@ const event = await store.recordEvent({
 assert.equal(event.inserted, true);
 
 assert.ok(calls.every((c) => c.init.headers.apikey === "service-test"));
+
+// The durable store can also use a narrow server-to-server proxy so Render
+// never needs the Supabase service-role key.
+const proxyCalls = [];
+const proxyFetch = async (url, init) => {
+  proxyCalls.push({ url, init });
+  assert.equal(url, "https://example.supabase.co/functions/v1/keepgoing-durable-store");
+  assert.equal(init.method, "POST");
+  assert.equal(init.headers["x-keepgoing-ingest-token"], "bridge-token");
+  const envelope = JSON.parse(init.body);
+  assert.match(envelope.path, /^\/rest\/v1\/keepgoing_/);
+  assert.equal(typeof envelope.method, "string");
+  return reply(envelope.path.includes("keepgoing_job_events") ? [{ id: 1 }] : [baseRow]);
+};
+const proxyStore = new SupabaseJobStore({
+  proxyUrl: "https://example.supabase.co/functions/v1/keepgoing-durable-store",
+  proxyToken: "bridge-token",
+  fetchImpl: proxyFetch
+});
+assert.deepEqual(await proxyStore.healthCheck(), { ok: true });
+assert.equal(proxyCalls.length, 2);
+assert.ok(proxyCalls.some((c) => JSON.parse(c.init.body).path.includes("keepgoing_jobs?select=job_id&limit=1")));
+assert.ok(proxyCalls.some((c) => JSON.parse(c.init.body).path.includes("keepgoing_job_events?select=id&limit=1")));
+
+assert.throws(
+  () => new SupabaseJobStore({ fetchImpl: fakeFetch }),
+  /direct credentials or durable-store proxy required/
+);
+
 console.log("supabase store tests passed");
 
 function reply(data, status = 200) {
