@@ -26,7 +26,7 @@ export function createV12Service({
     const limits = planLimits(tier, allowWeb);
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
-      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use supplied context as a checkpoint. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
+      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use any supplied brief task checkpoint only as supporting context. The checkpoint is intentionally limited and is not full chat history; never infer missing credentials, private data, or unrelated facts from it. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
       allowWeb,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
@@ -256,7 +256,7 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     max: "Work as autonomously and comprehensively as possible within the available tools and information."
   }[mode] || "Work autonomously where reasonable.";
 
-  const contextText = String(context || "").trim().slice(0, 20_000);
+  const contextText = String(context || "").trim().slice(0, 4_000);
 
   return [
     "You are the execution engine for KeepGoing, a durable AI job runner.",
@@ -266,10 +266,10 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     "DEFINITION OF DONE:", String(done || ""),
     ...(contextText ? [
       "",
-      "RELEVANT CONTEXT FROM THE HOST CHAT / CONNECTED TOOLS:",
+      "BRIEF TASK-SPECIFIC CHECKPOINT:",
       contextText,
       "",
-      "Use this context as supporting evidence. The GOAL and latest user instruction remain authoritative."
+      "Use this checkpoint only as supporting evidence. It is intentionally limited and is not full chat history. The GOAL and latest user instruction remain authoritative."
     ] : []),
     "",
     "AUTONOMY:", autonomy,
