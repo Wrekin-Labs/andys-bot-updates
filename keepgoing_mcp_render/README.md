@@ -1,5 +1,7 @@
 # KeepGoing v1.2 beta
 
+**Current beta:** `1.2.0-beta.2` — adds the `continue_until_done` primary entrypoint, host-context passthrough, and stricter only-when-genuinely-blocked user stops.
+
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
 v1.2 is developed behind `KEEPGOING_V12_ENABLED`. Keep the production v1.1 path available until the v1.2 database migration, webhook and live preflight are complete.
