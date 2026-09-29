@@ -59,7 +59,7 @@ assert.match(source, /app\.get\("\/status"/);
 assert.match(source, /app\.get\("\/changelog"/);
 assert.match(source, /app\.get\("\/subscribe"/);
 assert.match(source, /req\.path === "\/subscribe"/);
-assert.match(source, /The public plugin experience does not sell or upgrade digital subscriptions/);
+assert.match(source, /Purchasing and account upgrades are not part of the ChatGPT plugin experience/);
 assert.match(source, /Connect existing account/);
 assert.match(source, /Existing customers connect with their private activation token/);
 assert.match(source, /The ChatGPT plugin does not initiate purchases or upgrades/);
