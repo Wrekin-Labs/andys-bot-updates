@@ -74,3 +74,13 @@ R7.6 response:
 - The selection-bias guard measures how often that winner lands in the OOS bottom half.
 - Missing selection metadata fails closed for research promotion.
 - This is not claimed to be full CSCV/PBO; it is a transparent fold-level diagnostic designed to expose unstable selection before promotion.
+
+
+## 6. Tail risk and regime-conditional robustness
+
+A pooled strategy average can conceal concentrated losses in one market state. R7.6 therefore adds two independent forward-evidence checks:
+
+- expected shortfall and moving-block bootstrap path stress, with portfolio-impact scaling via a configured research capital fraction;
+- regime-conditional lower-confidence-bound tests, requiring enough mature regimes and refusing research promotion when a sufficiently sampled regime fails.
+
+This is deliberately more conservative than using Sharpe/PF alone. The bootstrap is a diagnostic built from observed forward outcomes; it is not presented as a forecast of future loss.
