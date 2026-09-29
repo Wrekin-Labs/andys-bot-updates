@@ -606,6 +606,10 @@ export class KeepGoingOrchestrator {
   }
 }
 
+function startKey(jobId) {
+  return ("kg-start-" + String(jobId || "unknown")).slice(0, 256);
+}
+
 function continuationKey(jobId, turnId) {
   return ("kg-cont-" + jobId + "-" + String(turnId || "unknown")).slice(0, 256);
 }
