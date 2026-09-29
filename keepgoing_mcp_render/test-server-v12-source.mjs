@@ -23,6 +23,9 @@ assert.match(source, /access\._mcp_request_id = "mcp-" \+ digest/);
 assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_request_id \|\| null/);
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
+assert.match(source, /server\.registerTool\("continue_until_done"/);
+assert.match(source, /Prefer continue_until_done/);
+assert.match(source, /context: z\.string\(\)\.max\(20000\)\.optional\(\)/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
 assert.match(source, /runtime\.store\?\.healthCheck/);
 assert.match(source, /durable_store_ready: durableStoreReady/);
@@ -31,6 +34,7 @@ assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 assert.match(source, /name: "get_profile"[\s\S]{0,900}"openai\/profile": true/);
 for (const title of [
   "Start persistent job",
+  "Continue until done",
   "Get persistent job",
   "Wait for persistent job",
   "Cancel persistent job",
