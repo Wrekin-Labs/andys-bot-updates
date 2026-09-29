@@ -104,7 +104,7 @@ assert.match(source, /href="\/changelog"/);
 assert.match(source, /Refunds & cancellation/);
 assert.match(source, /KEEPGOING_DURABLE_STORE_URL/);
 assert.match(source, /proxyUrl: V12_DURABLE_STORE_URL/);
-assert.match(source, /V12_CANARY_ONLY \|\| openAIWebhookSecret/);
+assert.match(source, /const durableOpsReady = !V12_ENABLED \|\| Boolean/);
 assert.match(source, /function v12ForAccess\(access\)/);
 assert.match(source, /if \(isStart && V12_ENABLED && !v12ForAccess\(access\)\)/);
 assert.match(source, /validateCustomerToken\(access\._customer_token, true\)/);
