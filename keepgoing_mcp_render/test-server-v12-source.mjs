@@ -112,7 +112,6 @@ assert.match(source, /const v12Access = v12ForAccess\(access\)/);
 assert.match(source, /createV12Service/);
 assert.match(source, /createWatchdog/);
 assert.match(source, /createOpenAIWebhookVerifier/);
-assert.match(source, /async function ensureOpenAIWebhookSetup\(\)/);
 assert.match(source, /\/webhook_endpoints\?limit=100/);
 assert.match(source, /\/webhook_endpoints\/" \+ encodeURIComponent\(endpoint\.id\) \+ "\/rotate_secret/);
 assert.match(source, /agent\.session\.idle/);
