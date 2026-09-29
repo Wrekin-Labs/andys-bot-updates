@@ -38,7 +38,12 @@ assert.match(source, /context: z\.string\(\)\.max\(20000\)\.optional\(\)/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
 assert.match(source, /runtime\.store\?\.healthCheck/);
 assert.match(source, /durable_store_ready: durableStoreReady/);
-assert.match(source, /sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady/);
+assert.match(source, /const commercialDurableReady = !V12_ENABLED \|\| Boolean/);
+assert.match(source, /!V12_CANARY_ONLY &&[\s\S]{0,120}OPENAI_WEBHOOK_SECRET/);
+assert.match(source, /commercialBlockers\.push\("live_checkout"\)/);
+assert.match(source, /commercialBlockers\.push\("v12_owner_canary_only"\)/);
+assert.match(source, /commercialBlockers\.push\("openai_webhook"\)/);
+assert.match(source, /sell_ready: sellReady/);
 assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 assert.match(source, /name: "get_profile"[\s\S]{0,900}"openai\/profile": true/);
 for (const title of [
