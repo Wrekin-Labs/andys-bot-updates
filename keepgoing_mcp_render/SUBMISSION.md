@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.7 commercial beta candidate
+Version: 1.2.0-beta.8 commercial beta candidate
 Updated: 29 September 2026
 
 ## Listing
@@ -21,7 +21,7 @@ Updated: 29 September 2026
 **Terms:** https://keepgoing-mcp.onrender.com/terms  
 **Security:** https://keepgoing-mcp.onrender.com/security  
 **Refunds & cancellation:** https://keepgoing-mcp.onrender.com/refunds  
-**Icon:** https://keepgoing-mcp.onrender.com/icon.svg  
+**Icon:** https://keepgoing-mcp.onrender.com/icon.png  
 **MCP server:** https://keepgoing-mcp.onrender.com/mcp
 
 A branded production domain is recommended before public submission. If the Render subdomain is retained, use it consistently for OAuth discovery, privacy/terms, support and domain verification.
