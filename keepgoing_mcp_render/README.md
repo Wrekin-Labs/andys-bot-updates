@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.21` — watchdog-first production durability, idempotent/recoverable job startup, directory-policy-hardened plugin packaging, owner auto-continue, secure external PayPal checkout/restart recovery, completion semantics and runtime hardening.
+**Current beta:** `1.2.0-beta.22` — watchdog-first production durability, idempotent/recoverable job startup, upload-ready directory metadata and review cases, owner auto-continue, secure external PayPal checkout/restart recovery, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -183,7 +183,7 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.21 candidate:
+As of the beta.22 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
