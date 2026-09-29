@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.3 commercial beta candidate  
+Version: 1.2.0-beta.6 commercial beta candidate
 Updated: 29 September 2026
 
 ## Listing
@@ -39,8 +39,13 @@ https://keepgoing-mcp.onrender.com/.well-known/oauth-authorization-server
 Scope:
 `keepgoing.jobs`
 
-Customers authenticate with a KeepGoing activation token issued after an active subscription is claimed. The activation token is entered only on KeepGoing’s OAuth page. ChatGPT receives short-lived OAuth credentials; the activation token is not embedded in the MCP endpoint URL.
+Existing KeepGoing account holders authenticate with a private activation token on KeepGoing’s OAuth page. ChatGPT receives short-lived OAuth credentials; the activation token is not embedded in the MCP endpoint URL. The public plugin does not initiate or promote new digital-service subscriptions.
 
+## Commerce boundary
+
+KeepGoing's public ChatGPT plugin experience is informational/authentication-only for existing accounts. Tool descriptions, starter prompts, OAuth pages, install pages and public listing pages do not initiate checkout, link to a transactional upgrade, or ask ChatGPT to sell a digital subscription.
+
+A separate direct web route `/subscribe` exists for intentional off-plugin paid-beta sales. It is unlinked from the public plugin/listing experience, excluded from the sitemap, disallowed in robots.txt and served with no-store/noindex handling.
 ## Tools
 
 ### continue_until_done — “Continue until done”
@@ -227,11 +232,11 @@ Never expose an activation token, OAuth token, API key, Supabase service key or 
 
 ## Reviewer account
 
-Create a dedicated reviewer subscription/account before submission.
+Create a dedicated pre-provisioned reviewer account before submission. Reviewers must not need to purchase a subscription through ChatGPT.
 
 Requirements:
 - No MFA/SMS/private-network dependency for reviewer access unless the review process explicitly supports it.
-- Disposable reviewer activation credential.
+- Disposable reviewer activation credential for an already-provisioned reviewer account.
 - Enough quota for the submitted tests plus reasonable retries.
 - Reviewer can use only its own jobs.
 - Rotate/revoke the credential after review if no longer required.
@@ -256,16 +261,15 @@ The v1.1 Responses path remains available while v1.2 is feature-flagged for stag
 
 ## Remaining launch gates
 
-Already completed in beta.3:
+Already completed in the current beta line:
 - Production durable-store schema/state is live and reachable through the protected durable-store path.
 - `KEEPGOING_V12_ENABLED=true` owner-canary deployment is live.
 - OAuth owner connection is verified.
 - Durable owner smoke test starts and returns a valid `STATUS: COMPLETED` result.
-- CI is green on beta.3 and the branded-homepage hotfix.
-- Product page, icon/manifest, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
+- Public informational landing page, icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are implemented and deployed in the beta line.
 
 External/manual gates still required before broad public sale:
-- Create/authorise the live PayPal REST app (or verify a live Stripe account), then add live credentials to Render and verify subscription checkout, webhook ingestion, activation-token issuance, cancellation and failure handling.
+- For direct off-plugin paid-beta sales only: create/authorise the live PayPal REST app (or verify a live Stripe account), then add live credentials to Render and verify subscription checkout, webhook ingestion, activation-token issuance, cancellation and failure handling. Do not surface that transaction flow inside the public ChatGPT plugin experience.
 - Configure the OpenAI project webhook to `/openai/webhook`, store its signing secret in Render as `OPENAI_WEBHOOK_SECRET`, verify signed delivery, then disable owner-only canary only after the durability drills remain green.
 - Run a real multi-turn PARTIAL -> continuation -> COMPLETED drill with the signed webhook enabled, plus duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
 - Create a dedicated reviewer account/activation credential with adequate quota.
@@ -273,3 +277,7 @@ External/manual gates still required before broad public sale:
 - Upload the 256×256 KeepGoing PNG icon to the ChatGPT app listing if the listing UI does not consume the hosted icon automatically.
 - Record the reviewer demo and run the submission portal tool scan.
 - Submit to the public directory only after the above external gates are actually complete; directory approval must not be claimed in advance.
+
+## Data minimization note for review
+
+The optional `context` tool input is capped at 4,000 characters and is explicitly described as a brief task-specific checkpoint only. It must not contain full conversation history, raw transcripts, credentials or unrelated personal data. The server truncates the checkpoint to the same 4,000-character bound before building a provider prompt.

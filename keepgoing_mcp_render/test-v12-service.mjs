@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createV12Service, planLimits } from "./v12_service.js";
+import { createV12Service, planLimits, buildJobPrompt } from "./v12_service.js";
 import { MemoryJobStore } from "./durable_store.js";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { JOB_STATES, newJobRecord } from "./durable_job.js";
@@ -274,3 +274,8 @@ const offlineLimits = planLimits("pro", false);
 assert.equal(offlineLimits.max_total_tool_calls, 0);
 
 console.log("v1.2 service tests passed");
+
+const briefCheckpointPrompt = buildJobPrompt("goal", "done", "balanced", "x".repeat(4000) + "SHOULD_NOT_APPEAR");
+assert.match(briefCheckpointPrompt, /BRIEF TASK-SPECIFIC CHECKPOINT:/);
+assert.match(briefCheckpointPrompt, /not full chat history/);
+assert.doesNotMatch(briefCheckpointPrompt, /SHOULD_NOT_APPEAR/);
