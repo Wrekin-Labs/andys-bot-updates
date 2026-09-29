@@ -1,0 +1,31 @@
+# Andy's Bot R7.6 — Execution Quality Research
+
+R7.6 is a **shadow-only** research layer. It is intended to improve the quality of evidence used before any future live promotion; it does not place, preview, cancel or modify orders and cannot arm live trading.
+
+## What it adds
+
+- **Microstructure quality**: spread, top-of-book imbalance, five-level depth imbalance, microprice shift, trade pressure, freshness and an adverse-selection risk score.
+- **Queue-aware maker simulation**: a resting limit order tracks displayed quantity ahead; correct-side trades must clear that queue before a simulated fill. This avoids the optimistic assumption that every touched limit order fills.
+- **Depth-walk taker simulation**: marketable buys walk visible asks to estimate volume-weighted fill price and slippage instead of assuming the best ask fills the whole order.
+- **Transaction-cost analysis (TCA)**: implementation shortfall, fee-inclusive entry cost and signed post-fill markouts so live/shadow execution can be attributed separately from strategy alpha.
+- **Stricter statistical promotion**: 90% lower confidence bounds for win rate and mean outcome, recent-sample stability, counterfactual drawdown and regime coverage. Maker routes also require a lower-confidence-bound fill rate.
+- **R7.6 shadow overlay**: reads the existing R7.5 candidates plus `/api/live`, adds microstructure evidence and may downgrade shadow readiness. It can never create a candidate or affect the live engine.
+
+## Why these upgrades
+
+Recent crypto microstructure research reports stable predictive importance for order-flow imbalance, spread and adverse-selection features across multiple assets. Modern execution simulators such as NautilusTrader model queue position, trade-based fills and liquidity consumption because simple touch-fill backtests overstate passive execution quality. Freqtrade likewise recommends explicit lookahead and recursive-bias checks before trusting backtests.
+
+## Promotion policy
+
+R7.6 remains research-only until enough forward observations exist. The default statistical guard requires at least 200 observations, positive lower-confidence bounds for hit rate and mean outcome, positive recent performance, acceptable drawdown and at least two observed market regimes. These thresholds are evidence gates, not a profit guarantee.
+
+## Safety invariants
+
+- No order endpoints.
+- No transfer capability.
+- No live arming.
+- No risk-limit changes.
+- No automatic promotion from shadow to live.
+- Existing Coinbase protection and R7.1/R7.5 live gates remain authoritative.
+
+Run `python self_test.py` before packaging or deployment.
