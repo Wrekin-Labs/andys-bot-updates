@@ -15,5 +15,19 @@
     "recent_window": 40,
     "min_regimes": 2,
     "min_maker_fill_rate_lcb": 0.10
+  },
+  "correlation_risk": {
+    "max_pair_correlation": 0.80,
+    "max_weighted_positive_correlation": 0.70
+  },
+  "edge_drift": {
+    "baseline_window": 100,
+    "recent_window": 40,
+    "negative_z_limit": -2.0,
+    "min_mean_drop": 0.05
+  },
+  "live_tca": {
+    "read_only": true,
+    "markout_horizons_seconds": [60, 300, 900, 3600]
   }
 }
