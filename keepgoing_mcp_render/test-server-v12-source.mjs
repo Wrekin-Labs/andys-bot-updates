@@ -105,7 +105,7 @@ assert.match(source, /KEEPGOING_OWNER_TOKEN_HASH \|\| ""/);
 assert.doesNotMatch(source, /300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697/);
 assert.match(source, /req\.path\.startsWith\("\/oauth\/"\)/);
 assert.match(source, /X-Robots-Tag/);
-assert.match(source, /setup_error: Boolean\(paypalSetupError\)/);
+assert.match(source, /setup_error: Boolean\(paypalSetupError && !paypalSetupComplete\)/);
 assert.doesNotMatch(source, /webhook_id: paypalConfig\.webhook_id/);
 assert.match(source, /Built for work that takes more than one turn/);
 assert.match(source, /Install KeepGoing/);
