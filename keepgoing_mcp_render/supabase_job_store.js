@@ -1,12 +1,23 @@
 import crypto from "node:crypto";
 
 export class SupabaseJobStore {
-  constructor({ supabaseUrl, serviceKey, fetchImpl = globalThis.fetch } = {}) {
-    if (!supabaseUrl) throw new Error("Supabase URL required");
-    if (!serviceKey) throw new Error("Supabase service key required");
+  constructor({
+    supabaseUrl,
+    serviceKey,
+    proxyUrl = "",
+    proxyToken = "",
+    fetchImpl = globalThis.fetch
+  } = {}) {
     if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
-    this.base = String(supabaseUrl).replace(/\/$/, "");
-    this.serviceKey = serviceKey;
+    const directReady = Boolean(supabaseUrl && serviceKey);
+    const proxyReady = Boolean(proxyUrl && proxyToken);
+    if (!directReady && !proxyReady) {
+      throw new Error("Supabase direct credentials or durable-store proxy required");
+    }
+    this.base = String(supabaseUrl || "").replace(/\/$/, "");
+    this.serviceKey = String(serviceKey || "");
+    this.proxyUrl = String(proxyUrl || "");
+    this.proxyToken = String(proxyToken || "");
     this.fetchImpl = fetchImpl;
   }
 
@@ -158,16 +169,35 @@ export class SupabaseJobStore {
   }
 
   async request(path, init = {}) {
-    const response = await this.fetchImpl(this.base + path, {
-      ...init,
-      headers: {
-        apikey: this.serviceKey,
-        Authorization: "Bearer " + this.serviceKey,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...(init.headers || {})
-      }
-    });
+    let response;
+    if (this.proxyUrl && this.proxyToken) {
+      const prefer = init.headers?.Prefer || init.headers?.prefer || null;
+      response = await this.fetchImpl(this.proxyUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "x-keepgoing-ingest-token": this.proxyToken
+        },
+        body: JSON.stringify({
+          path,
+          method: String(init.method || "GET").toUpperCase(),
+          headers: prefer ? { Prefer: String(prefer) } : {},
+          body: init.body == null ? null : String(init.body)
+        })
+      });
+    } else {
+      response = await this.fetchImpl(this.base + path, {
+        ...init,
+        headers: {
+          apikey: this.serviceKey,
+          Authorization: "Bearer " + this.serviceKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...(init.headers || {})
+        }
+      });
+    }
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       const error = new Error(data?.message || data?.error || ("Supabase request failed (" + response.status + ")"));
