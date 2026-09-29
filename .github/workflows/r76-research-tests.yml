@@ -1,0 +1,27 @@
+name: R7.6 Research Tests
+
+on:
+  pull_request:
+    paths:
+      - "agentic-r7.4-lab/**"
+      - "agentic-r7.6-execution-quality/**"
+      - ".github/workflows/r76-research-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile research modules
+        run: |
+          python -m py_compile agentic-r7.4-lab/andys_strategy_lab.py
+          python -m py_compile agentic-r7.6-execution-quality/*.py
+      - name: Run R7.6 tests
+        run: |
+          python agentic-r7.6-execution-quality/self_test.py
+          python agentic-r7.6-execution-quality/self_test_extended.py
+          python agentic-r7.6-execution-quality/self_test_selection_bias.py
