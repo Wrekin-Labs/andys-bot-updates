@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "keepgoing",
-  "version": "1.2.0-beta.19",
+  "version": "1.2.0-beta.20",
   "description": "Durable AI jobs that continue substantial work without repeated continue prompts.",
   "author": {
     "name": "KeepGoing",
