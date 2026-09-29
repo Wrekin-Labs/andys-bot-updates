@@ -5,6 +5,7 @@ Research / decision support only. It never submits, amends or cancels orders.
 from .engine import (
     Candidate,
     Evidence,
+    ExecutionCostSnapshot,
     MarketRegime,
     Decision,
     StrategyLabEvidence,
@@ -13,6 +14,6 @@ from .engine import (
 )
 
 __all__ = [
-    "Candidate", "Evidence", "MarketRegime", "Decision",
+    "Candidate", "Evidence", "ExecutionCostSnapshot", "MarketRegime", "Decision",
     "StrategyLabEvidence", "R72Config", "R72EdgeEngine",
 ]
