@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.9";
+const APP_VERSION = "1.2.0-beta.10";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -146,7 +146,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
     ',"webhook_id":' + JSON.stringify(paypalConfig.webhook_id) +
     ',"webhook_event":' + raw + '}';
 
-  const verify = await fetch(PAYPAL_BASE + "/v1/notifications/verify-webhook-signature", {
+  const verify = await fetchWithTimeout(PAYPAL_BASE + "/v1/notifications/verify-webhook-signature", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + token,
@@ -365,6 +365,11 @@ function safeLogError(error) {
     : message.slice(0, 500);
 }
 
+function fetchWithTimeout(url, init = {}, timeoutMs = 10_000) {
+  if (init.signal) return fetch(url, init);
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 function durableOwnerHash(access) {
   return digest(String(access?.subject || access?.tier || "customer"));
 }
@@ -493,7 +498,7 @@ function setOAuthPageHeaders(res) {
 
 async function forwardBillingEvent(provider, type, object, tier) {
   if (!BILLING_INGEST_URL || !BILLING_INGEST_TOKEN) throw new Error("billing_ingest_not_configured");
-  const response = await fetch(BILLING_INGEST_URL, {
+  const response = await fetchWithTimeout(BILLING_INGEST_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -509,7 +514,7 @@ async function forwardBillingEvent(provider, type, object, tier) {
 async function billingConfig(action, config) {
   if (!BILLING_CONFIG_URL || !BILLING_INGEST_TOKEN) throw new Error("billing_config_not_configured");
   const provider = "paypal_" + PAYPAL_MODE;
-  const response = await fetch(BILLING_CONFIG_URL, {
+  const response = await fetchWithTimeout(BILLING_CONFIG_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -525,7 +530,7 @@ async function billingConfig(action, config) {
 async function paypalAccessToken() {
   if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) throw new Error("PayPal credentials are not configured");
   const basic = Buffer.from(PAYPAL_CLIENT_ID + ":" + PAYPAL_CLIENT_SECRET).toString("base64");
-  const response = await fetch(PAYPAL_BASE + "/v1/oauth2/token", {
+  const response = await fetchWithTimeout(PAYPAL_BASE + "/v1/oauth2/token", {
     method: "POST",
     headers: {
       Authorization: "Basic " + basic,
@@ -540,7 +545,7 @@ async function paypalAccessToken() {
 
 async function paypalApi(path, init = {}) {
   const token = await paypalAccessToken();
-  const response = await fetch(PAYPAL_BASE + path, {
+  const response = await fetchWithTimeout(PAYPAL_BASE + path, {
     ...init,
     headers: {
       Authorization: "Bearer " + token,
@@ -731,7 +736,7 @@ function requestToken(req) {
 
 async function oauthCodeLedger(action, value, expiresInSeconds = 300) {
   if (!OAUTH_CODE_URL || !BILLING_INGEST_TOKEN) throw new Error("oauth_code_ledger_not_configured");
-  const response = await fetch(OAUTH_CODE_URL, {
+  const response = await fetchWithTimeout(OAUTH_CODE_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -755,7 +760,7 @@ async function validateCustomerToken(token, consume = false) {
   }
   if (!AUTH_URL) return { ok: false, error: "billing_auth_not_configured" };
   try {
-    const response = await fetch(AUTH_URL, {
+    const response = await fetchWithTimeout(AUTH_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token, consume })
@@ -1762,7 +1767,7 @@ app.post("/billing/claim", async (req, res) => {
   if (!sessionId) return res.status(400).json({ error: "session_id_required" });
   if (!CLAIM_URL || !BILLING_INGEST_TOKEN) return res.status(503).json({ error: "claim_not_configured" });
   try {
-    const response = await fetch(CLAIM_URL, {
+    const response = await fetchWithTimeout(CLAIM_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1809,7 +1814,7 @@ app.post("/paypal/claim", async (req, res) => {
 
     await forwardBillingEvent("paypal", "BILLING.SUBSCRIPTION.ACTIVATED", { ...sub, status: "ACTIVE" }, tier);
 
-    const response = await fetch(CLAIM_URL, {
+    const response = await fetchWithTimeout(CLAIM_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1920,7 +1925,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
