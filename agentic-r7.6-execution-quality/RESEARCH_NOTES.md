@@ -58,3 +58,19 @@ R7.6 response:
 ## Promotion rule
 
 The research goal is not "trade more". It is to promote only execution routes whose **net** forward evidence survives costs, regime changes, recent performance checks and uncertainty bounds.
+
+
+## 5. Selection bias / backtest overfitting
+
+Recent 2026 crypto research shows that naïve full-sample optimization can materially inflate reported Sharpe ratios, and emphasizes nested walk-forward testing, explicit transaction costs and multiple-testing corrections. Independent backtest-audit tooling likewise implements Deflated Sharpe Ratio and Probability of Backtest Overfitting because choosing the best result from many tried configurations creates a selection penalty even when each individual backtest looks plausible.
+
+Sources:
+- https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7350238
+- https://github.com/Aliipou/backtest-audit
+- https://github.com/AgentJDrew/backtest-guard
+
+R7.6 response:
+- R7.4 records every parameter variant's unseen-fold result alongside the selected in-sample winner.
+- The selection-bias guard measures how often that winner lands in the OOS bottom half.
+- Missing selection metadata fails closed for research promotion.
+- This is not claimed to be full CSCV/PBO; it is a transparent fold-level diagnostic designed to expose unstable selection before promotion.
