@@ -26,7 +26,7 @@ export function createV12Service({
     const limits = planLimits(tier, allowWeb);
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
-      instructions: "Finish the KeepGoing job. Preserve completed work across turns and obey the required STATUS marker.",
+      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use supplied context as a checkpoint. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
       allowWeb,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
