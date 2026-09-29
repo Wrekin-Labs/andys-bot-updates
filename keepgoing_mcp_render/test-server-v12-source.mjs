@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
-assert.match(source, /APP_VERSION = "1\.2\.0-beta\.18"/);
+assert.match(source, /APP_VERSION = "1\.2\.0-beta\.20"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
