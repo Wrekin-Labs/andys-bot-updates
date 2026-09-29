@@ -378,14 +378,42 @@ def walk_forward(candles: list[tuple], name: str, cfg: dict, folds: int = 4, tra
     step = remaining // folds
     engine = Engine(cfg["cash"], cfg["fee"], cfg["slip"], cfg["risk"], atr_k)
     equity, chosen, fold_stats = [], [], []
+    selection_failures = 0
     for fold in range(folds):
         start = train_end + fold * step
         end = n if fold == folds - 1 else start + step
-        params, signal = max(
-            signal_grid,
-            key=lambda pair: objective(*run(candles, pair[1], ind, WARM, start, cfg, atr_k), cfg["cash"]),
-        )
+
+        train_rows = []
+        for params, signal in signal_grid:
+            tr_eq, tr_trades = run(candles, signal, ind, WARM, start, cfg, atr_k)
+            train_rows.append((objective(tr_eq, tr_trades, cfg["cash"]), params, signal))
+        train_rows.sort(key=lambda x: x[0], reverse=True)
+        selected_train_score, params, signal = train_rows[0]
         chosen.append(params)
+
+        candidate_oos = []
+        for train_score, trial_params, trial_signal in train_rows:
+            te_eq, te_trades = run(candles, trial_signal, ind, start, end, cfg, atr_k)
+            te_ret = te_eq[-1] / cfg["cash"] - 1 if te_eq else -1.0
+            te_dd = max_drawdown(te_eq) if te_eq else 1.0
+            te_obj = objective(te_eq, te_trades, cfg["cash"])
+            candidate_oos.append({
+                "params": trial_params,
+                "train_objective": train_score,
+                "oos_return": te_ret,
+                "oos_mdd": te_dd,
+                "oos_objective": te_obj,
+                "oos_trades": len(te_trades),
+                "selected_in_sample": trial_params == params,
+            })
+        candidate_oos.sort(key=lambda x: x["oos_objective"], reverse=True)
+        selected_rank = next(
+            (idx + 1 for idx, row in enumerate(candidate_oos) if row["selected_in_sample"]),
+            len(candidate_oos),
+        )
+        bottom_half = selected_rank > max(1, len(candidate_oos) / 2)
+        selection_failures += int(bottom_half)
+
         fold_start_equity = engine.equity(candles[start][1])
         fold_equity, before_trades = [], len(engine.trades)
         for i in range(start, end):
@@ -402,11 +430,20 @@ def walk_forward(candles: list[tuple], name: str, cfg: dict, folds: int = 4, tra
             "return": fold_return,
             "mdd": max_drawdown(fold_equity),
             "trades": len(engine.trades) - before_trades,
+            "selection_audit": {
+                "trial_count": len(candidate_oos),
+                "selected_train_objective": selected_train_score,
+                "selected_oos_rank": selected_rank,
+                "selected_oos_bottom_half": bottom_half,
+                "candidate_oos": candidate_oos,
+            },
         })
     result = metrics(equity, engine.trades, candles, train_end, n, cfg["cash"])
     result["param_stability"] = parameter_stability(chosen)
     result["positive_folds"] = sum(1 for f in fold_stats if f["return"] > 0)
     result["folds"] = len(fold_stats)
+    result["selection_trials_per_fold"] = len(signal_grid)
+    result["selection_failure_rate"] = selection_failures / max(1, folds)
     return result, engine.trades, chosen, fold_stats
 
 
