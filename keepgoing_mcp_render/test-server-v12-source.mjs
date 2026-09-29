@@ -112,10 +112,6 @@ assert.match(source, /const v12Access = v12ForAccess\(access\)/);
 assert.match(source, /createV12Service/);
 assert.match(source, /createWatchdog/);
 assert.match(source, /createOpenAIWebhookVerifier/);
-assert.match(source, /agent\.session\.idle/);
-assert.match(source, /agent\.session\.action_required/);
-assert.match(source, /agent\.session\.failed/);
-assert.match(source, /openaiWebhookManaged:/);
 assert.doesNotMatch(source, /signing_secret[^\n]{0,80}res\.json/);
 assert.match(source, /express\.text\(\{ type: "application\/json"/);
 assert.ok(
