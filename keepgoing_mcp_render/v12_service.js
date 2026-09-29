@@ -296,7 +296,7 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     "The KeepGoing server converts your final STATUS marker into the durable job state.",
     "If the requested work is complete, return STATUS: COMPLETED even when this session exposes no KeepGoing control tool.",
     "",
-    "End every root turn with exactly one of:"
+    "End every root turn with exactly one of:",
     "STATUS: COMPLETED",
     "STATUS: NEEDS_USER",
     "STATUS: PARTIAL",
