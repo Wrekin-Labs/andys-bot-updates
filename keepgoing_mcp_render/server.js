@@ -1840,13 +1840,13 @@ app.get("/install", (_req, res) => {
 
 app.get("/privacy", (_req, res) => {
   res.type("html").send(infoPage("Privacy policy", [
-    "<p><strong>Last updated:</strong> 28 September 2026</p>",
+    "<p><strong>Last updated:</strong> 29 September 2026</p>",
     "<p>KeepGoing processes the minimum information needed to operate subscriptions and persistent jobs.</p>",
     "<h2>Information processed</h2>",
     "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done and options submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
     "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
-    "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. Because KeepGoing uses stored OpenAI Responses so a background job can be retrieved later, OpenAI currently documents a 30-day application-state retention period for those Responses, subject to the OpenAI account's applicable data controls. Hosting providers may retain technical logs according to their own policies.</p>",
+    "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. OpenAI's Responses API may retain application state for up to 30 days depending on the request and account data controls, and background mode also requires temporary provider-side storage so work can be polled and recovered. Hosting providers may retain technical logs according to their own policies.</p>",
     "<h2>Your choices</h2><p>Do not submit information you do not want processed by the service. You can cancel a subscription through the available billing provider. For account or privacy questions, contact <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>",
     "<p class=\"muted\">KeepGoing is in commercial beta. This policy will be updated if the data flow or providers materially change.</p>"
   ].join("")));
@@ -1959,6 +1959,31 @@ app.get("/readiness", async (_req, res) => {
     durableStoreReady &&
     (V12_CANARY_ONLY || OPENAI_WEBHOOK_SECRET)
   );
+  const oauthReady = Boolean(OAUTH_SECRET && OAUTH_CODE_URL);
+  const commercialDurableReady = !V12_ENABLED || Boolean(
+    v12Configured() &&
+    durableStoreReady &&
+    !V12_CANARY_ONLY &&
+    OPENAI_WEBHOOK_SECRET
+  );
+  const commercialBlockers = [];
+  if (!engineReady) commercialBlockers.push("openai_api");
+  if (!billingBackendReady) commercialBlockers.push("billing_backend");
+  if (!checkoutReady) commercialBlockers.push("live_checkout");
+  if (!oauthReady) commercialBlockers.push("oauth");
+  if (V12_ENABLED && !v12Configured()) commercialBlockers.push("durable_engine");
+  if (V12_ENABLED && !durableStoreReady) commercialBlockers.push("durable_store");
+  if (V12_ENABLED && V12_CANARY_ONLY) commercialBlockers.push("v12_owner_canary_only");
+  if (V12_ENABLED && !OPENAI_WEBHOOK_SECRET) commercialBlockers.push("openai_webhook");
+
+  const sellReady = Boolean(
+    engineReady &&
+    billingBackendReady &&
+    checkoutReady &&
+    commercialDurableReady &&
+    oauthReady
+  );
+
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
     version: V12_ENABLED ? APP_VERSION : "1.1.0",
@@ -1969,13 +1994,15 @@ app.get("/readiness", async (_req, res) => {
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
-    oauth_ready: Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
-    sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady && Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
+    oauth_ready: oauthReady,
+    owner_canary_only: Boolean(V12_ENABLED && V12_CANARY_ONLY),
+    commercial_durable_ready: commercialDurableReady,
+    commercial_blockers: commercialBlockers,
+    sell_ready: sellReady,
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
     protected: true
   });
-});
 
 app.get("/health", (_req, res) => {
   res.json({
