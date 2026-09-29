@@ -48,6 +48,7 @@ assert.equal(createBody.agent.model, "gpt-6-astra");
 assert.equal(createBody.agent.tools[0].type, "web_search");
 assert.equal(createBody.agent.tools[0].mode, "live");
 assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
+assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
 
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
 const sentCall = calls.at(-1);
