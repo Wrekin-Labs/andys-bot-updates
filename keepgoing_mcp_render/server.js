@@ -13,7 +13,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.5";
+const APP_VERSION = "1.2.0-beta.6";
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const PRO_PRICE_ID = process.env.KEEPGOING_PRO_PRICE_ID || "price_1UJy24B86Ss16l9WEsqSRxh1";
@@ -276,6 +276,7 @@ app.use((req, res, next) => {
   res.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   const sensitivePath =
     req.path === "/mcp" ||
+    req.path === "/subscribe" ||
     req.path.startsWith("/oauth/") ||
     req.path.startsWith("/billing/") ||
     req.path.startsWith("/paypal/") ||
@@ -1003,9 +1004,9 @@ function createMcpServer(access = {}) {
   const oauthMeta = { securitySchemes: oauthSecuritySchemes };
 
   const server = new McpServer(
-    { name: "KeepGoing", version: v12Access ? "1.2.0-beta.2" : "1.1.0" },
+    { name: "KeepGoing", version: v12Access ? APP_VERSION : "1.1.0" },
     { instructions: v12Access
-      ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Before starting, gather any relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins; pass that context with the job. Prefer continue_until_done for these natural-language requests. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
+      ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Prefer continue_until_done for these natural-language requests. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -1040,14 +1041,14 @@ function createMcpServer(access = {}) {
 
   server.registerTool("start_persistent_job", {
     title: "Start persistent job",
-    description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If relevant prior-chat or connected-tool context is available, the host should gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
+    description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If a checkpoint is needed, pass only brief task-specific context that is necessary for this objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Do not ask the user to type continue merely to advance this job.",
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(20000).optional()
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1070,14 +1071,14 @@ function createMcpServer(access = {}) {
 
   server.registerTool("continue_until_done", {
     title: "Continue until done",
-    description: "PRIMARY KeepGoing entrypoint when the user says continue, keep going, finish it, until done, don't stop, complete the objective, or equivalent. The host should first collect relevant context already available in the current conversation and, when useful and permitted, from connected ChatGPT tools/plugins, then pass it in context. Starts or idempotently recovers one durable job that keeps advancing server-side until completed or genuinely blocked by required user input/approval or a configured safety/cost limit. Never ask the user to type continue just to advance the same objective.",
+    description: "PRIMARY KeepGoing entrypoint when the user says continue, keep going, finish it, until done, don't stop, complete the objective, or equivalent. If a checkpoint is needed, pass only the minimum brief task-specific context necessary for this objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Starts or idempotently recovers one durable job that keeps advancing server-side until completed or genuinely blocked by required user input/approval or a configured safety/cost limit. Never ask the user to type continue just to advance the same objective.",
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("max"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(20000).optional()
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1237,7 +1238,7 @@ function createMcpServer(access = {}) {
       {
         name: "start_persistent_job",
         title: "Start persistent job",
-        description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If relevant prior-chat or connected-tool context is available, the host should gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
+        description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If a checkpoint is needed, pass only brief task-specific context that is necessary for this objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Do not ask the user to type continue merely to advance this job.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1246,7 +1247,7 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 20000 }
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1269,7 +1270,7 @@ function createMcpServer(access = {}) {
       {
         name: "continue_until_done",
         title: "Continue until done",
-        description: "PRIMARY entrypoint for 'continue', 'keep going', 'finish it', 'until done', 'don't stop', or equivalent. Gather relevant current-chat and connected-tool/plugin context first when useful, pass it in context, and keep the same durable job running until completion or a genuine required-user-input/safety stop. Never ask the user to type continue just to advance the same objective.",
+        description: "PRIMARY entrypoint for 'continue', 'keep going', 'finish it', 'until done', 'don't stop', or equivalent. If needed, pass only a brief task-specific checkpoint necessary for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Keep the same durable job running until completion or a genuine required-user-input/safety stop. Never ask the user to type continue just to advance the same objective.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1278,7 +1279,7 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 20000 }
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1838,7 +1839,7 @@ app.get("/manifest.json", (_req, res) => {
 });
 
 app.get("/robots.txt", (_req, res) => {
-  res.type("text/plain").send("User-agent: *\nAllow: /\nSitemap: " + PUBLIC_BASE_URL + "/sitemap.xml\n");
+  res.type("text/plain").send("User-agent: *\nAllow: /\nDisallow: /subscribe\nDisallow: /oauth/\nDisallow: /billing/\nDisallow: /paypal/\nDisallow: /openai/\nDisallow: /mcp\nSitemap: " + PUBLIC_BASE_URL + "/sitemap.xml\n");
 });
 
 app.get("/sitemap.xml", (_req, res) => {
@@ -1870,7 +1871,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.5 — 29 September 2026</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.6 — 29 September 2026</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
@@ -1895,7 +1896,7 @@ app.get("/privacy", (_req, res) => {
     "<p><strong>Last updated:</strong> 29 September 2026</p>",
     "<p>KeepGoing processes the minimum information needed to operate subscriptions and persistent jobs.</p>",
     "<h2>Information processed</h2>",
-    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done and options submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
+    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, options and—only when needed—a brief task-specific checkpoint submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>KeepGoing does not independently retrieve your full ChatGPT history. The MCP context field is intentionally bounded and should never contain full chat transcripts, passwords, API keys, payment credentials or unrelated personal data.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
     "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
     "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. OpenAI's Responses API may retain application state for up to 30 days depending on the request and account data controls, and background mode also requires temporary provider-side storage so work can be polled and recovered. Hosting providers may retain technical logs according to their own policies.</p>",
