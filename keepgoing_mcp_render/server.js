@@ -13,7 +13,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.6";
+const APP_VERSION = "1.2.0-beta.7";
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const PRO_PRICE_ID = process.env.KEEPGOING_PRO_PRICE_ID || "price_1UJy24B86Ss16l9WEsqSRxh1";
@@ -1754,11 +1754,23 @@ app.post("/billing/claim", async (req, res) => {
 
 app.post("/paypal/claim", async (req, res) => {
   const subscriptionId = String(req.body?.subscription_id || "");
+  const claimId = String(req.body?.claim_id || "").trim();
   if (!subscriptionId) return res.status(400).json({ error: "subscription_id_required" });
+  if (!/^kgc_[0-9a-f]{64}$/.test(claimId)) return res.status(400).json({ error: "claim_id_invalid" });
   if (!CLAIM_URL || !BILLING_INGEST_TOKEN) return res.status(503).json({ error: "claim_not_configured" });
   try {
     await ensurePayPalSetup();
     const sub = await paypalApi("/v1/billing/subscriptions/" + encodeURIComponent(subscriptionId), { method: "GET" });
+    const customId = String(sub.custom_id || "");
+    const expectedClaim = Buffer.from(customId, "utf8");
+    const suppliedClaim = Buffer.from(claimId, "utf8");
+    const claimMatches = Boolean(
+      customId &&
+      expectedClaim.length === suppliedClaim.length &&
+      crypto.timingSafeEqual(expectedClaim, suppliedClaim)
+    );
+    if (!claimMatches) return res.status(403).json({ error: "claim_mismatch" });
+
     const status = String(sub.status || "").toUpperCase();
     if (status !== "ACTIVE") {
       return res.status(409).json({ error: "subscription_not_active", status });
@@ -1782,7 +1794,7 @@ app.post("/paypal/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    return res.status(502).json({ error: String(error?.message || error) });
+    return res.status(502).json({ error: safeLogError(error) });
   }
 });
 
@@ -1804,7 +1816,7 @@ app.get("/subscribe", async (_req, res) => {
     ? '<script src="https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=GBP&components=buttons&vault=true&intent=subscription"></script>'
     : '';
   const buttons = paypalReady
-    ? '<script>async function kgClaim(subscriptionID){const result=document.getElementById("kg-result");sessionStorage.setItem("keepgoing_paypal_subscription",subscriptionID);for(let i=0;i<20;i++){result.textContent="Activating subscription…";const r=await fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:subscriptionID})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){sessionStorage.removeItem("keepgoing_paypal_subscription");result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error==="subscription_not_active"&&(j.status==="APPROVED"||j.status==="APPROVAL_PENDING")){await new Promise(x=>setTimeout(x,1500));continue;}throw new Error(j.error||"Activation failed");}result.innerHTML="Your PayPal subscription was approved but activation is still processing. <button id=\"kg-retry\">Retry activation</button>";document.getElementById("kg-retry").onclick=()=>kgClaim(subscriptionID);}function kgApprove(data){kgClaim(data.subscriptionID).catch(e=>{document.getElementById("kg-result").textContent=e.message;});}const saved=sessionStorage.getItem("keepgoing_paypal_subscription");if(saved){document.getElementById("kg-result").innerHTML="A PayPal subscription is waiting for activation. <button id=\"kg-resume\">Resume activation</button>";document.getElementById("kg-resume").onclick=()=>kgClaim(saved);}paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.pro_plan_id) + '}),onApprove:kgApprove}).render("#paypal-pro");paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.business_plan_id) + '}),onApprove:kgApprove}).render("#paypal-business");</script>'
+    ? '<script>function kgRandomClaimId(){const b=new Uint8Array(32);crypto.getRandomValues(b);return "kgc_"+Array.from(b,x=>x.toString(16).padStart(2,"0")).join("");}let claimId=sessionStorage.getItem("keepgoing_paypal_claim_id");if(!claimId){claimId=kgRandomClaimId();sessionStorage.setItem("keepgoing_paypal_claim_id",claimId);}async function kgClaim(subscriptionID){const result=document.getElementById("kg-result");sessionStorage.setItem("keepgoing_paypal_subscription",subscriptionID);for(let i=0;i<20;i++){result.textContent="Activating subscription…";const r=await fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:subscriptionID,claim_id:claimId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){sessionStorage.removeItem("keepgoing_paypal_subscription");sessionStorage.removeItem("keepgoing_paypal_claim_id");result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error==="subscription_not_active"&&(j.status==="APPROVED"||j.status==="APPROVAL_PENDING")){await new Promise(x=>setTimeout(x,1500));continue;}throw new Error(j.error||"Activation failed");}result.innerHTML="Your PayPal subscription was approved but activation is still processing. <button id=\"kg-retry\">Retry activation</button>";document.getElementById("kg-retry").onclick=()=>kgClaim(subscriptionID);}function kgApprove(data){kgClaim(data.subscriptionID).catch(e=>{document.getElementById("kg-result").textContent=e.message;});}const saved=sessionStorage.getItem("keepgoing_paypal_subscription");if(saved){document.getElementById("kg-result").innerHTML="A PayPal subscription is waiting for activation. <button id=\"kg-resume\">Resume activation</button>";document.getElementById("kg-resume").onclick=()=>kgClaim(saved);}paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.pro_plan_id) + ',custom_id:claimId}),onApprove:kgApprove}).render("#paypal-pro");paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.business_plan_id) + ',custom_id:claimId}),onApprove:kgApprove}).render("#paypal-business");</script>'
     : '';
 
   const setupMessage = paypalReady
@@ -1875,7 +1887,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.6 — 29 September 2026</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
