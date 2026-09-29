@@ -45,18 +45,18 @@ Existing KeepGoing account holders authenticate with a private activation token 
 
 KeepGoing's public ChatGPT plugin experience is informational/authentication-only for existing accounts. Tool descriptions, starter prompts, OAuth pages, install pages and public listing pages do not initiate checkout, link to a transactional upgrade, or ask ChatGPT to sell a digital subscription.
 
-A separate direct web route `/subscribe` exists for intentional off-plugin paid-beta sales. It is unlinked from the public plugin/listing experience, excluded from the sitemap, disallowed in robots.txt and served with no-store/noindex handling.
+A separate direct web route `/subscribe` exists for intentional off-plugin paid-beta sales. It is unlinked from the public plugin/listing experience, excluded from the sitemap, disallowed in robots.txt and served with no-store/noindex handling. The public plugin does not initiate purchases or upgrades.
 ## Tools
 
 ### continue_until_done — “Continue until done”
-Preferred entrypoint for “keep going / continue / finish this / until done”. Creates or idempotently reuses a durable KeepGoing job with maximum autonomous continuation semantics while preserving normal host/tool permissions.
+Used when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. It creates or idempotently reuses one durable job while preserving normal host/tool permissions.
 - readOnlyHint: false
 - destructiveHint: false
 - idempotentHint: false
 - openWorldHint: true
 - OAuth scope: keepgoing.jobs
 ### start_persistent_job — “Start persistent job”
-Creates or idempotently reuses a durable KeepGoing job.
+Used when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job.
 - readOnlyHint: false
 - destructiveHint: false
 - idempotentHint: false
