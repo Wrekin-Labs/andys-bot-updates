@@ -1929,6 +1929,55 @@ app.post("/billing/claim", async (req, res) => {
   }
 });
 
+app.post("/paypal/start-subscription", async (req, res) => {
+  const tier = String(req.body?.tier || "").trim().toLowerCase();
+  if (tier !== "pro" && tier !== "business") {
+    return res.status(400).type("html").send(infoPage("Invalid subscription", "<p>Please return to the subscription page and choose Pro or Business.</p>"));
+  }
+  try {
+    await ensurePayPalSetup();
+    const planId = tier === "business" ? paypalConfig.business_plan_id : paypalConfig.pro_plan_id;
+    if (!planId) {
+      return res.status(503).type("html").send(infoPage("Checkout temporarily unavailable", "<p>PayPal checkout is not ready yet. Please try again shortly.</p>"));
+    }
+    const claimId = "kgc_" + crypto.randomBytes(32).toString("hex");
+    const subscription = await paypalApi("/v1/billing/subscriptions", {
+      method: "POST",
+      headers: { "PayPal-Request-Id": "keepgoing-" + PAYPAL_MODE + "-" + tier + "-" + claimId.slice(-24) },
+      body: JSON.stringify({
+        plan_id: planId,
+        custom_id: claimId,
+        application_context: {
+          brand_name: "KeepGoing",
+          locale: "en-GB",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "SUBSCRIBE_NOW",
+          return_url: PUBLIC_BASE_URL + "/paypal/return?claim_id=" + encodeURIComponent(claimId),
+          cancel_url: PUBLIC_BASE_URL + "/subscribe?cancelled=1"
+        }
+      })
+    });
+    const approval = Array.isArray(subscription?.links)
+      ? subscription.links.find((link) => String(link?.rel || "").toLowerCase() === "approve")
+      : null;
+    const approvalUrl = safePayPalApprovalUrl(approval?.href);
+    if (!approvalUrl) throw new Error("PayPal approval URL missing or invalid");
+    return res.redirect(303, approvalUrl);
+  } catch (error) {
+    console.error("paypal_start_subscription_error", safeLogError(error), req.keepgoingRequestId || "");
+    return res.status(502).type("html").send(infoPage("Could not start PayPal checkout", "<p>PayPal checkout could not be started. No subscription was activated. Please return and try again.</p>"));
+  }
+});
+
+app.get("/paypal/return", (req, res) => {
+  const subscriptionId = String(req.query?.subscription_id || req.query?.subscriptionId || "").trim();
+  const claimId = String(req.query?.claim_id || "").trim();
+  if (!subscriptionId || !/^I-[A-Z0-9]+$/i.test(subscriptionId) || !/^kgc_[0-9a-f]{64}$/.test(claimId)) {
+    return res.status(400).type("html").send(infoPage("Could not confirm PayPal subscription", "<p>The PayPal return information is incomplete. Please return to the subscription page and try again.</p>"));
+  }
+  const target = "/subscribe?subscription_id=" + encodeURIComponent(subscriptionId) + "&claim_id=" + encodeURIComponent(claimId);
+  return res.redirect(303, target);
+});
 app.post("/paypal/claim", async (req, res) => {
   const subscriptionId = String(req.body?.subscription_id || "");
   const claimId = String(req.body?.claim_id || "").trim();
