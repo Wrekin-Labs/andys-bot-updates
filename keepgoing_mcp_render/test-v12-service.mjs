@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
-import { createV12Service, planLimits, buildJobPrompt } from "./v12_service.js";
+import { createV12Service, planLimits, buildJobPrompt, JOB_INSTRUCTIONS } from "./v12_service.js";
 import { MemoryJobStore } from "./durable_store.js";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { JOB_STATES, newJobRecord } from "./durable_job.js";
+
+assert.match(JOB_INSTRUCTIONS, /do not need a KeepGoing control tool/i);
+assert.match(JOB_INSTRUCTIONS, /server converts your final STATUS marker/i);
+assert.match(JOB_INSTRUCTIONS, /return STATUS: COMPLETED even when this session exposes no KeepGoing control tool/i);
+
+const completionPromptGuard = buildJobPrompt("smoke", "done", "safe", "");
+assert.match(completionPromptGuard, /do not need a KeepGoing control tool/i);
+assert.match(completionPromptGuard, /server converts your final STATUS marker/i);
+assert.match(completionPromptGuard, /return STATUS: COMPLETED even when this session exposes no KeepGoing control tool/i);
+
 
 let turn = 1;
 const sent = [];
