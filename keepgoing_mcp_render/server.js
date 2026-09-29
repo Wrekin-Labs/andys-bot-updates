@@ -12,7 +12,8 @@ import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
 
 const app = express();
-const APP_VERSION = "1.2.0-beta.4";
+app.disable("x-powered-by");
+const APP_VERSION = "1.2.0-beta.5";
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const PRO_PRICE_ID = process.env.KEEPGOING_PRO_PRICE_ID || "price_1UJy24B86Ss16l9WEsqSRxh1";
@@ -273,13 +274,24 @@ app.use((req, res, next) => {
   res.set("Strict-Transport-Security", "max-age=31536000");
   res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-  if (
+  const sensitivePath =
     req.path === "/mcp" ||
+    req.path.startsWith("/oauth/") ||
     req.path.startsWith("/billing/") ||
     req.path.startsWith("/paypal/") ||
-    req.path.startsWith("/openai/")
-  ) {
+    req.path.startsWith("/openai/");
+
+  if (sensitivePath) {
     res.set("Cache-Control", "no-store");
+  }
+
+  if (
+    sensitivePath ||
+    req.path === "/health" ||
+    req.path === "/readiness" ||
+    req.path.startsWith("/.well-known/")
+  ) {
+    res.set("X-Robots-Tag", "noindex, nofollow");
   }
   next();
 });
@@ -291,7 +303,7 @@ const BUSINESS_MAX_OUTPUT_TOKENS = Number(process.env.KEEPGOING_BUSINESS_MAX_OUT
 const PRO_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_PRO_MAX_TOOL_CALLS || 3);
 const BUSINESS_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_BUSINESS_MAX_TOOL_CALLS || 5);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
+const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "";
 
 let v12RuntimeCache = null;
 
@@ -1858,7 +1870,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.4 — 29 September 2026</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.5 — 29 September 2026</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
@@ -1944,9 +1956,7 @@ app.get("/billing/plans", async (_req, res) => {
     paypal_mode: PAYPAL_MODE,
     paypal_configured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
     paypal_ready: paypalSetupComplete,
-    paypal_setup_error: paypalSetupError || null,
-    stripe_sandbox_available: Boolean(PRO_PRICE_ID && BUSINESS_PRICE_ID),
-    stripe_portal_url: PORTAL_URL || null
+    stripe_sandbox_available: Boolean(PRO_PRICE_ID && BUSINESS_PRICE_ID)
   });
 });
 
@@ -1958,11 +1968,7 @@ app.get("/paypal/status", async (_req, res) => {
     configured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
     ready: paypalSetupComplete,
     mode: PAYPAL_MODE,
-    product_id: paypalConfig.product_id || null,
-    pro_plan_id: paypalConfig.pro_plan_id || null,
-    business_plan_id: paypalConfig.business_plan_id || null,
-    webhook_id: paypalConfig.webhook_id || null,
-    error: paypalSetupError || null
+    setup_error: Boolean(paypalSetupError)
   });
 });
 
