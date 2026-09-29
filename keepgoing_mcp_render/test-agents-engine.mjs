@@ -38,7 +38,8 @@ const created = await engine.createSession({
   prompt: "research this",
   instructions: "finish the job",
   allowWeb: true,
-  reasoningEffort: "high"
+  reasoningEffort: "high",
+  idempotencyKey: "kg-start-test"
 });
 assert.equal(created.id, "sess_abc");
 const createBody = JSON.parse(calls[0].init.body);
