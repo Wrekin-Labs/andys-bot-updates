@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.3` — adds commercial branding, hosted app metadata/icon, refunds & cancellation policy, and keeps the `continue_until_done` durable autopilot entrypoint from beta.2.
+**Current beta:** `1.2.0-beta.6` — separates direct web subscriptions from the public ChatGPT plugin experience and limits host-supplied checkpoint context to the minimum task-specific text.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -27,7 +27,7 @@ KeepGoing does not control ChatGPT's private reasoning, bypass ChatGPT/OpenAI li
 
 When the user says **continue**, **keep going**, **finish it**, **until done**, **don't stop**, or equivalent, the ChatGPT host should prefer `continue_until_done`.
 
-Before starting the durable job, the host may gather relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins, then pass a concise context bundle into the job. The KeepGoing service itself does not have blanket access to private ChatGPT history or every installed plugin; those capabilities remain controlled by the ChatGPT host and their normal permissions.
+Before starting a durable job, the host may pass a brief task-specific checkpoint when it is genuinely needed. The field is intentionally capped at 4,000 characters and must not contain full chat transcripts, credentials, API keys, payment secrets or unrelated personal data. KeepGoing does not independently retrieve private ChatGPT history or every installed plugin.
 
 Once the durable job starts, the server-side webhook/watchdog path advances `STATUS: PARTIAL` work automatically. The user should not need to type "continue" merely to move the same objective forward. A job stops only when it is completed, genuinely needs user input/approval, is cancelled, fails safely, or reaches its configured safety/cost budget.
 
@@ -85,12 +85,12 @@ The server validates that marker against provider turn state and tool failures; 
 
 ## Production endpoints
 
-- `/` — product and subscription page
+- `/` — public informational/plugin landing page (no subscription transaction UI)
 - `/health` — lightweight process/config health
 - `/readiness` — production readiness, including live durable-store reachability when v1.2 is enabled
 - `/mcp` — protected MCP endpoint
 - `/openai/webhook` — signed OpenAI Agents session webhook receiver (v1.2)
-- `/billing/claim` — Stripe claim endpoint
+- `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience\n- `/billing/claim` — Stripe claim endpoint
 - `/billing/success` — Stripe activation page
 - `/paypal/claim` — PayPal subscription claim
 - `/paypal/webhook` — PayPal webhook
@@ -186,3 +186,9 @@ As of beta.3:
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification are external release steps and must not be reported as completed until actually approved.
 
 A production readiness response should remain truthful: `checkout_ready` and `sell_ready` stay false until the selected live payment provider is genuinely configured and working.
+
+## Public-plugin commerce boundary
+
+The public ChatGPT plugin/listing experience is informational and authentication-only for existing KeepGoing accounts. It does not initiate a new digital-service subscription or promote an upgrade inside ChatGPT.
+
+Direct paid-beta checkout is isolated at `/subscribe`, is not linked from the public plugin website/install/FAQ/sitemap, and is marked noindex/no-store. This direct web route is for users who intentionally arrive outside the ChatGPT plugin experience.
