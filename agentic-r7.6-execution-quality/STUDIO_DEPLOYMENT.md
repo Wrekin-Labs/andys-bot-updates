@@ -28,3 +28,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
 After deployment, inspect `r76_deployment_status.json` in the destination. All booleans for tests/processes should be true and all live-change booleans should be false.
+
+
+## Project Relay supervised apps
+
+When Project Relay **v0.6.3 or newer** is installed, the deployer also performs local-only registration of these exact supervised applications:
+
+- `Andy Bot` → the Studio Python interpreter + absolute `server.py` path
+- `R7.6 Shadow Overlay` → `pythonw.exe` + absolute overlay script path
+- `R7.6 Live TCA` → `pythonw.exe` + absolute TCA daemon path
+
+Registration does not enable Owner Full Control and does not bypass any Project Relay authorization. It only gives the existing owner-gated supervised start/restart tools exact process identities. Project Relay v0.6.3 is required because it fixes restart matching to include registered script arguments, preventing unrelated Python processes from being terminated.
