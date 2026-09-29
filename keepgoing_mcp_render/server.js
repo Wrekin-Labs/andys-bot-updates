@@ -2117,9 +2117,9 @@ app.get("/faq", (_req, res) => {
 app.get("/status", (_req, res) => {
   const html = infoPage("Service status", [
     "<p id=\"summary\">Checking KeepGoing…</p>",
-    "<ul><li>API / engine: <strong id=\"engine\">checking</strong></li><li>Durable store: <strong id=\"store\">checking</strong></li><li>OAuth: <strong id=\"oauth\">checking</strong></li><li>Paid checkout: <strong id=\"checkout\">checking</strong></li></ul>",
-    "<p class=\"muted\">Commercial readiness checks the durable engine, store, OAuth and live checkout together. The watchdog is the production continuation mechanism; the OpenAI webhook is optional.</p>",
-    "<script>(async()=>{const e=id=>document.getElementById(id);try{const r=await fetch(\"/readiness\",{cache:\"no-store\"});const j=await r.json();e(\"summary\").textContent=j.ok?\"KeepGoing core service is operational.\":\"KeepGoing is currently degraded.\";e(\"engine\").textContent=j.engine_ready?\"operational\":\"degraded\";e(\"store\").textContent=j.durable_store_ready?\"operational\":\"degraded\";e(\"oauth\").textContent=j.oauth_ready?\"operational\":\"degraded\";e(\"checkout\").textContent=j.checkout_ready?\"ready\":\"commercial beta setup\";}catch{e(\"summary\").textContent=\"Status check unavailable.\";}})();</script>"
+    "<ul><li>API / engine: <strong id=\"engine\">checking</strong></li><li>Durable store: <strong id=\"store\">checking</strong></li><li>Account connection: <strong id=\"oauth\">checking</strong></li></ul>",
+    "<p class=\"muted\">This public status page reports the plugin-facing service, durable store and account connection. The watchdog is the production continuation mechanism; the OpenAI webhook is optional.</p>",
+    "<script>(async()=>{const e=id=>document.getElementById(id);try{const r=await fetch(\"/readiness\",{cache:\"no-store\"});const j=await r.json();e(\"summary\").textContent=j.ok?\"KeepGoing core service is operational.\":\"KeepGoing is currently degraded.\";e(\"engine\").textContent=j.engine_ready?\"operational\":\"degraded\";e(\"store\").textContent=j.durable_store_ready?\"operational\":\"degraded\";e(\"oauth\").textContent=j.oauth_ready?\"operational\":\"degraded\";}catch{e(\"summary\").textContent=\"Status check unavailable.\";}})();</script>"
   ].join(""));
   res.type("html").send(html);
 });
