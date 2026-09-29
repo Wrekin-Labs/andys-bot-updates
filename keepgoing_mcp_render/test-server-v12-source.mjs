@@ -5,6 +5,9 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
+assert.match(source, /KEEPGOING_DURABLE_STORE_URL/);
+assert.match(source, /proxyUrl: V12_DURABLE_STORE_URL/);
+assert.match(source, /V12_CANARY_ONLY \|\| OPENAI_WEBHOOK_SECRET/);
 assert.match(source, /function v12ForAccess\(access\)/);
 assert.match(source, /if \(isStart && V12_ENABLED && !v12ForAccess\(access\)\)/);
 assert.match(source, /validateCustomerToken\(access\._customer_token, true\)/);
@@ -19,6 +22,7 @@ assert.ok(
   "OpenAI webhook must receive the raw body before JSON middleware"
 );
 assert.match(source, /authorise\(req, isStart && !V12_ENABLED\)/);
+assert.match(source, /toolName === "start_persistent_job" \|\| toolName === "continue_until_done"/);
 assert.match(source, /access\._mcp_request_id = "mcp-" \+ digest/);
 assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_request_id \|\| null/);
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);

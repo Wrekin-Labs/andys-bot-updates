@@ -32,6 +32,12 @@ const V12_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_ENABLED || 
 const V12_CANARY_ONLY = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_CANARY_ONLY || "");
 const V12_SUPABASE_URL = process.env.KEEPGOING_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const V12_SUPABASE_SERVICE_KEY = process.env.KEEPGOING_SUPABASE_SERVICE_KEY || "";
+const V12_DURABLE_STORE_URL = process.env.KEEPGOING_DURABLE_STORE_URL || (
+  BILLING_INGEST_URL.includes("/keepgoing-billing-ingest")
+    ? BILLING_INGEST_URL.replace(/\/keepgoing-billing-ingest\/?$/, "/keepgoing-durable-store")
+    : ""
+);
+const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BILLING_INGEST_TOKEN;
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
 
@@ -289,11 +295,12 @@ const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa64
 let v12RuntimeCache = null;
 
 function v12Configured() {
+  const directStoreReady = Boolean(V12_SUPABASE_URL && V12_SUPABASE_SERVICE_KEY);
+  const proxyStoreReady = Boolean(V12_DURABLE_STORE_URL && V12_DURABLE_STORE_TOKEN);
   return Boolean(
     V12_ENABLED &&
     OPENAI_API_KEY &&
-    V12_SUPABASE_URL &&
-    V12_SUPABASE_SERVICE_KEY
+    (directStoreReady || proxyStoreReady)
   );
 }
 
@@ -313,7 +320,9 @@ function getV12Runtime() {
   });
   const store = new SupabaseJobStore({
     supabaseUrl: V12_SUPABASE_URL,
-    serviceKey: V12_SUPABASE_SERVICE_KEY
+    serviceKey: V12_SUPABASE_SERVICE_KEY,
+    proxyUrl: V12_DURABLE_STORE_URL,
+    proxyToken: V12_DURABLE_STORE_TOKEN
   });
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
   const service = createV12Service({ engine, store, orchestrator, model: MODEL });
@@ -1918,8 +1927,8 @@ app.get("/readiness", async (_req, res) => {
   }
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
-    OPENAI_WEBHOOK_SECRET &&
-    durableStoreReady
+    durableStoreReady &&
+    (V12_CANARY_ONLY || OPENAI_WEBHOOK_SECRET)
   );
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
@@ -1959,7 +1968,10 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/mcp", async (req, res) => {
-  const isStart = req.body?.method === "tools/call" && req.body?.params?.name === "start_persistent_job";
+  const toolName = req.body?.params?.name;
+  const isStart =
+    req.body?.method === "tools/call" &&
+    (toolName === "start_persistent_job" || toolName === "continue_until_done");
   const access = await authorise(req, isStart && !V12_ENABLED);
   if (!access.ok) {
     oauthChallenge(res, access.error === "oauth_token_invalid_scope" ? "insufficient_scope" : "invalid_token", access.error || "Authentication required");
