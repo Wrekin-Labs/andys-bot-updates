@@ -9,7 +9,7 @@ const mcp = JSON.parse(readFileSync(resolve(here, "mcp.json"), "utf8"));
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
 assert.equal(plugin.name, "keepgoing");
-assert.equal(plugin.version, "1.2.0-beta.15");
+assert.equal(plugin.version, "1.2.0-beta.16");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.displayName, "KeepGoing");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.category, "Productivity");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.composerIcon, "./assets/keepgoing-icon.png");
