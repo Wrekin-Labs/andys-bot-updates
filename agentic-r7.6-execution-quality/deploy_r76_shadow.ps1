@@ -27,6 +27,7 @@ $Files=@(
   'self_test_extended.py',
   'self_test_selection_bias.py',
   'self_test_tail_regime.py',
+  'register_relay_supervised.py',
   'start_r76_shadow.ps1'
 )
 
@@ -91,6 +92,23 @@ try {
   $Tca=[bool]($procs | Where-Object { $_.Name -match '^pythonw?\.exe$' -and $_.CommandLine -like '*live_tca_daemon.py*' })
   if(-not $Overlay -or -not $Tca){ throw "R7.6 processes did not both start (overlay=$Overlay tca=$Tca)" }
 
+  $RelaySupervisedRegistered=$false
+  $RelayVersion=$null
+  $RelayPy=Join-Path $env:LOCALAPPDATA 'ProjectRelay\App\.venv\Scripts\python.exe'
+  if(Test-Path $RelayPy){
+    try {
+      $RelayVersion=(& $RelayPy -c "import project_relay; print(project_relay.__version__)").Trim()
+      $ParsedRelayVersion=[version]$RelayVersion
+      if($ParsedRelayVersion -ge [version]'0.6.3'){
+        & $RelayPy (Join-Path $Dest 'register_relay_supervised.py')
+        if($LASTEXITCODE -ne 0){ throw 'Project Relay supervised registration failed' }
+        $RelaySupervisedRegistered=$true
+      }
+    } catch {
+      Write-Warning ("R7.6 installed, but supervised-app registration was skipped: " + $_.Exception.Message)
+    }
+  }
+
   $Status=[ordered]@{
     schema='andys-bot-r7.6-deployment-v1'
     deployed_utc=[DateTime]::UtcNow.ToString('s')+'Z'
@@ -101,6 +119,8 @@ try {
     shadow_overlay_running=$Overlay
     live_tca_running=$Tca
     watchdog_installed=$true
+    project_relay_version=$RelayVersion
+    relay_supervised_registered=$RelaySupervisedRegistered
     live_bot_modified=$false
     auto_buy_changed=$false
     risk_limits_changed=$false
