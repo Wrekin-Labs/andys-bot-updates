@@ -33,7 +33,8 @@ export function createAgentsEngine({
     instructions,
     allowWeb = true,
     reasoningEffort = "medium",
-    metadata = {}
+    metadata = {},
+    idempotencyKey = null
   }) {
     if (!String(prompt || "").trim()) throw new Error("prompt required");
     const agent = {
@@ -50,8 +51,10 @@ export function createAgentsEngine({
       input: String(prompt),
       metadata
     };
+    const key = normaliseIdempotencyKey(idempotencyKey);
     return request("/agents/sessions", {
       method: "POST",
+      headers: key ? { "Idempotency-Key": key } : undefined,
       body: JSON.stringify(body)
     });
   }
