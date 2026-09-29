@@ -362,13 +362,13 @@ function getV12Runtime() {
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
   const service = createV12Service({ engine, store, orchestrator, model: MODEL });
   const watchdog = createWatchdog({ store, orchestrator });
-  const webhookProcessor = OPENAI_WEBHOOK_SECRET
+  const webhookProcessor = openAIWebhookSecret
     ? createWebhookProcessor({
         store,
         orchestrator,
         verify: createOpenAIWebhookVerifier({
           apiKey: OPENAI_API_KEY,
-          webhookSecret: OPENAI_WEBHOOK_SECRET
+          webhookSecret: openAIWebhookSecret
         })
       })
     : null;
@@ -387,6 +387,98 @@ function safeLogError(error) {
 function fetchWithTimeout(url, init = {}, timeoutMs = 10_000) {
   if (init.signal) return fetch(url, init);
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+async function openAIWebhookApi(path, init = {}) {
+  if (!OPENAI_API_KEY) throw new Error("openai_api_not_configured");
+  const response = await fetchWithTimeout("https://api.openai.com/v1" + path, {
+    ...init,
+    headers: {
+      Authorization: "Bearer " + OPENAI_API_KEY,
+      "Content-Type": "application/json",
+      "OpenAI-Beta": "agents=v1",
+      ...(init.headers || {})
+    }
+  }, 15_000);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error("openai_webhook_api_" + response.status);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function sameEventSet(actual, required) {
+  const left = [...new Set(Array.isArray(actual) ? actual.map(String) : [])].sort();
+  const right = [...new Set(required.map(String))].sort();
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function ensureOpenAIWebhookSetup() {
+  if (!V12_ENABLED) return false;
+  if (openAIWebhookSecret) return true;
+  if (!OPENAI_API_KEY) throw new Error("openai_api_not_configured");
+  if (openAIWebhookSetupPromise) return openAIWebhookSetupPromise;
+
+  openAIWebhookSetupPromise = (async () => {
+    openAIWebhookSetupError = "";
+    const url = PUBLIC_BASE_URL + "/openai/webhook";
+    const name = "KeepGoing Agents";
+
+    const listed = await openAIWebhookApi("/webhook_endpoints?limit=100", { method: "GET" });
+    let endpoint = (Array.isArray(listed?.data) ? listed.data : []).find((item) =>
+      String(item?.url || "") === url && String(item?.name || "") === name
+    ) || null;
+
+    if (!endpoint) {
+      const created = await openAIWebhookApi("/webhook_endpoints", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          url,
+          event_types: OPENAI_WEBHOOK_EVENTS
+        })
+      });
+      if (!created?.id || !created?.signing_secret) throw new Error("openai_webhook_create_incomplete");
+      openAIWebhookId = String(created.id);
+      openAIWebhookSecret = String(created.signing_secret);
+      v12RuntimeCache = null;
+      return true;
+    }
+
+    const endpointId = String(endpoint.id || "");
+    if (!endpointId) throw new Error("openai_webhook_id_missing");
+
+    if (!sameEventSet(endpoint.event_types, OPENAI_WEBHOOK_EVENTS)) {
+      endpoint = await openAIWebhookApi("/webhook_endpoints/" + encodeURIComponent(endpointId), {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          url,
+          event_types: OPENAI_WEBHOOK_EVENTS
+        })
+      });
+    }
+
+    const rotated = await openAIWebhookApi(
+      "/webhook_endpoints/" + encodeURIComponent(endpointId) + "/rotate_secret",
+      { method: "POST", body: "{}" }
+    );
+    if (!rotated?.signing_secret) throw new Error("openai_webhook_rotate_incomplete");
+
+    openAIWebhookId = endpointId;
+    openAIWebhookSecret = String(rotated.signing_secret);
+    v12RuntimeCache = null;
+    return true;
+  })().catch((error) => {
+    openAIWebhookSetupError = safeLogError(error);
+    throw error;
+  }).finally(() => {
+    openAIWebhookSetupPromise = null;
+  });
+
+  return openAIWebhookSetupPromise;
 }
 
 function durableOwnerHash(access) {
