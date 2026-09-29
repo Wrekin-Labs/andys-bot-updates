@@ -10,6 +10,7 @@ function engineWith({ failFirstSend = false } = {}) {
   let failedOnce = false;
   const seenProviderIds = [];
   const idempotencyKeys = [];
+  const startIdempotencyKeys = [];
   const scopedTurns = [];
 
   return {
@@ -17,11 +18,13 @@ function engineWith({ failFirstSend = false } = {}) {
     get creates() { return creates; },
     get seenProviderIds() { return seenProviderIds; },
     get idempotencyKeys() { return idempotencyKeys; },
+    get startIdempotencyKeys() { return startIdempotencyKeys; },
     get scopedTurns() { return scopedTurns; },
     advance() { turn += 1; },
 
-    async createSession() {
+    async createSession(options = {}) {
       creates++;
+      startIdempotencyKeys.push(options.idempotencyKey || null);
       await Promise.resolve();
       return { id: "sess_test", status: "in_progress" };
     },
