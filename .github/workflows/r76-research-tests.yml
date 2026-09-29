@@ -25,3 +25,14 @@ jobs:
           python agentic-r7.6-execution-quality/self_test.py
           python agentic-r7.6-execution-quality/self_test_extended.py
           python agentic-r7.6-execution-quality/self_test_selection_bias.py
+      - name: Parse R7.6 PowerShell deployment scripts
+        shell: pwsh
+        run: |
+          $files = @(
+            'agentic-r7.6-execution-quality/start_r76_shadow.ps1',
+            'agentic-r7.6-execution-quality/deploy_r76_shadow.ps1'
+          )
+          foreach ($file in $files) {
+            [void][scriptblock]::Create((Get-Content $file -Raw))
+            Write-Host "Parsed $file"
+          }
