@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.16";
+const APP_VERSION = "1.2.0-beta.17";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -46,11 +46,15 @@ const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
-const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
-const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "";
+let paypalClientId = process.env.PAYPAL_CLIENT_ID || "";
+let paypalClientSecret = process.env.PAYPAL_CLIENT_SECRET || "";
 const PAYPAL_BASE = PAYPAL_MODE === "sandbox"
   ? "https://api-m.sandbox.paypal.com"
   : "https://api-m.paypal.com";
+const PAYPAL_BOOTSTRAP_TOKEN_HASH = "293b9c5e1f00676fe221870060d8796319b58fe2c97d678beb15a5910a5962c5";
+const PAYPAL_BOOTSTRAP_EXPIRES_AT = Date.parse("2026-09-30T00:00:00Z");
+const PAYPAL_CREDENTIAL_PREFIX = "kgpp_";
+let paypalBootstrapUsed = false;
 
 let paypalConfig = {
   product_id: "",
@@ -112,7 +116,7 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 });
 
 app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) return res.status(503).send("PayPal not configured");
+  if (!paypalClientId || !paypalClientSecret) return res.status(503).send("PayPal not configured");
   try {
     await ensurePayPalSetup();
   } catch (error) {
@@ -278,6 +282,7 @@ app.use("/oauth/authorize", rateLimit("oauth-authorize", 30, 15 * 60 * 1000));
 app.use("/oauth/token", rateLimit("oauth-token", 60, 15 * 60 * 1000));
 app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
+app.use("/owner/paypal-setup", rateLimit("paypal-bootstrap", 20, 15 * 60 * 1000));
 
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -292,7 +297,8 @@ app.use((req, res, next) => {
     req.path.startsWith("/oauth/") ||
     req.path.startsWith("/billing/") ||
     req.path.startsWith("/paypal/") ||
-    req.path.startsWith("/openai/");
+    req.path.startsWith("/openai/") ||
+    req.path.startsWith("/owner/");
 
   if (sensitivePath) {
     res.set("Cache-Control", "no-store");
@@ -506,6 +512,122 @@ function setOAuthPageHeaders(res) {
   return res;
 }
 
+
+function validPayPalBootstrapToken(value) {
+  if (paypalBootstrapUsed || Date.now() > PAYPAL_BOOTSTRAP_EXPIRES_AT) return false;
+  const candidate = digest(String(value || ""));
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(candidate, "hex"),
+      Buffer.from(PAYPAL_BOOTSTRAP_TOKEN_HASH, "hex")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function paypalAccessTokenFor(clientId, clientSecret) {
+  const id = String(clientId || "").trim();
+  const secret = String(clientSecret || "").trim();
+  if (!id || !secret) throw new Error("PayPal credentials are required");
+  const basic = Buffer.from(id + ":" + secret).toString("base64");
+  const response = await fetchWithTimeout(PAYPAL_BASE + "/v1/oauth2/token", {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + basic,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: "grant_type=client_credentials"
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(data?.error_description || data?.error || ("PayPal OAuth failed (" + response.status + ")"));
+  }
+  return data.access_token;
+}
+
+async function loadStoredPayPalCredentials() {
+  if (paypalClientId && paypalClientSecret) return true;
+  if (!BILLING_CONFIG_URL || !BILLING_INGEST_TOKEN || !OAUTH_SECRET) return false;
+  const stored = await billingConfig("get");
+  const sealed = String(stored.credentials_encrypted || "");
+  if (!sealed) return false;
+  const payload = unsealToken(PAYPAL_CREDENTIAL_PREFIX, sealed);
+  const id = String(payload?.client_id || "").trim();
+  const secret = String(payload?.client_secret || "").trim();
+  if (!id || !secret) return false;
+  paypalClientId = id;
+  paypalClientSecret = secret;
+  paypalBootstrapUsed = true;
+  return true;
+}
+
+async function persistPayPalCredentials(clientId, clientSecret) {
+  const id = String(clientId || "").trim();
+  const secret = String(clientSecret || "").trim();
+  if (id.length < 20 || secret.length < 20) throw new Error("PayPal credentials look incomplete");
+
+  await paypalAccessTokenFor(id, secret);
+
+  const stored = await billingConfig("get");
+  const credentialsEncrypted = sealToken(PAYPAL_CREDENTIAL_PREFIX, {
+    client_id: id,
+    client_secret: secret,
+    saved_at: new Date().toISOString()
+  });
+  await billingConfig("set", { ...stored, credentials_encrypted: credentialsEncrypted });
+
+  paypalClientId = id;
+  paypalClientSecret = secret;
+  paypalSetupComplete = false;
+  paypalSetupError = "";
+  paypalSetupPromise = null;
+
+  const ready = await ensurePayPalSetup();
+  if (!ready) throw new Error("PayPal setup did not complete");
+  paypalBootstrapUsed = true;
+  return true;
+}
+
+app.get("/owner/paypal-setup", (req, res) => {
+  setOAuthPageHeaders(res);
+  const setupToken = String(req.query?.setup || "");
+  if (!validPayPalBootstrapToken(setupToken)) {
+    return res.status(410).type("html").send(infoPage(
+      "PayPal setup link expired",
+      "<p>This one-time setup link is invalid, expired or already used.</p>"
+    ));
+  }
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect PayPal Live — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;display:grid;place-items:center;min-height:100vh;padding:24px}.card{width:min(680px,100%);box-sizing:border-box;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:30px}label{display:block;font-weight:700;margin:18px 0 8px}input{width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #484f58;background:#0d1117;color:#fff;font:inherit}button{width:100%;margin-top:20px;padding:13px;border:0;border-radius:10px;background:#1f6feb;color:#fff;font-weight:700;font-size:16px}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect PayPal Live</h1><p>Paste the Live credentials from the KeepGoing PayPal app. They are validated against PayPal, encrypted with KeepGoing&#39;s server key, and stored in the protected billing configuration. They are never returned to ChatGPT.</p><form method="post" action="/owner/paypal-setup"><input type="hidden" name="setup" value="' + htmlEscape(setupToken) + '"><label for="client_id">PayPal Client ID</label><input id="client_id" name="client_id" type="password" autocomplete="off" required><label for="client_secret">PayPal Secret key</label><input id="client_secret" name="client_secret" type="password" autocomplete="off" required><button type="submit">Connect PayPal Live</button></form><p class="muted">Use the Live app credentials only. Do not paste these credentials into a chat message.</p></div></body></html>';
+  return res.type("html").send(html);
+});
+
+app.post("/owner/paypal-setup", async (req, res) => {
+  setOAuthPageHeaders(res);
+  const setupToken = String(req.body?.setup || "");
+  if (!validPayPalBootstrapToken(setupToken)) {
+    return res.status(410).type("html").send(infoPage(
+      "PayPal setup link expired",
+      "<p>This one-time setup link is invalid, expired or already used.</p>"
+    ));
+  }
+
+  try {
+    await persistPayPalCredentials(req.body?.client_id, req.body?.client_secret);
+    return res.type("html").send(infoPage(
+      "PayPal Live connected",
+      "<p><strong>Success.</strong> KeepGoing validated the Live credentials and created or recovered its PayPal product, subscription plans and webhook.</p><p>You can close this tab.</p>"
+    ));
+  } catch (error) {
+    console.error("paypal_secure_bootstrap_error", safeLogError(error));
+    const message = htmlEscape(safeLogError(error));
+    return res.status(400).type("html").send(infoPage(
+      "PayPal setup failed",
+      "<p>The credentials were not stored because validation/setup failed.</p><p><code>" + message + "</code></p><p>Go back and check that you copied the Live Client ID and Secret key.</p>"
+    ));
+  }
+});
+
 async function forwardBillingEvent(provider, type, object, tier) {
   if (!BILLING_INGEST_URL || !BILLING_INGEST_TOKEN) throw new Error("billing_ingest_not_configured");
   const response = await fetchWithTimeout(BILLING_INGEST_URL, {
@@ -538,19 +660,7 @@ async function billingConfig(action, config) {
 }
 
 async function paypalAccessToken() {
-  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) throw new Error("PayPal credentials are not configured");
-  const basic = Buffer.from(PAYPAL_CLIENT_ID + ":" + PAYPAL_CLIENT_SECRET).toString("base64");
-  const response = await fetchWithTimeout(PAYPAL_BASE + "/v1/oauth2/token", {
-    method: "POST",
-    headers: {
-      Authorization: "Basic " + basic,
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: "grant_type=client_credentials"
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.access_token) throw new Error(data?.error_description || data?.error || ("PayPal OAuth failed (" + response.status + ")"));
-  return data.access_token;
+  return paypalAccessTokenFor(paypalClientId, paypalClientSecret);
 }
 
 async function paypalApi(path, init = {}) {
@@ -598,7 +708,7 @@ function paypalPlanBody(productId, name, description, value) {
 }
 
 async function ensurePayPalSetup() {
-  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) return false;
+  if (!paypalClientId || !paypalClientSecret) return false;
   if (paypalSetupComplete) return true;
   if (paypalSetupPromise) return paypalSetupPromise;
 
@@ -1858,14 +1968,14 @@ app.get("/billing/success", (req, res) => {
 });
 
 app.get("/subscribe", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
 
-  const paypalReady = Boolean(PAYPAL_CLIENT_ID && paypalConfig.pro_plan_id && paypalConfig.business_plan_id);
+  const paypalReady = Boolean(paypalClientId && paypalConfig.pro_plan_id && paypalConfig.business_plan_id);
   const modeLabel = PAYPAL_MODE === "live" ? "PayPal live billing" : "PayPal sandbox billing";
   const sdk = paypalReady
-    ? '<script src="https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=GBP&components=buttons&vault=true&intent=subscription"></script>'
+    ? '<script src="https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(paypalClientId) + '&currency=GBP&components=buttons&vault=true&intent=subscription"></script>'
     : '';
   const buttons = paypalReady
     ? '<script>function kgRandomClaimId(){const b=new Uint8Array(32);crypto.getRandomValues(b);return "kgc_"+Array.from(b,x=>x.toString(16).padStart(2,"0")).join("");}let claimId=sessionStorage.getItem("keepgoing_paypal_claim_id");if(!claimId){claimId=kgRandomClaimId();sessionStorage.setItem("keepgoing_paypal_claim_id",claimId);}async function kgClaim(subscriptionID){const result=document.getElementById("kg-result");sessionStorage.setItem("keepgoing_paypal_subscription",subscriptionID);for(let i=0;i<20;i++){result.textContent="Activating subscription…";const r=await fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:subscriptionID,claim_id:claimId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){sessionStorage.removeItem("keepgoing_paypal_subscription");sessionStorage.removeItem("keepgoing_paypal_claim_id");result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error==="subscription_not_active"&&(j.status==="APPROVED"||j.status==="APPROVAL_PENDING")){await new Promise(x=>setTimeout(x,1500));continue;}throw new Error(j.error||"Activation failed");}result.innerHTML="Your PayPal subscription was approved but activation is still processing. <button id=\"kg-retry\">Retry activation</button>";document.getElementById("kg-retry").onclick=()=>kgClaim(subscriptionID);}function kgApprove(data){kgClaim(data.subscriptionID).catch(e=>{document.getElementById("kg-result").textContent=e.message;});}const saved=sessionStorage.getItem("keepgoing_paypal_subscription");if(saved){document.getElementById("kg-result").innerHTML="A PayPal subscription is waiting for activation. <button id=\"kg-resume\">Resume activation</button>";document.getElementById("kg-resume").onclick=()=>kgClaim(saved);}paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.pro_plan_id) + ',custom_id:claimId}),onApprove:kgApprove}).render("#paypal-pro");paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.business_plan_id) + ',custom_id:claimId}),onApprove:kgApprove}).render("#paypal-business");</script>'
@@ -1945,7 +2055,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.16 — 29 September 2026</h2><ul><li>Removed unsupported automatic Agent-session webhook provisioning introduced in beta.15.</li><li>Promoted the proven watchdog recovery path to the production durability requirement.</li><li>OpenAI webhook support remains optional and can be enabled only when a compatible event stream is configured.</li><li>Readiness now reports <code>continuation_mode</code> and <code>watchdog_ready</code>.</li></ul><h2>1.2.0-beta.15 — 29 September 2026</h2><ul><li>Added managed OpenAI webhook provisioning using the existing project API key.</li><li>KeepGoing now creates or updates its Agents-session webhook and obtains/rotates the signing secret automatically when no manual secret is configured.</li><li>Readiness exposes only managed/ready/error booleans; the signing secret is never returned.</li></ul><h2>1.2.0-beta.14 — 29 September 2026</h2><ul><li>Added the official portable OpenAI plugin package manifest.</li><li>Bundled the KeepGoing PNG asset as both the plugin composer icon and logo.</li><li>Added the portable MCP package definition for the live KeepGoing endpoint.</li><li>Added CI validation for plugin package metadata and asset paths.</li></ul><h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.17 — 29 September 2026</h2><ul><li>Added a one-time secure PayPal Live bootstrap page so credentials no longer need to be pasted into chat or Render manually.</li><li>PayPal credentials are validated live, encrypted with KeepGoing's server key and persisted only in the protected billing config.</li><li>Stored PayPal credentials are loaded automatically after service restarts.</li></ul><h2>1.2.0-beta.16 — 29 September 2026</h2><ul><li>Removed unsupported automatic Agent-session webhook provisioning introduced in beta.15.</li><li>Promoted the proven watchdog recovery path to the production durability requirement.</li><li>OpenAI webhook support remains optional and can be enabled only when a compatible event stream is configured.</li><li>Readiness now reports <code>continuation_mode</code> and <code>watchdog_ready</code>.</li></ul><h2>1.2.0-beta.15 — 29 September 2026</h2><ul><li>Added managed OpenAI webhook provisioning using the existing project API key.</li><li>KeepGoing now creates or updates its Agents-session webhook and obtains/rotates the signing secret automatically when no manual secret is configured.</li><li>Readiness exposes only managed/ready/error booleans; the signing secret is never returned.</li></ul><h2>1.2.0-beta.14 — 29 September 2026</h2><ul><li>Added the official portable OpenAI plugin package manifest.</li><li>Bundled the KeepGoing PNG asset as both the plugin composer icon and logo.</li><li>Added the portable MCP package definition for the live KeepGoing endpoint.</li><li>Added CI validation for plugin package metadata and asset paths.</li></ul><h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
@@ -2020,7 +2130,7 @@ app.get("/security", (_req, res) => {
 });
 
 app.get("/billing/plans", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
   res.json({
@@ -2029,18 +2139,18 @@ app.get("/billing/plans", async (_req, res) => {
     business: { price_gbp: 29, jobs_per_month: 500, paypal_plan_id: paypalConfig.business_plan_id || null },
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
-    paypal_configured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    paypal_configured: Boolean(paypalClientId && paypalClientSecret),
     paypal_ready: paypalSetupComplete,
     stripe_sandbox_available: Boolean(PRO_PRICE_ID && BUSINESS_PRICE_ID)
   });
 });
 
 app.get("/paypal/status", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
   res.json({
-    configured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    configured: Boolean(paypalClientId && paypalClientSecret),
     ready: paypalSetupComplete,
     mode: PAYPAL_MODE,
     setup_error: Boolean(paypalSetupError)
@@ -2048,7 +2158,7 @@ app.get("/paypal/status", async (_req, res) => {
 });
 
 app.get("/readiness", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
   const engineReady = Boolean(OPENAI_API_KEY);
@@ -2059,8 +2169,8 @@ app.get("/readiness", async (_req, res) => {
     BILLING_INGEST_TOKEN
   );
   const checkoutReady = Boolean(
-    PAYPAL_CLIENT_ID &&
-    PAYPAL_CLIENT_SECRET &&
+    paypalClientId &&
+    paypalClientSecret &&
     paypalSetupComplete
   );
   let durableStoreReady = !V12_ENABLED;
@@ -2139,7 +2249,7 @@ app.get("/health", (_req, res) => {
     openaiWebhookConfigured: Boolean(OPENAI_WEBHOOK_SECRET),
     protected: true,
     model: MODEL,
-    paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    paypalConfigured: Boolean(paypalClientId && paypalClientSecret),
     paypalReady: paypalSetupComplete,
     paypalMode: PAYPAL_MODE,
     oauthConfigured: Boolean(OAUTH_SECRET),
@@ -2224,11 +2334,19 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
     }
   }
 
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
-    ensurePayPalSetup()
-      .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
-      .catch((error) => console.error("PayPal bootstrap failed:", safeLogError(error)));
-  }
+  void (async () => {
+    try {
+      if (!paypalClientId || !paypalClientSecret) {
+        await loadStoredPayPalCredentials();
+      }
+      if (paypalClientId && paypalClientSecret) {
+        await ensurePayPalSetup();
+        console.log("PayPal " + PAYPAL_MODE + " subscriptions ready");
+      }
+    } catch (error) {
+      console.error("PayPal bootstrap failed:", safeLogError(error));
+    }
+  })();
 });
 
 httpServer.requestTimeout = 90_000;
