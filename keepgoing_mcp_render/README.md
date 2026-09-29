@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.20` — watchdog-first production durability, idempotent/recoverable job startup, official plugin/logo packaging, owner auto-continue, secure live PayPal checkout/restart recovery, completion semantics and runtime hardening.
+**Current beta:** `1.2.0-beta.21` — watchdog-first production durability, idempotent/recoverable job startup, directory-policy-hardened plugin packaging, owner auto-continue, secure external PayPal checkout/restart recovery, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -183,7 +183,7 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.20 candidate:
+As of the beta.21 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
@@ -196,6 +196,6 @@ As of the beta.20 candidate:
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 ## Public-plugin commerce boundary
 
-The public ChatGPT plugin/listing experience is informational and authentication-only for existing KeepGoing accounts. It does not initiate a new digital-service subscription or promote an upgrade inside ChatGPT.
+The public ChatGPT plugin/listing experience is authentication and existing-account functionality only. It does not show subscription plans, initiate a new digital-service subscription, link to transactional checkout, or promote upgrades inside ChatGPT.
 
-Direct paid-beta checkout is isolated at `/subscribe`, is not linked from the public plugin website/install/FAQ/sitemap, and is marked noindex/no-store. This direct web route is for users who intentionally arrive outside the ChatGPT plugin experience.
+Direct paid-beta checkout is isolated at `/subscribe`, is not linked from the public plugin website/install/FAQ/status/sitemap or advertised in plugin metadata, and is marked noindex/no-store. This direct web route exists outside the ChatGPT plugin acquisition and upgrade experience.
