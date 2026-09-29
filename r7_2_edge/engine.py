@@ -38,6 +38,26 @@ class Evidence:
 
 
 @dataclass(frozen=True)
+class ExecutionCostSnapshot:
+    """Observed/previewed execution-cost inputs.
+
+    Rates are decimal fractions (for example 0.001 = 10 bps). Spread and
+    slippage inputs are one-way basis-point costs for the named leg.
+    preview_entry_commission_rate, when supplied, overrides entry_fee_rate
+    so preview commission is not double-counted.
+    """
+
+    entry_fee_rate: Optional[float] = None
+    exit_fee_rate: Optional[float] = None
+    preview_entry_commission_rate: Optional[float] = None
+    entry_spread_bps: Optional[float] = None
+    exit_spread_bps: Optional[float] = None
+    entry_slippage_bps: Optional[float] = None
+    exit_slippage_bps: Optional[float] = None
+    source: str = "fallback"
+
+
+@dataclass(frozen=True)
 class Candidate:
     symbol: str
     expected_gross_return: float
@@ -50,6 +70,7 @@ class Candidate:
     bucket: str = "default"
     mtf_score: float = 0.0
     reward_risk: float = 0.0
+    execution_costs: Optional[ExecutionCostSnapshot] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -98,6 +119,11 @@ class R72Config:
     supportive_regime_cap: float = 1.0
     max_order_gbp: float = 15.0
     max_total_exposure_gbp: float = 100.0
+    risk_budget_per_trade_gbp: Optional[float] = None
+    require_stop_for_risk_sizing: bool = False
+    min_stop_distance_fraction: float = 0.001
+    max_daily_loss_gbp: Optional[float] = None
+    max_peak_drawdown_gbp: Optional[float] = None
     max_positions: int = 8
     max_orders_per_day: int = 4
     max_same_bucket_positions: int = 2
@@ -106,7 +132,7 @@ class R72Config:
     symbol_loss_throttle_multiplier: float = 0.25
     symbol_no_win_throttle_multiplier: float = 0.10
     strategy_lab_min_oos_trades: int = 30
-    strategy_lab_min_profit_factor: float = 1.15
+    strategy_lab_min_profit_factor: float = 1.20
     strategy_lab_max_drawdown: float = 0.12
     strategy_lab_min_positive_fold_fraction: float = 0.75
     strategy_lab_min_median_fold_return: float = 0.0
@@ -150,15 +176,108 @@ class R72EdgeEngine:
         uncertainty_penalty = 0.08 * (1.0 - rel)
         return clamp(blended - uncertainty_penalty), lower, rel
 
+    def cost_breakdown(self, candidate: Candidate) -> Dict[str, float | str]:
+        fallback_fee = (
+            self.config.maker_fee_rate
+            if candidate.order_style.lower() == "maker"
+            else self.config.taker_fee_rate
+        )
+        snap = candidate.execution_costs
+
+        entry_fee = fallback_fee
+        exit_fee = fallback_fee
+        entry_spread_bps = max(0.0, candidate.spread_bps)
+        exit_spread_bps = max(0.0, candidate.spread_bps)
+        entry_slippage_bps = max(0.0, candidate.slippage_bps)
+        exit_slippage_bps = max(0.0, candidate.slippage_bps)
+        source = "configured_fallback"
+
+        if snap is not None:
+            source = snap.source or "snapshot"
+            if snap.preview_entry_commission_rate is not None:
+                entry_fee = max(0.0, float(snap.preview_entry_commission_rate))
+            elif snap.entry_fee_rate is not None:
+                entry_fee = max(0.0, float(snap.entry_fee_rate))
+            if snap.exit_fee_rate is not None:
+                exit_fee = max(0.0, float(snap.exit_fee_rate))
+            if snap.entry_spread_bps is not None:
+                entry_spread_bps = max(0.0, float(snap.entry_spread_bps))
+            if snap.exit_spread_bps is not None:
+                exit_spread_bps = max(0.0, float(snap.exit_spread_bps))
+            if snap.entry_slippage_bps is not None:
+                entry_slippage_bps = max(0.0, float(snap.entry_slippage_bps))
+            if snap.exit_slippage_bps is not None:
+                exit_slippage_bps = max(0.0, float(snap.exit_slippage_bps))
+
+        spread_rate = (entry_spread_bps + exit_spread_bps) / 10_000.0
+        slippage_rate = (entry_slippage_bps + exit_slippage_bps) / 10_000.0
+        raw = entry_fee + exit_fee + spread_rate + slippage_rate
+        total = raw * self.config.cost_safety_multiplier
+        return {
+            "source": source,
+            "entry_fee_rate": entry_fee,
+            "exit_fee_rate": exit_fee,
+            "entry_spread_bps": entry_spread_bps,
+            "exit_spread_bps": exit_spread_bps,
+            "entry_slippage_bps": entry_slippage_bps,
+            "exit_slippage_bps": exit_slippage_bps,
+            "raw_round_trip_cost": raw,
+            "safety_multiplier": self.config.cost_safety_multiplier,
+            "round_trip_cost": total,
+        }
+
     def round_trip_cost(self, candidate: Candidate) -> float:
-        fee = self.config.maker_fee_rate if candidate.order_style.lower() == "maker" else self.config.taker_fee_rate
-        spread = max(0.0, candidate.spread_bps) / 10_000.0
-        slippage = max(0.0, candidate.slippage_bps) / 10_000.0
-        raw = (2.0 * fee) + (2.0 * spread) + (2.0 * slippage)
-        return raw * self.config.cost_safety_multiplier
+        return float(self.cost_breakdown(candidate)["round_trip_cost"])
 
     def net_edge(self, candidate: Candidate) -> float:
         return float(candidate.expected_gross_return) - self.round_trip_cost(candidate)
+
+    def risk_based_max_stake(
+        self,
+        stop_distance_fraction: float,
+        estimated_round_trip_cost: float = 0.0,
+    ) -> Tuple[float, List[str]]:
+        """Return a stop-risk-capped stake without increasing configured limits."""
+        budget = self.config.risk_budget_per_trade_gbp
+        if budget is None:
+            return self.config.max_order_gbp, []
+        stop = float(stop_distance_fraction)
+        if stop <= 0.0:
+            return 0.0, ["RISK_SIZING_INVALID_STOP"]
+        stop = max(stop, self.config.min_stop_distance_fraction)
+        loss_fraction = stop + max(0.0, float(estimated_round_trip_cost))
+        if loss_fraction <= 0.0:
+            return 0.0, ["RISK_SIZING_INVALID_LOSS_FRACTION"]
+        stake = min(self.config.max_order_gbp, max(0.0, float(budget)) / loss_fraction)
+        return max(0.0, stake), ["STOP_RISK_SIZING_ACTIVE"]
+
+    def entry_circuit_breaker(
+        self,
+        daily_pnl_gbp: Optional[float] = None,
+        equity_gbp: Optional[float] = None,
+        peak_equity_gbp: Optional[float] = None,
+    ) -> Tuple[bool, List[str]]:
+        """Block *new entries* after configured loss limits.
+
+        This engine has no exit execution path, so risk-reducing exits remain
+        outside this entry-only circuit breaker.
+        """
+        reasons: List[str] = []
+        if (
+            self.config.max_daily_loss_gbp is not None
+            and daily_pnl_gbp is not None
+            and float(daily_pnl_gbp) <= -abs(float(self.config.max_daily_loss_gbp))
+        ):
+            reasons.append("DAILY_LOSS_CIRCUIT_BREAKER")
+        if (
+            self.config.max_peak_drawdown_gbp is not None
+            and equity_gbp is not None
+            and peak_equity_gbp is not None
+            and max(0.0, float(peak_equity_gbp) - float(equity_gbp))
+            >= abs(float(self.config.max_peak_drawdown_gbp))
+        ):
+            reasons.append("PEAK_DRAWDOWN_CIRCUIT_BREAKER")
+        return bool(reasons), reasons
 
     def regime_cap(self, regime: MarketRegime) -> Tuple[float, List[str]]:
         reasons: List[str] = []
@@ -194,7 +313,11 @@ class R72EdgeEngine:
     def evaluate(self, candidate: Candidate, evidence: Evidence, regime: MarketRegime,
                  symbol_metrics: Optional[Dict[str, Any]] = None, open_positions: int = 0,
                  same_bucket_positions: int = 0, orders_today: int = 0,
-                 current_exposure_gbp: float = 0.0) -> Decision:
+                 current_exposure_gbp: float = 0.0,
+                 stop_distance_fraction: Optional[float] = None,
+                 daily_pnl_gbp: Optional[float] = None,
+                 equity_gbp: Optional[float] = None,
+                 peak_equity_gbp: Optional[float] = None) -> Decision:
         reasons: List[str] = []
         evidence_p, lower, rel = self.evidence_probability(evidence)
         net = self.net_edge(candidate)
@@ -248,8 +371,40 @@ class R72EdgeEngine:
         if remaining_exposure <= 0:
             hard_block = True
             reasons.append("TOTAL_EXPOSURE_LIMIT")
+
+        circuit_blocked, circuit_reasons = self.entry_circuit_breaker(
+            daily_pnl_gbp=daily_pnl_gbp,
+            equity_gbp=equity_gbp,
+            peak_equity_gbp=peak_equity_gbp,
+        )
+        if circuit_blocked:
+            hard_block = True
+            reasons.extend(circuit_reasons)
+
         stake_mult = clamp(rcap * smult)
-        max_stake = min(self.config.max_order_gbp * stake_mult, remaining_exposure)
+        risk_cap = self.config.max_order_gbp
+        risk_reasons: List[str] = []
+        if self.config.risk_budget_per_trade_gbp is not None:
+            if stop_distance_fraction is None:
+                if self.config.require_stop_for_risk_sizing:
+                    paper_only = True
+                    reasons.append("STOP_DISTANCE_REQUIRED_FOR_RISK_SIZING")
+                else:
+                    reasons.append("STOP_DISTANCE_MISSING_RISK_BUDGET_NOT_APPLIED")
+            else:
+                risk_cap, risk_reasons = self.risk_based_max_stake(
+                    stop_distance_fraction,
+                    self.round_trip_cost(candidate),
+                )
+                reasons.extend(risk_reasons)
+                if risk_cap <= 0.0:
+                    hard_block = True
+
+        max_stake = min(
+            self.config.max_order_gbp * stake_mult,
+            remaining_exposure,
+            risk_cap,
+        )
         if max_stake < 1.0:
             paper_only = True
             reasons.append("STAKE_THROTTLED_BELOW_LIVE_MINIMUM")
@@ -258,9 +413,16 @@ class R72EdgeEngine:
                         stake_mult, max_stake, tuple(dict.fromkeys(reasons)), {
                             "sample_reliability": rel,
                             "round_trip_cost": self.round_trip_cost(candidate),
-                            "model_probability": candidate.model_probability,
+                            "cost_breakdown": self.cost_breakdown(candidate),
+                            "model_probability": evidence.model_probability,
+                            "candidate_model_probability": candidate.model_probability,
                             "observed_after_cost_hit_rate": evidence.observed_after_cost_hit_rate,
                             "samples": evidence.samples,
+                            "risk_cap_gbp": risk_cap,
+                            "stop_distance_fraction": stop_distance_fraction,
+                            "daily_pnl_gbp": daily_pnl_gbp,
+                            "equity_gbp": equity_gbp,
+                            "peak_equity_gbp": peak_equity_gbp,
                         })
 
     def qualify_strategy(self, evidence: StrategyLabEvidence) -> Tuple[bool, Tuple[str, ...]]:
