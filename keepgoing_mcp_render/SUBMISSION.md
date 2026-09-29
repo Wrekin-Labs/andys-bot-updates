@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.10 commercial beta candidate
+Version: 1.2.0-beta.15 commercial beta candidate
 Updated: 29 September 2026
 
 ## Listing
@@ -216,7 +216,7 @@ Expected:
 
 ## Demo recording plan
 
-Record one short end-to-end demo after the final production domain, durable database migration, OpenAI webhook and reviewer account are ready:
+Record one short end-to-end demo after the final production domain, durable database state, watchdog production drill and reviewer account are ready:
 
 1. Connect KeepGoing in ChatGPT through OAuth.
 2. Start one substantial durable job.
@@ -255,7 +255,7 @@ Begin with the United Kingdom during commercial beta unless support, tax/payment
 
 ## v1.2 release notes
 
-KeepGoing 1.2 changes the execution engine from a single background Response into a durable KeepGoing-owned job mapped to an OpenAI Agent session. It adds multi-turn automatic continuation, signed Agents webhooks, watchdog recovery, durable CAS/idempotency protection, active-job recovery/listing, safe user-input resume, hard aggregate usage budgets, bounded durable metadata retention, owner-scoped job access, and live durable-store readiness checks.
+KeepGoing 1.2 changes the execution engine from a single background Response into a durable KeepGoing-owned job mapped to an OpenAI Agent session. It adds multi-turn automatic continuation, watchdog recovery, optional signed webhook support where compatible, durable CAS/idempotency protection, active-job recovery/listing, safe user-input resume, hard aggregate usage budgets, bounded durable metadata retention, owner-scoped job access, and live durable-store readiness checks.
 
 The v1.1 Responses path remains available while v1.2 is feature-flagged for staged rollout.
 
@@ -270,8 +270,8 @@ Already completed in the beta.10 line:
 
 External/manual gates still required before broad public sale:
 - For direct off-plugin paid-beta sales only: create/authorise the live PayPal REST app (or verify a live Stripe account), then add live credentials to Render and verify subscription checkout, webhook ingestion, activation-token issuance, cancellation and failure handling. Do not surface that transaction flow inside the public ChatGPT plugin experience.
-- Configure the OpenAI project webhook to `/openai/webhook`, store its signing secret in Render as `OPENAI_WEBHOOK_SECRET`, verify signed delivery, then disable owner-only canary only after the durability drills remain green.
-- Run a real multi-turn PARTIAL -> continuation -> COMPLETED drill with the signed webhook enabled, plus duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
+- OpenAI webhook delivery is optional for the current Agents-session engine and is not a launch blocker; keep `/openai/webhook` available for compatible future event streams.
+- Run a real multi-turn PARTIAL -> continuation -> COMPLETED watchdog drill, plus duplicate-start, duplicate-continuation, NEEDS_USER/resume and recovery drills.
 - Create a dedicated reviewer account/activation credential with adequate quota.
 - Complete any OpenAI publisher/business identity and domain-verification steps presented by the submission portal.
 - Upload the 256×256 KeepGoing PNG icon to the ChatGPT app listing if the listing UI does not consume the hosted icon automatically.
