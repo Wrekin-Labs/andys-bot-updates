@@ -914,6 +914,7 @@ async function startPersistentJobCompat(args, access) {
     tier: access.tier || "pro",
     ownerSubjectHash: durableOwnerHash(access),
     clientRequestId: args.clientRequestId || access._mcp_request_id || null,
+    context: args.context || "",
     beforeCreateSession: async () => reserveJobQuota(access)
   });
 }
@@ -982,7 +983,7 @@ function createMcpServer(access = {}) {
   const server = new McpServer(
     { name: "KeepGoing", version: v12Access ? "1.2.0-beta.1" : "1.1.0" },
     { instructions: v12Access
-      ? "Use KeepGoing for substantial work that should survive normal chat-turn boundaries. Start one durable job and preserve its job_id. The server uses recovery/watchdog logic to continue partial work safely; status polling is only for visibility. Reuse the same job_id and never create duplicate jobs."
+      ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Before starting, gather any relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins; pass that context with the job. Prefer continue_until_done for these natural-language requests. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -1017,13 +1018,14 @@ function createMcpServer(access = {}) {
 
   server.registerTool("start_persistent_job", {
     title: "Start persistent job",
-    description: "Use when the user wants substantial model work or research to keep progressing until it completes or genuinely needs user input. Starts one durable job; it may access the public web when allowWeb is true.",
+    description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If relevant prior-chat or connected-tool context is available, the host should gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true),
-      clientRequestId: z.string().min(1).max(200).optional()
+      clientRequestId: z.string().min(1).max(200).optional(),
+      context: z.string().max(20000).optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1037,6 +1039,36 @@ function createMcpServer(access = {}) {
   }, async (args) => {
     try {
       const result = await startPersistentJobCompat(args, access);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+    }
+  });
+
+
+  server.registerTool("continue_until_done", {
+    title: "Continue until done",
+    description: "PRIMARY KeepGoing entrypoint when the user says continue, keep going, finish it, until done, don't stop, complete the objective, or equivalent. The host should first collect relevant context already available in the current conversation and, when useful and permitted, from connected ChatGPT tools/plugins, then pass it in context. Starts or idempotently recovers one durable job that keeps advancing server-side until completed or genuinely blocked by required user input/approval or a configured safety/cost limit. Never ask the user to type continue just to advance the same objective.",
+    inputSchema: {
+      goal: z.string().min(1).max(12000),
+      definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
+      mode: z.enum(["safe","balanced","max"]).default("max"),
+      allowWeb: z.boolean().default(true),
+      clientRequestId: z.string().min(1).max(200).optional(),
+      context: z.string().max(20000).optional()
+    },
+    outputSchema: {
+      job_id: z.string(),
+      status: z.string(),
+      duplicate: z.boolean().optional(),
+      message: z.string()
+    },
+    securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  }, async (args) => {
+    try {
+      const result = await startPersistentJobCompat({ ...args, mode: args.mode || "max" }, access);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -1183,7 +1215,7 @@ function createMcpServer(access = {}) {
       {
         name: "start_persistent_job",
         title: "Start persistent job",
-        description: "Use when the user wants substantial model work or research to keep progressing until it completes or genuinely needs user input. Starts one durable job; it may access the public web when allowWeb is true.",
+        description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If relevant prior-chat or connected-tool context is available, the host should gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1191,7 +1223,40 @@ function createMcpServer(access = {}) {
             definitionOfDone: { type: "string", minLength: 1, maxLength: 4000, default: "All requested work completed and verified" },
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
             allowWeb: { type: "boolean", default: true },
-            clientRequestId: { type: "string", minLength: 1, maxLength: 200 }
+            clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
+            context: { type: "string", maxLength: 20000 }
+          },
+          required: ["goal"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            duplicate: { type: "boolean" },
+            message: { type: "string" }
+          },
+          required: ["job_id", "status", "message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: oauthMeta
+      },
+      {
+        name: "continue_until_done",
+        title: "Continue until done",
+        description: "PRIMARY entrypoint for 'continue', 'keep going', 'finish it', 'until done', 'don't stop', or equivalent. Gather relevant current-chat and connected-tool/plugin context first when useful, pass it in context, and keep the same durable job running until completion or a genuine required-user-input/safety stop. Never ask the user to type continue just to advance the same objective.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: { type: "string", minLength: 1, maxLength: 12000 },
+            definitionOfDone: { type: "string", minLength: 1, maxLength: 4000, default: "All requested work completed and verified" },
+            mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
+            allowWeb: { type: "boolean", default: true },
+            clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
+            context: { type: "string", maxLength: 20000 }
           },
           required: ["goal"],
           additionalProperties: false
