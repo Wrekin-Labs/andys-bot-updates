@@ -10,7 +10,11 @@ from pathlib import Path
 from microstructure_quality import assess
 
 ROOT=Path(__file__).resolve().parent
-R75=ROOT.parent/"agentic-r7.5-earnings"/"state"/"r7_5_live_shadow_status.json"
+R75_CANDIDATES=[
+    ROOT.parent/"r7_5_earnings_shadow"/"state"/"r7_5_live_shadow_status.json",
+    ROOT.parent/"agentic-r7.5-earnings"/"state"/"r7_5_live_shadow_status.json",
+]
+R75=next((p for p in R75_CANDIDATES if p.exists()),R75_CANDIDATES[0])
 STATUS=ROOT/"state"/"r7_6_shadow_status.json"
 URL="http://127.0.0.1:8787/api/live"
 
