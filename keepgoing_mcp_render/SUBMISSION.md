@@ -261,16 +261,15 @@ The v1.1 Responses path remains available while v1.2 is feature-flagged for stag
 
 ## Remaining launch gates
 
-Already completed in beta.3:
+Already completed in the current beta line:
 - Production durable-store schema/state is live and reachable through the protected durable-store path.
 - `KEEPGOING_V12_ENABLED=true` owner-canary deployment is live.
 - OAuth owner connection is verified.
 - Durable owner smoke test starts and returns a valid `STATUS: COMPLETED` result.
-- CI is green on beta.3 and the branded-homepage hotfix.
-- Product page, icon/manifest, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
+- Public informational landing page, icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are implemented and deployed in the beta line.
 
 External/manual gates still required before broad public sale:
-- Create/authorise the live PayPal REST app (or verify a live Stripe account), then add live credentials to Render and verify subscription checkout, webhook ingestion, activation-token issuance, cancellation and failure handling.
+- For direct off-plugin paid-beta sales only: create/authorise the live PayPal REST app (or verify a live Stripe account), then add live credentials to Render and verify subscription checkout, webhook ingestion, activation-token issuance, cancellation and failure handling. Do not surface that transaction flow inside the public ChatGPT plugin experience.
 - Configure the OpenAI project webhook to `/openai/webhook`, store its signing secret in Render as `OPENAI_WEBHOOK_SECRET`, verify signed delivery, then disable owner-only canary only after the durability drills remain green.
 - Run a real multi-turn PARTIAL -> continuation -> COMPLETED drill with the signed webhook enabled, plus duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
 - Create a dedicated reviewer account/activation credential with adequate quota.
