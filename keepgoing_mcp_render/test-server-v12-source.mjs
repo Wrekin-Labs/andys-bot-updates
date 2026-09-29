@@ -5,10 +5,17 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
-assert.match(source, /APP_VERSION = "1\.2\.0-beta\.3"/);
+assert.match(source, /APP_VERSION = "1\\.2\\.0-beta\\.4"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/manifest\.json"/);
 assert.match(source, /app\.get\("\/refunds"/);
+assert.match(source, /app\.get\("\/robots\.txt"/);
+assert.match(source, /app\.get\("\/sitemap\.xml"/);
+assert.match(source, /app\.get\("\/faq"/);
+assert.match(source, /app\.get\("\/status"/);
+assert.match(source, /app\.get\("\/changelog"/);
+assert.match(source, /og:title/);
+assert.match(source, /twitter:card/);
 assert.match(source, /Refunds & cancellation/);
 assert.match(source, /KEEPGOING_DURABLE_STORE_URL/);
 assert.match(source, /proxyUrl: V12_DURABLE_STORE_URL/);
