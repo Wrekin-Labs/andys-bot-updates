@@ -20,11 +20,12 @@ export function createV12Service({
     tier = "pro",
     ownerSubjectHash,
     clientRequestId = null,
+    context = "",
     beforeCreateSession = null
   }) {
     const limits = planLimits(tier, allowWeb);
     const result = await orchestrator.start({
-      initialPrompt: buildJobPrompt(goal, definitionOfDone, mode),
+      initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
       instructions: "Finish the KeepGoing job. Preserve completed work across turns and obey the required STATUS marker.",
       allowWeb,
       reasoningEffort: reasoningEffort(mode),
@@ -248,12 +249,14 @@ export function planLimits(tier, allowWeb = true) {
   };
 }
 
-export function buildJobPrompt(goal, done, mode) {
+export function buildJobPrompt(goal, done, mode, context = "") {
   const autonomy = {
     safe: "Be cautious. Do not make assumptions where missing information changes the result.",
     balanced: "Work autonomously where reasonable, verify important points, and minimise unnecessary questions.",
     max: "Work as autonomously and comprehensively as possible within the available tools and information."
   }[mode] || "Work autonomously where reasonable.";
+
+  const contextText = String(context || "").trim().slice(0, 20_000);
 
   return [
     "You are the execution engine for KeepGoing, a durable AI job runner.",
@@ -261,6 +264,13 @@ export function buildJobPrompt(goal, done, mode) {
     "GOAL:", String(goal || ""),
     "",
     "DEFINITION OF DONE:", String(done || ""),
+    ...(contextText ? [
+      "",
+      "RELEVANT CONTEXT FROM THE HOST CHAT / CONNECTED TOOLS:",
+      contextText,
+      "",
+      "Use this context as supporting evidence. The GOAL and latest user instruction remain authoritative."
+    ] : []),
     "",
     "AUTONOMY:", autonomy,
     "",
