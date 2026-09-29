@@ -1,7 +1,7 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0 beta candidate  
-Prepared: 28 September 2026
+Version: 1.2.0-beta.3 commercial beta candidate  
+Updated: 29 September 2026
 
 ## Listing
 
@@ -20,9 +20,11 @@ Prepared: 28 September 2026
 **Privacy:** https://keepgoing-mcp.onrender.com/privacy  
 **Terms:** https://keepgoing-mcp.onrender.com/terms  
 **Security:** https://keepgoing-mcp.onrender.com/security  
+**Refunds & cancellation:** https://keepgoing-mcp.onrender.com/refunds  
+**Icon:** https://keepgoing-mcp.onrender.com/icon.svg  
 **MCP server:** https://keepgoing-mcp.onrender.com/mcp
 
-Before public submission, replace the temporary Render subdomain with the final branded production domain and update `KEEPGOING_PUBLIC_BASE_URL`.
+A branded production domain is recommended before public submission. If the Render subdomain is retained, use it consistently for OAuth discovery, privacy/terms, support and domain verification.
 
 ## Authentication
 
@@ -41,6 +43,13 @@ Customers authenticate with a KeepGoing activation token issued after an active 
 
 ## Tools
 
+### continue_until_done — “Continue until done”
+Preferred entrypoint for “keep going / continue / finish this / until done”. Creates or idempotently reuses a durable KeepGoing job with maximum autonomous continuation semantics while preserving normal host/tool permissions.
+- readOnlyHint: false
+- destructiveHint: false
+- idempotentHint: false
+- openWorldHint: true
+- OAuth scope: keepgoing.jobs
 ### start_persistent_job — “Start persistent job”
 Creates or idempotently reuses a durable KeepGoing job.
 - readOnlyHint: false
@@ -247,19 +256,20 @@ The v1.1 Responses path remains available while v1.2 is feature-flagged for stag
 
 ## Remaining launch gates
 
-- Apply the reviewed `sql/durable_jobs.sql` migration to the intended production Supabase project.
-- Configure `KEEPGOING_V12_ENABLED=true` with `KEEPGOING_V12_CANARY_ONLY=true`, the durable Supabase service credentials and `OPENAI_WEBHOOK_SECRET` only after the migration exists.
-- Configure the OpenAI Agents session webhook for the production `/openai/webhook` endpoint and subscribed session events.
-- Confirm `/readiness` is green, including live `durable_store_ready`.
-- Run the durability drills through the owner account while canary-only mode keeps ordinary subscribers on v1.1.
-- Disable canary-only mode only after those drills pass.
-- Run a real end-to-end PARTIAL -> continuation -> COMPLETED test against the production OpenAI account.
-- Run real duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
-- Authorise/live-test the selected payment provider and subscription claim/cancellation flow.
-- Move from the temporary Render subdomain to the branded production domain and re-test OAuth discovery.
-- Complete OpenAI developer/business identity verification under the intended publisher name.
-- Create reviewer credentials.
-- Add the generated OpenAI domain-verification challenge token.
-- Record the final reviewer demo.
-- Run the submission portal’s tool scan and resolve findings.
-- Submit only after the above gates are green.
+Already completed in beta.3:
+- Production durable-store schema/state is live and reachable through the protected durable-store path.
+- `KEEPGOING_V12_ENABLED=true` owner-canary deployment is live.
+- OAuth owner connection is verified.
+- Durable owner smoke test starts and returns a valid `STATUS: COMPLETED` result.
+- CI is green on beta.3 and the branded-homepage hotfix.
+- Product page, icon/manifest, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
+
+External/manual gates still required before broad public sale:
+- Create/authorise the live PayPal REST app (or verify a live Stripe account), then add live credentials to Render and verify subscription checkout, webhook ingestion, activation-token issuance, cancellation and failure handling.
+- Configure the OpenAI project webhook to `/openai/webhook`, store its signing secret in Render as `OPENAI_WEBHOOK_SECRET`, verify signed delivery, then disable owner-only canary only after the durability drills remain green.
+- Run a real multi-turn PARTIAL -> continuation -> COMPLETED drill with the signed webhook enabled, plus duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
+- Create a dedicated reviewer account/activation credential with adequate quota.
+- Complete any OpenAI publisher/business identity and domain-verification steps presented by the submission portal.
+- Upload the 256×256 KeepGoing PNG icon to the ChatGPT app listing if the listing UI does not consume the hosted icon automatically.
+- Record the reviewer demo and run the submission portal tool scan.
+- Submit to the public directory only after the above external gates are actually complete; directory approval must not be claimed in advance.
