@@ -1,6 +1,5 @@
 import express from "express";
 import crypto from "crypto";
-import { fileURLToPath } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -14,7 +13,6 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 const APP_VERSION = "1.2.0-beta.3";
-const ICON_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const PRO_PRICE_ID = process.env.KEEPGOING_PRO_PRICE_ID || "price_1UJy24B86Ss16l9WEsqSRxh1";
@@ -1563,7 +1561,7 @@ app.get("/oauth/authorize", async (req, res) => {
     .map(([k, v]) => '<input type="hidden" name="' + htmlEscape(k) + '" value="' + htmlEscape(v) + '">')
     .join("");
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><meta name="description" content="KeepGoing keeps substantial AI jobs progressing without repeated continue prompts."><link rel="icon" href="/icon.png"><link rel="manifest" href="/manifest.json"><title>KeepGoing — persistent AI work</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.hero{display:flex;gap:18px;align-items:center;margin-bottom:24px}.logo{width:86px;height:86px;border-radius:22px}.tag{color:#7ee7df;font-weight:700;letter-spacing:.02em}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><div class="hero"><img class="logo" src="/icon.png" alt="KeepGoing icon"><div><div class="tag">CONTINUE WITHOUT THE CHASING</div><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial work, research and long-running tasks. KeepGoing preserves the same job so ChatGPT can resume, check and continue it instead of repeatedly restarting the work.</p></div></div>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free access follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month · up to 3 hosted web tool calls per job</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month · up to 5 hosted web tool calls per job</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/refunds">Refunds & cancellation</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div>' + buttons + '</body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><meta name="description" content="KeepGoing keeps substantial AI jobs progressing without repeated continue prompts."><link rel="icon" href="/icon.svg"><link rel="manifest" href="/manifest.json"><title>KeepGoing — persistent AI work</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px}.wrap{max-width:980px;margin:auto}.hero{display:flex;gap:18px;align-items:center;margin-bottom:24px}.logo{width:86px;height:86px;border-radius:22px}.tag{color:#7ee7df;font-weight:700;letter-spacing:.02em}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}button{padding:10px 14px;margin-top:8px}#kg-result{margin-top:20px}</style>' + sdk + '</head><body><div class="wrap"><div class="hero"><img class="logo" src="/icon.svg" alt="KeepGoing icon"><div><div class="tag">CONTINUE WITHOUT THE CHASING</div><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial work, research and long-running tasks. KeepGoing preserves the same job so ChatGPT can resume, check and continue it instead of repeatedly restarting the work.</p></div></div>' + setupMessage + '<div class="plans"><div class="card"><h2>Free</h2><div class="price">£0</div><p>3 jobs/month</p><p class="muted">Free access follows the paid beta.</p></div><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month · up to 3 hosted web tool calls per job</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month · up to 5 hosted web tool calls per job</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/refunds">Refunds & cancellation</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div>' + buttons + '</body></html>';
   res.type("html").send(html);
 });
 
@@ -1807,9 +1805,9 @@ app.get("/", async (_req, res) => {
 });
 
 
-app.get("/icon.png", (_req, res) => {
+app.get("/icon.svg", (_req, res) => {
   res.set("Cache-Control", "public, max-age=86400");
-  res.type("png").sendFile(ICON_FILE);
+  res.type("image/svg+xml").send('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#27f3df"/><stop offset="1" stop-color="#0798d8"/></linearGradient></defs><rect width="256" height="256" rx="56" fill="#0d1117"/><path d="M196 82a91 91 0 1 0 20 66" fill="none" stroke="url(#g)" stroke-width="28" stroke-linecap="round"/><path d="M177 42l45 38-51 24z" fill="url(#g)"/><path d="M105 87l63 41-63 41z" fill="url(#g)"/></svg>');
 });
 
 app.get("/manifest.json", (_req, res) => {
@@ -1821,7 +1819,7 @@ app.get("/manifest.json", (_req, res) => {
     display: "standalone",
     background_color: "#0d1117",
     theme_color: "#0d1117",
-    icons: [{ src: "/icon.png", sizes: "256x256", type: "image/png" }]
+    icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml" }]
   });
 });
 
