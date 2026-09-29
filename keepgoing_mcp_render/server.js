@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.10";
+const APP_VERSION = "1.2.0-beta.11";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -104,7 +104,7 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     try {
       await forwardBillingEvent("stripe", event.type, event.data?.object || {}, null);
     } catch (error) {
-      console.error("stripe_billing_ingest_error", String(error?.message || error));
+      console.error("stripe_billing_ingest_error", safeLogError(error), req.keepgoingRequestId || "");
       return res.status(500).json({ error: "billing_ingest_error" });
     }
   }
@@ -116,7 +116,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
   try {
     await ensurePayPalSetup();
   } catch (error) {
-    console.error("paypal_setup_error", String(error?.message || error));
+    console.error("paypal_setup_error", safeLogError(error), req.keepgoingRequestId || "");
     return res.status(503).send("PayPal setup incomplete");
   }
   if (!paypalConfig.webhook_id) return res.status(503).send("PayPal webhook not configured");
@@ -156,7 +156,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
   });
   const verification = await verify.json().catch(() => ({}));
   if (!verify.ok || verification.verification_status !== "SUCCESS") {
-    console.error("paypal_webhook_verify_failed", verify.status, verification);
+    console.error("paypal_webhook_verify_failed", verify.status, String(verification?.verification_status || "unknown"), req.keepgoingRequestId || "");
     return res.status(400).send("Invalid PayPal webhook signature");
   }
 
@@ -181,7 +181,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
     try {
       await forwardBillingEvent("paypal", event.event_type, event.resource || {}, tier);
     } catch (error) {
-      console.error("paypal_billing_ingest_error", String(error?.message || error));
+      console.error("paypal_billing_ingest_error", safeLogError(error), req.keepgoingRequestId || "");
       return res.status(500).json({ error: "billing_ingest_error" });
     }
   }
@@ -228,6 +228,16 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
 app.set("trust proxy", 1);
+
+app.use((req, res, next) => {
+  const supplied = String(req.headers["x-request-id"] || "").trim();
+  const requestId = /^[A-Za-z0-9._:-]{1,100}$/.test(supplied)
+    ? supplied
+    : crypto.randomUUID();
+  req.keepgoingRequestId = requestId;
+  res.set("X-Request-Id", requestId);
+  next();
+});
 
 const rateWindows = new Map();
 
@@ -1925,7 +1935,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
@@ -2179,13 +2189,16 @@ app.get("/mcp", async (req, res) => {
   res.status(405).json({ error: "Use POST for stateless MCP" });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+let watchdogTimer = null;
+let shuttingDown = false;
+
+const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log("KeepGoing MCP " + (V12_ENABLED ? "v" + APP_VERSION : "v1.1.0") + " listening on " + PORT);
 
   if (V12_ENABLED) {
     try {
       const runtime = getV12Runtime();
-      const watchdogTimer = setInterval(() => {
+      watchdogTimer = setInterval(() => {
         runtime.watchdog.runOnce().catch((error) => {
           console.error("keepgoing_v12_watchdog_error", safeLogError(error));
         });
@@ -2205,3 +2218,39 @@ app.listen(PORT, "0.0.0.0", () => {
       .catch((error) => console.error("PayPal bootstrap failed:", safeLogError(error)));
   }
 });
+
+httpServer.requestTimeout = 90_000;
+httpServer.headersTimeout = 15_000;
+httpServer.keepAliveTimeout = 5_000;
+httpServer.maxRequestsPerSocket = 1_000;
+
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log("keepgoing_shutdown_start", signal);
+
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+
+  const forceExit = setTimeout(() => {
+    console.error("keepgoing_shutdown_forced", signal);
+    process.exit(1);
+  }, 10_000);
+  forceExit.unref();
+
+  httpServer.close((error) => {
+    clearTimeout(forceExit);
+    if (error) {
+      console.error("keepgoing_shutdown_error", safeLogError(error));
+      process.exitCode = 1;
+      return;
+    }
+    console.log("keepgoing_shutdown_complete", signal);
+    process.exitCode = 0;
+  });
+}
+
+process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.once("SIGINT", () => gracefulShutdown("SIGINT"));
