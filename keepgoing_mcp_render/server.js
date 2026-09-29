@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.18";
+const APP_VERSION = "1.2.0-beta.19";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -282,6 +282,7 @@ app.use("/oauth/authorize", rateLimit("oauth-authorize", 30, 15 * 60 * 1000));
 app.use("/oauth/token", rateLimit("oauth-token", 60, 15 * 60 * 1000));
 app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
+app.use("/paypal/start-subscription", rateLimit("paypal-start", 20, 15 * 60 * 1000));
 app.use("/owner/paypal-setup", rateLimit("paypal-bootstrap", 20, 15 * 60 * 1000));
 
 app.use((req, res, next) => {
@@ -684,6 +685,20 @@ async function paypalApi(path, init = {}) {
     throw error;
   }
   return data;
+}
+
+function safePayPalApprovalUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return "";
+    const host = url.hostname.toLowerCase();
+    const allowed = PAYPAL_MODE === "sandbox"
+      ? new Set(["www.sandbox.paypal.com", "www.paypal.com"])
+      : new Set(["www.paypal.com"]);
+    return allowed.has(host) ? url.href : "";
+  } catch {
+    return "";
+  }
 }
 
 function paypalPlanBody(productId, name, description, value) {
