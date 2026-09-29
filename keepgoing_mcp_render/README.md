@@ -1,10 +1,10 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.16` — watchdog-first production durability, official plugin/logo packaging, owner auto-continue, completion semantics and runtime hardening.
+**Current beta:** `1.2.0-beta.18` — watchdog-first production durability, official plugin/logo packaging, owner auto-continue, secure live PayPal bootstrap/restart recovery, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
-v1.2 remains feature-flagged behind `KEEPGOING_V12_ENABLED`. Production currently runs the durable engine in owner-canary mode with the durable store and watchdog live. Public paid rollout should keep canary-only mode until the live watchdog durability drills and a live payment provider are verified. OpenAI webhook delivery is optional for the current Agents-session engine.
+v1.2 remains feature-flagged behind `KEEPGOING_V12_ENABLED`. Production now runs the durable engine beyond owner-canary mode with the durable store and watchdog live. The watchdog durability drills and live PayPal readiness checks have passed. OpenAI webhook delivery remains optional for the current Agents-session engine.
 
 ## What v1.2 changes
 
@@ -181,16 +181,17 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.10 candidate:
+As of the beta.18 candidate:
 - OAuth connection is live and verified with the owner account.
-- Durable engine, durable store and watchdog recovery are live in owner-canary mode.
+- Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
+- Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
 - The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
-- Direct subscription checkout is isolated from the public plugin/listing experience and remains unavailable until live PayPal REST credentials are added to Render.
+- Direct subscription checkout is isolated from the public plugin/listing experience and is live through PayPal in production mode.
+- PayPal credentials are recoverable after restart through protected encrypted storage, and production startup reports PayPal live subscriptions ready.
 - Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
 - The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
+- `/readiness` reports no commercial blockers and `sell_ready: true` when the production dependencies are healthy.
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
-
-Production readiness remains intentionally strict: `sell_ready` stays false until live checkout and non-canary durable rollout are genuinely ready.
 ## Public-plugin commerce boundary
 
 The public ChatGPT plugin/listing experience is informational and authentication-only for existing KeepGoing accounts. It does not initiate a new digital-service subscription or promote an upgrade inside ChatGPT.
