@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.7` — adds checkout-bound PayPal activation claims on top of beta.6 directory-compliance and data-minimization work.
+**Current beta:** `1.2.0-beta.10` — adds bounded upstream timeouts on top of beta.9 OAuth CSP/billing redaction, beta.8 OAuth/trust fixes, beta.7 PayPal claim binding, and beta.6 directory-compliance/data-minimization work.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -95,7 +95,9 @@ The server validates that marker against provider turn state and tool failures; 
 - `/paypal/claim` — PayPal subscription claim
 - `/paypal/webhook` — PayPal webhook
 - `/stripe/webhook` — Stripe webhook
-- `/icon.svg` — hosted KeepGoing brand icon
+- `/icon.svg` — hosted vector KeepGoing brand icon
+- `/icon.png` — hosted 256×256 PNG app/social icon
+- `/.well-known/security.txt` — standard security contact metadata
 - `/manifest.json` — app/web manifest
 - `/privacy` — privacy policy
 - `/terms` — terms of service
@@ -147,6 +149,9 @@ PayPal live checkout:
 - Durable metadata retention is bounded; active jobs are not deleted by retention cleanup.
 - The durable database stores orchestration metadata/hashes rather than raw prompts/model output.
 - Sensitive HTTP responses use no-store caching where appropriate.
+- OAuth authorization pages use a restrictive Content Security Policy and noindex/no-store handling.
+- Upstream PayPal/billing/auth/claim requests have bounded timeouts so provider stalls fail promptly.
+- Customer-facing billing claim failures use generic errors while server logs use sanitized diagnostics.
 - Secrets are redacted from safe watchdog/service errors.
 - PayPal activation-token claims require a browser-generated random claim binding that must match the subscription `custom_id` returned by PayPal.
 
@@ -176,7 +181,7 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.6 candidate:
+As of the beta.10 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live in owner-canary mode.
 - The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.

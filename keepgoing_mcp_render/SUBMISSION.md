@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.8 commercial beta candidate
+Version: 1.2.0-beta.10 commercial beta candidate
 Updated: 29 September 2026
 
 ## Listing
@@ -261,7 +261,7 @@ The v1.1 Responses path remains available while v1.2 is feature-flagged for stag
 
 ## Remaining launch gates
 
-Already completed in the current beta line:
+Already completed in the beta.10 line:
 - Production durable-store schema/state is live and reachable through the protected durable-store path.
 - `KEEPGOING_V12_ENABLED=true` owner-canary deployment is live.
 - OAuth owner connection is verified.
@@ -285,3 +285,14 @@ The optional `context` tool input is capped at 4,000 characters and is explicitl
 ## PayPal claim binding
 
 Direct off-plugin PayPal checkout generates a random browser claim identifier and supplies it as PayPal `custom_id`. The server requires the same value when claiming a subscription and compares it with PayPal’s subscription record before issuing or rotating an activation token. This prevents a PayPal subscription ID by itself from acting as a KeepGoing credential.
+
+## Beta.10 reviewer notes
+
+- OAuth authorization is a minimal existing-account connection screen with no checkout, pricing or upgrade UI.
+- OAuth authorization pages use a restrictive CSP, no-store caching and noindex handling.
+- Direct off-plugin checkout remains isolated at `/subscribe` and is excluded from public plugin navigation/sitemap.
+- PayPal activation requires an ACTIVE subscription plus a matching random checkout-bound `custom_id` claim.
+- Upstream billing/auth/PayPal/claim requests have bounded server-side timeouts.
+- Customer-facing upstream failures are generic; sanitized diagnostics remain in server logs.
+- Hosted app icon for listing/review: `https://keepgoing-mcp.onrender.com/icon.png`.
+- Standard security contact: `https://keepgoing-mcp.onrender.com/.well-known/security.txt`.
