@@ -200,6 +200,13 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
 
 app.post("/openai/webhook", express.text({ type: "application/json", limit: "512kb" }), async (req, res) => {
   if (!V12_ENABLED) return res.status(404).send("Not found");
+  try {
+    if (!openAIWebhookSecret) await ensureOpenAIWebhookSetup();
+  } catch (error) {
+    console.error("keepgoing_openai_webhook_bootstrap_error", safeLogError(error), req.keepgoingRequestId || "");
+    return res.status(503).send("OpenAI webhook not configured");
+  }
+
   let runtime;
   try {
     runtime = getV12Runtime();
@@ -2149,6 +2156,9 @@ app.get("/paypal/status", async (_req, res) => {
 });
 
 app.get("/readiness", async (_req, res) => {
+  if (V12_ENABLED && OPENAI_API_KEY && !openAIWebhookSecret) {
+    try { await ensureOpenAIWebhookSetup(); } catch {}
+  }
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
@@ -2179,14 +2189,14 @@ app.get("/readiness", async (_req, res) => {
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
-    (V12_CANARY_ONLY || OPENAI_WEBHOOK_SECRET)
+    (V12_CANARY_ONLY || openAIWebhookSecret)
   );
   const oauthReady = Boolean(OAUTH_SECRET && OAUTH_CODE_URL);
   const commercialDurableReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
     !V12_CANARY_ONLY &&
-    OPENAI_WEBHOOK_SECRET
+    openAIWebhookSecret
   );
   const commercialBlockers = [];
   if (!engineReady) commercialBlockers.push("openai_api");
@@ -2196,7 +2206,7 @@ app.get("/readiness", async (_req, res) => {
   if (V12_ENABLED && !v12Configured()) commercialBlockers.push("durable_engine");
   if (V12_ENABLED && !durableStoreReady) commercialBlockers.push("durable_store");
   if (V12_ENABLED && V12_CANARY_ONLY) commercialBlockers.push("v12_owner_canary_only");
-  if (V12_ENABLED && !OPENAI_WEBHOOK_SECRET) commercialBlockers.push("openai_webhook");
+  if (V12_ENABLED && !openAIWebhookSecret) commercialBlockers.push("openai_webhook");
 
   const sellReady = Boolean(
     engineReady &&
@@ -2213,7 +2223,7 @@ app.get("/readiness", async (_req, res) => {
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
     durable_store_ready: durableStoreReady,
-    openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
+    openai_webhook_ready: Boolean(V12_ENABLED && openAIWebhookSecret),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
     oauth_ready: oauthReady,
@@ -2235,7 +2245,9 @@ app.get("/health", (_req, res) => {
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),
-    openaiWebhookConfigured: Boolean(OPENAI_WEBHOOK_SECRET),
+    openaiWebhookConfigured: Boolean(openAIWebhookSecret),
+    openaiWebhookManaged: Boolean(openAIWebhookId),
+    openaiWebhookSetupError: Boolean(openAIWebhookSetupError),
     protected: true,
     model: MODEL,
     paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
