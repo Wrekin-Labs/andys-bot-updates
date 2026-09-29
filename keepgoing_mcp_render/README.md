@@ -33,13 +33,12 @@ Once the durable job starts, the server-side webhook/watchdog path advances `STA
 
 ## Customer flow
 
-1. Subscribe to KeepGoing.
-2. Receive a private activation token.
-3. Connect `/mcp` in ChatGPT using OAuth.
-4. Enter the activation token only on the KeepGoing OAuth page.
-5. Start a durable job once.
-6. KeepGoing reuses the same job ID while its server-side watchdog/webhook path advances the work.
-7. Use `list_persistent_jobs` in a later chat to recover active jobs if needed.
+1. Have an existing KeepGoing account and private activation token provisioned outside the ChatGPT plugin experience.
+2. Connect `/mcp` in ChatGPT using OAuth.
+3. Enter the activation token only on the KeepGoing OAuth page.
+4. Start a durable job once.
+5. KeepGoing reuses the same job ID while its server-side watchdog/webhook path advances the work.
+6. Use `list_persistent_jobs` in a later chat to recover active jobs if needed.
 
 Never share an activation token, OAuth token or other account credential.
 
@@ -90,7 +89,8 @@ The server validates that marker against provider turn state and tool failures; 
 - `/readiness` — production readiness, including live durable-store reachability when v1.2 is enabled
 - `/mcp` — protected MCP endpoint
 - `/openai/webhook` — signed OpenAI Agents session webhook receiver (v1.2)
-- `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience\n- `/billing/claim` — Stripe claim endpoint
+- `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience
+- `/billing/claim` — Stripe claim endpoint
 - `/billing/success` — Stripe activation page
 - `/paypal/claim` — PayPal subscription claim
 - `/paypal/webhook` — PayPal webhook
@@ -175,18 +175,16 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of beta.3:
+As of the beta.6 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live in owner-canary mode.
-- CI verification is green on the beta.3 release and branded-homepage hotfix.
-- Product page, hosted icon/manifest, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
-- Automatic subscription-token provisioning is implemented for supported payment providers.
-- Live PayPal checkout is implemented but remains disabled until live PayPal REST credentials are added to Render.
+- The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
+- Direct subscription checkout is isolated from the public plugin/listing experience and remains unavailable until live PayPal REST credentials are added to Render.
+- Automatic subscription-token provisioning and cancellation/suspension revocation are implemented.
 - The signed OpenAI webhook endpoint is implemented but `OPENAI_WEBHOOK_SECRET` is not yet configured; owner canary currently relies on watchdog recovery.
-- Public directory submission/approval, reviewer credentials and final publisher/domain verification are external release steps and must not be reported as completed until actually approved.
+- Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 
-A production readiness response should remain truthful: `checkout_ready` and `sell_ready` stay false until the selected live payment provider is genuinely configured and working.
-
+Production readiness remains intentionally strict: `sell_ready` must stay false until live checkout, signed webhook delivery and non-canary durable rollout are all genuinely ready.
 ## Public-plugin commerce boundary
 
 The public ChatGPT plugin/listing experience is informational and authentication-only for existing KeepGoing accounts. It does not initiate a new digital-service subscription or promote an upgrade inside ChatGPT.
