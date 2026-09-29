@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.14";
+const APP_VERSION = "1.2.0-beta.15";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -42,7 +42,16 @@ const V12_DURABLE_STORE_URL = process.env.KEEPGOING_DURABLE_STORE_URL || (
     : ""
 );
 const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BILLING_INGEST_TOKEN;
-const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
+const OPENAI_WEBHOOK_SECRET_ENV = process.env.OPENAI_WEBHOOK_SECRET || "";
+let openAIWebhookSecret = OPENAI_WEBHOOK_SECRET_ENV;
+let openAIWebhookId = "";
+let openAIWebhookSetupPromise = null;
+let openAIWebhookSetupError = "";
+const OPENAI_WEBHOOK_EVENTS = [
+  "agent.session.idle",
+  "agent.session.action_required",
+  "agent.session.failed"
+];
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
