@@ -5,7 +5,7 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
-assert.match(source, /APP_VERSION = "1\\.2\\.0-beta\\.4"/);
+assert.match(source, /APP_VERSION = "1\.2\.0-beta\.4"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/manifest\.json"/);
 assert.match(source, /app\.get\("\/refunds"/);
