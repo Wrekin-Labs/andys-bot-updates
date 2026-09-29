@@ -117,6 +117,8 @@ async function startJob(kg, beforeCreateSession = null) {
   const jobId = await startJob(kg, async () => { quotaReservations++; });
 
   assert.equal(engine.creates, 1);
+  assert.equal(engine.startIdempotencyKeys.length, 1);
+  assert.match(engine.startIdempotencyKeys[0], /^kg-start-kgj_/);
   assert.equal(quotaReservations, 1);
 
   const [a, b] = await Promise.all([kg.reconcile(jobId), kg.reconcile(jobId)]);
