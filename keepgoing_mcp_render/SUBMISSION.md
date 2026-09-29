@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.3 commercial beta candidate  
+Version: 1.2.0-beta.6 commercial beta candidate
 Updated: 29 September 2026
 
 ## Listing
@@ -39,8 +39,13 @@ https://keepgoing-mcp.onrender.com/.well-known/oauth-authorization-server
 Scope:
 `keepgoing.jobs`
 
-Customers authenticate with a KeepGoing activation token issued after an active subscription is claimed. The activation token is entered only on KeepGoing’s OAuth page. ChatGPT receives short-lived OAuth credentials; the activation token is not embedded in the MCP endpoint URL.
+Existing KeepGoing account holders authenticate with a private activation token on KeepGoing’s OAuth page. ChatGPT receives short-lived OAuth credentials; the activation token is not embedded in the MCP endpoint URL. The public plugin does not initiate or promote new digital-service subscriptions.
 
+## Commerce boundary
+
+KeepGoing's public ChatGPT plugin experience is informational/authentication-only for existing accounts. Tool descriptions, starter prompts, OAuth pages, install pages and public listing pages do not initiate checkout, link to a transactional upgrade, or ask ChatGPT to sell a digital subscription.
+
+A separate direct web route `/subscribe` exists for intentional off-plugin paid-beta sales. It is unlinked from the public plugin/listing experience, excluded from the sitemap, disallowed in robots.txt and served with no-store/noindex handling.
 ## Tools
 
 ### continue_until_done — “Continue until done”
@@ -227,11 +232,11 @@ Never expose an activation token, OAuth token, API key, Supabase service key or 
 
 ## Reviewer account
 
-Create a dedicated reviewer subscription/account before submission.
+Create a dedicated pre-provisioned reviewer account before submission. Reviewers must not need to purchase a subscription through ChatGPT.
 
 Requirements:
 - No MFA/SMS/private-network dependency for reviewer access unless the review process explicitly supports it.
-- Disposable reviewer activation credential.
+- Disposable reviewer activation credential for an already-provisioned reviewer account.
 - Enough quota for the submitted tests plus reasonable retries.
 - Reviewer can use only its own jobs.
 - Rotate/revoke the credential after review if no longer required.
@@ -273,3 +278,7 @@ External/manual gates still required before broad public sale:
 - Upload the 256×256 KeepGoing PNG icon to the ChatGPT app listing if the listing UI does not consume the hosted icon automatically.
 - Record the reviewer demo and run the submission portal tool scan.
 - Submit to the public directory only after the above external gates are actually complete; directory approval must not be claimed in advance.
+
+## Data minimization note for review
+
+The optional `context` tool input is capped at 4,000 characters and is explicitly described as a brief task-specific checkpoint only. It must not contain full conversation history, raw transcripts, credentials or unrelated personal data. The server truncates the checkpoint to the same 4,000-character bound before building a provider prompt.
