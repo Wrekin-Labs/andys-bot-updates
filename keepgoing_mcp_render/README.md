@@ -1,6 +1,6 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.18` — watchdog-first production durability, official plugin/logo packaging, owner auto-continue, secure live PayPal bootstrap/restart recovery, completion semantics and runtime hardening.
+**Current beta:** `1.2.0-beta.19` — watchdog-first production durability, official plugin/logo packaging, owner auto-continue, secure live PayPal checkout/restart recovery, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -92,7 +92,9 @@ The server validates that marker against provider turn state and tool failures; 
 - `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience
 - `/billing/claim` — Stripe claim endpoint
 - `/billing/success` — Stripe activation page
-- `/paypal/claim` — PayPal subscription claim
+- `/paypal/start-subscription` — server-side PayPal subscription creation and approval redirect
+- `/paypal/return` — validated PayPal approval return route
+- `/paypal/claim` — PayPal subscription activation claim
 - `/paypal/webhook` — PayPal webhook
 - `/stripe/webhook` — Stripe webhook
 - `/icon.svg` — hosted vector KeepGoing brand icon
@@ -153,7 +155,7 @@ PayPal live checkout:
 - Upstream PayPal/billing/auth/claim requests have bounded timeouts so provider stalls fail promptly.
 - Customer-facing billing claim failures use generic errors while server logs use sanitized diagnostics.
 - Secrets are redacted from safe watchdog/service errors.
-- PayPal activation-token claims require a browser-generated random claim binding that must match the subscription `custom_id` returned by PayPal.
+- PayPal activation-token claims require a server-generated random claim binding that must match the subscription `custom_id` returned by PayPal.
 
 ## Release check
 
@@ -181,12 +183,12 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.18 candidate:
+As of the beta.19 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
 - The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
-- Direct subscription checkout is isolated from the public plugin/listing experience and is live through PayPal in production mode.
+- Direct subscription checkout is isolated from the public plugin/listing experience and is live through PayPal in production mode. Beta.19 uses a server-side PayPal approval redirect so checkout does not depend on embedded PayPal button rendering.
 - PayPal credentials are recoverable after restart through protected encrypted storage, and production startup reports PayPal live subscriptions ready.
 - Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
 - The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
