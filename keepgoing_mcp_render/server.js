@@ -2317,8 +2317,18 @@ let shuttingDown = false;
 
 const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log("KeepGoing MCP " + (V12_ENABLED ? "v" + APP_VERSION : "v1.1.0") + " listening on " + PORT);
+  void bootstrapRuntime();
+});
 
+async function bootstrapRuntime() {
   if (V12_ENABLED) {
+    try {
+      await ensureOpenAIWebhookSetup();
+      console.log("KeepGoing OpenAI webhook ready", openAIWebhookId ? "managed" : "env");
+    } catch (error) {
+      console.error("keepgoing_openai_webhook_setup_error", safeLogError(error));
+    }
+
     try {
       const runtime = getV12Runtime();
       watchdogTimer = setInterval(() => {
@@ -2336,11 +2346,14 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   }
 
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
-    ensurePayPalSetup()
-      .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
-      .catch((error) => console.error("PayPal bootstrap failed:", safeLogError(error)));
+    try {
+      await ensurePayPalSetup();
+      console.log("PayPal " + PAYPAL_MODE + " subscriptions ready");
+    } catch (error) {
+      console.error("PayPal bootstrap failed:", safeLogError(error));
+    }
   }
-});
+}
 
 httpServer.requestTimeout = 90_000;
 httpServer.headersTimeout = 15_000;
