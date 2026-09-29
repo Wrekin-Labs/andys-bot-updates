@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.12";
+const APP_VERSION = "1.2.0-beta.13";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -1027,13 +1027,23 @@ async function resumePersistentJobCompat(jobId, input, access) {
 
 function createMcpServer(access = {}) {
   const v12Access = v12ForAccess(access);
+  const ownerAutoContinue = Boolean(access?.admin || access?.tier === "owner");
   const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
   const oauthMeta = { securitySchemes: oauthSecuritySchemes };
+
+  const publicV12Instructions = "Use KeepGoing when the user explicitly asks to use KeepGoing for a substantial objective or explicitly asks KeepGoing to continue or finish an existing objective. Prefer continue_until_done for that explicit KeepGoing intent. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
+  const ownerV12Instructions = "OWNER MODE: Treat plain continuation phrases such as continue, keep going, finish it, until done, don't stop, carry on, or equivalent as KeepGoing intent when they refer to the current substantial objective. Prefer continue_until_done for those phrases even when the user does not repeat the word KeepGoing. Preserve and reuse the same durable job where possible; never create duplicates just to continue. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
+  const startToolDescription = ownerAutoContinue
+    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
+    : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
+  const continueToolDescription = ownerAutoContinue
+    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. Reuse the same job where possible."
+    : "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data.";
 
   const server = new McpServer(
     { name: "KeepGoing", version: v12Access ? APP_VERSION : "1.1.0" },
     { instructions: v12Access
-      ? "Use KeepGoing when the user explicitly asks to use KeepGoing for a substantial objective or explicitly asks KeepGoing to continue or finish an existing objective. Prefer continue_until_done for that explicit KeepGoing intent. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
+      ? (ownerAutoContinue ? ownerV12Instructions : publicV12Instructions)
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -1068,7 +1078,7 @@ function createMcpServer(access = {}) {
 
   server.registerTool("start_persistent_job", {
     title: "Start persistent job",
-    description: "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.",
+    description: startToolDescription,
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
@@ -1098,7 +1108,7 @@ function createMcpServer(access = {}) {
 
   server.registerTool("continue_until_done", {
     title: "Continue until done",
-    description: "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data.",
+    description: continueToolDescription,
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
@@ -1265,7 +1275,7 @@ function createMcpServer(access = {}) {
       {
         name: "start_persistent_job",
         title: "Start persistent job",
-        description: "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.",
+        description: startToolDescription,
         inputSchema: {
           type: "object",
           properties: {
@@ -1297,7 +1307,7 @@ function createMcpServer(access = {}) {
       {
         name: "continue_until_done",
         title: "Continue until done",
-        description: "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Reuse one durable job until completion or a genuine required-user-input, cancellation, or safety/cost stop. If needed, pass only a brief task-specific checkpoint necessary for that objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data.",
+        description: continueToolDescription,
         inputSchema: {
           type: "object",
           properties: {
@@ -1935,7 +1945,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
   ].join("")));
