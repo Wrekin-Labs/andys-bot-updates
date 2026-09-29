@@ -18,11 +18,15 @@ $Files=@(
   'correlation_risk_governor.py',
   'edge_drift_monitor.py',
   'selection_bias_guard.py',
+  'tail_risk_guard.py',
+  'regime_promotion_guard.py',
+  'research_promotion_bundle.py',
   'r76_shadow_overlay.py',
   'live_tca_daemon.py',
   'self_test.py',
   'self_test_extended.py',
   'self_test_selection_bias.py',
+  'self_test_tail_regime.py',
   'start_r76_shadow.ps1'
 )
 
@@ -57,6 +61,8 @@ try {
     if($LASTEXITCODE -ne 0){ throw 'R7.6 extended self-test failed' }
     & $Py .\self_test_selection_bias.py
     if($LASTEXITCODE -ne 0){ throw 'R7.6 selection-bias self-test failed' }
+    & $Py .\self_test_tail_regime.py
+    if($LASTEXITCODE -ne 0){ throw 'R7.6 tail/regime self-test failed' }
   } finally {
     Pop-Location
   }
