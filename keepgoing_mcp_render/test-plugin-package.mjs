@@ -9,9 +9,13 @@ const mcp = JSON.parse(readFileSync(resolve(here, "mcp.json"), "utf8"));
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
 assert.equal(plugin.name, "keepgoing");
-assert.equal(plugin.version, "1.2.0-beta.20");
+assert.equal(plugin.version, "1.2.0-beta.21");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.displayName, "KeepGoing");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.category, "Productivity");
+assert.ok(plugin.extensions?.["com.openai"]?.interface?.shortDescription.length <= 30);
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.supportURL, "https://keepgoing-mcp.onrender.com/support");
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColor, "#008C82");
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColorDark, "#27F3DF");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.composerIcon, "./assets/keepgoing-icon.png");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.logo, "./assets/keepgoing-icon.png");
 assert.ok(existsSync(resolve(here, "assets/keepgoing-icon.png")));
