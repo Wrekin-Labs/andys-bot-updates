@@ -213,6 +213,101 @@ await assert.rejects(
   /valid turn id/
 );
 
+const artifactCalls = [];
+const artifactEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (url, init) => {
+    artifactCalls.push({ url, init });
+    if (url.endsWith("/artifacts?order=desc&limit=10")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            data: [{
+              id: "artifact_patch",
+              path: "/workspace/outputs/change.patch",
+              size_bytes: 12,
+              turn_id: "turn_code"
+            }]
+          };
+        }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_patch")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "artifact_patch",
+            path: "/workspace/outputs/change.patch",
+            size_bytes: 12,
+            turn_id: "turn_code"
+          };
+        }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_patch/content")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() { return "patch text\n"; }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_bin")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "artifact_bin",
+            path: "/workspace/outputs/build.zip",
+            size_bytes: 10,
+            turn_id: "turn_code"
+          };
+        }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_big")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "artifact_big",
+            path: "/workspace/outputs/huge.log",
+            size_bytes: 900000,
+            turn_id: "turn_code"
+          };
+        }
+      };
+    }
+    return { ok: false, status: 404, async json() { return {}; }, async text() { return ""; } };
+  }
+});
+const artifacts = await artifactEngine.listArtifacts("sess_abc", { limit: 10 });
+assert.equal(artifacts.data[0].id, "artifact_patch");
+const artifactText = await artifactEngine.readArtifactText("sess_abc", "artifact_patch");
+assert.equal(artifactText.text, "patch text\n");
+assert.equal(artifactText.artifact.path, "/workspace/outputs/change.patch");
+assert.equal(
+  artifactCalls.at(-1).init.headers.Accept,
+  "application/octet-stream"
+);
+await assert.rejects(
+  () => artifactEngine.readArtifactText("sess_abc", "artifact_bin"),
+  /not readable as text/
+);
+await assert.rejects(
+  () => artifactEngine.readArtifactText("sess_abc", "artifact_big"),
+  /size limit/
+);
+await assert.rejects(
+  () => artifactEngine.readArtifactText("sess_abc", "../bad"),
+  /valid artifact id/
+);
+
 const recoveryCalls = [];
 const recoveryEngine = createAgentsEngine({
   apiKey: "test-key",
