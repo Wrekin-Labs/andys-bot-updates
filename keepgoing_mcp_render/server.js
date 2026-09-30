@@ -11,6 +11,7 @@ import { createOpenAIWebhookVerifier, createWebhookProcessor } from "./webhook_p
 import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
 import { createToolProfileRegistry } from "./tool_profiles.js";
+import { createGithubWorker, createGithubWorkerMcpServer, normaliseRepoList } from "./github_worker.js";
 
 const app = express();
 
@@ -42,6 +43,11 @@ const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BIL
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
 const TOOL_PROFILES_JSON = process.env.KEEPGOING_TOOL_PROFILES_JSON || "";
+const WORKER_MCP_SECRET = process.env.KEEPGOING_WORKER_MCP_SECRET || "";
+const WORKER_MCP_URL = (process.env.KEEPGOING_WORKER_MCP_URL || (PUBLIC_BASE_URL + "/worker-mcp")).replace(/\/$/, "");
+const GITHUB_WORKER_TOKEN = process.env.KEEPGOING_GITHUB_TOKEN || "";
+const GITHUB_WORKER_REPOS = process.env.KEEPGOING_GITHUB_REPOS || "";
+const GITHUB_WORKER_BRANCH_PREFIX = process.env.KEEPGOING_GITHUB_BRANCH_PREFIX || "keepgoing/";
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -295,6 +301,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
 
 let v12RuntimeCache = null;
+let githubWorkerCache = null;
 
 function v12Configured() {
   const directStoreReady = Boolean(V12_SUPABASE_URL && V12_SUPABASE_SERVICE_KEY);
@@ -312,6 +319,94 @@ function v12ForAccess(access) {
   return Boolean(access?.admin || access?.tier === "owner");
 }
 
+function githubWorkerConfigured() {
+  if (!WORKER_MCP_SECRET || !GITHUB_WORKER_TOKEN) return false;
+  try {
+    return normaliseRepoList(GITHUB_WORKER_REPOS).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function getGithubWorker() {
+  if (githubWorkerCache) return githubWorkerCache;
+  if (!githubWorkerConfigured()) throw new Error("KeepGoing GitHub worker is not configured");
+  githubWorkerCache = createGithubWorker({
+    token: GITHUB_WORKER_TOKEN,
+    repositories: GITHUB_WORKER_REPOS,
+    branchPrefix: GITHUB_WORKER_BRANCH_PREFIX
+  });
+  return githubWorkerCache;
+}
+
+function builtInToolProfiles() {
+  if (!githubWorkerConfigured()) return {};
+  const readTools = [
+    "github_list_repositories",
+    "github_get_repository",
+    "github_list_path",
+    "github_get_file",
+    "github_search_code",
+    "github_compare"
+  ];
+  const writeTools = [
+    ...readTools,
+    "github_create_branch",
+    "github_put_file",
+    "github_open_pull_request"
+  ];
+
+  return {
+    "github-read": {
+      description: "Owner-only GitHub read/search access for allowlisted repositories.",
+      ownerOnly: true,
+      writeCapable: false,
+      allowWeb: true,
+      maxToolCalls: 20,
+      servers: [{
+        server_label: "github_worker",
+        server_url: WORKER_MCP_URL,
+        authorization_env: "KEEPGOING_INTERNAL_WORKER_AUTHORIZATION",
+        allowed_tools: readTools,
+        required: true
+      }]
+    },
+    "github-write": {
+      description: "Owner-only GitHub development access. Writes are restricted to KeepGoing-safe branches and pull requests.",
+      ownerOnly: true,
+      writeCapable: true,
+      allowWeb: true,
+      maxToolCalls: 40,
+      servers: [{
+        server_label: "github_worker",
+        server_url: WORKER_MCP_URL,
+        authorization_env: "KEEPGOING_INTERNAL_WORKER_AUTHORIZATION",
+        allowed_tools: writeTools,
+        required: true
+      }]
+    }
+  };
+}
+
+function workerProfileEnv() {
+  return {
+    ...process.env,
+    KEEPGOING_INTERNAL_WORKER_AUTHORIZATION: WORKER_MCP_SECRET
+      ? "Bearer " + WORKER_MCP_SECRET
+      : ""
+  };
+}
+
+function workerAuthorised(req) {
+  if (!WORKER_MCP_SECRET) return false;
+  const auth = String(req.get("authorization") || "");
+  const expected = "Bearer " + WORKER_MCP_SECRET;
+  const a = Buffer.from(auth);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+
 function getV12Runtime() {
   if (v12RuntimeCache) return v12RuntimeCache;
   if (!v12Configured()) throw new Error("KeepGoing v1.2 durable engine is not configured");
@@ -328,7 +423,8 @@ function getV12Runtime() {
   });
   const toolProfiles = createToolProfileRegistry({
     rawJson: TOOL_PROFILES_JSON,
-    env: process.env
+    extraProfiles: builtInToolProfiles(),
+    env: workerProfileEnv()
   });
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
   const service = createV12Service({
