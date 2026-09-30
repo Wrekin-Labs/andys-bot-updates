@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - keepgoing-v1.2-durable-agent
+      - keepgoing-v1.2-commercial-beta23
     paths:
       - "keepgoing_mcp_render/**"
       - ".github/workflows/keepgoing-v1.2-ci.yml"
