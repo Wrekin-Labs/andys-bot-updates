@@ -228,6 +228,87 @@ export function createAgentsEngine({
     );
   }
 
+  async function listArtifacts(sessionId, {
+    order = "desc",
+    limit = 50,
+    after = null
+  } = {}) {
+    requireSessionId(sessionId);
+    const safeOrder = order === "asc" ? "asc" : "desc";
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+    const query = new URLSearchParams({
+      order: safeOrder,
+      limit: String(safeLimit)
+    });
+    if (after) query.set("after", String(after));
+
+    return request(
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/artifacts?" + query.toString(),
+      { method: "GET" }
+    );
+  }
+
+  async function readArtifactText(sessionId, artifactId, {
+    maxBytes = 512_000
+  } = {}) {
+    requireSessionId(sessionId);
+    const id = String(artifactId || "").trim();
+    if (!/^artifact_[A-Za-z0-9_-]+$/.test(id)) {
+      throw new Error("valid artifact id required");
+    }
+
+    const metadata = await request(
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/artifacts/" + encodeURIComponent(id),
+      { method: "GET" }
+    );
+
+    const path = String(metadata?.path || "");
+    if (!isReadableTextArtifactPath(path)) {
+      throw new Error("artifact type is not readable as text");
+    }
+
+    const size = Number(metadata?.size_bytes || 0);
+    const safeMax = Math.max(1, Math.min(1_000_000, Number(maxBytes) || 512_000));
+    if (!Number.isFinite(size) || size < 0 || size > safeMax) {
+      throw new Error("artifact exceeds the readable text size limit");
+    }
+
+    const response = await fetchImpl(
+      baseUrl +
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/artifacts/" + encodeURIComponent(id) + "/content",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer " + apiKey,
+          "OpenAI-Beta": "agents=v1",
+          Accept: "application/octet-stream"
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => "");
+      const error = new Error(
+        message || ("Artifact content request failed (" + response.status + ")")
+      );
+      error.status = response.status;
+      throw error;
+    }
+
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > safeMax) {
+      throw new Error("artifact exceeds the readable text size limit");
+    }
+
+    return {
+      artifact: metadata,
+      text
+    };
+  }
+
   async function sendMessage(sessionId, text, idempotencyKey = null) {
     requireSessionId(sessionId);
     const value = String(text || "").trim();
@@ -260,7 +341,7 @@ export function createAgentsEngine({
     });
   }
 
-  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurnItems, listTurns, sendMessage, cancelTurn };
+  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurnItems, listTurns, listArtifacts, readArtifactText, sendMessage, cancelTurn };
 }
 
 export function latestSessionText(itemsResponse) {
@@ -493,6 +574,22 @@ function normaliseGitRef(value) {
 
 function shellQuote(value) {
   return "'" + String(value).replace(/'/g, "'\"'\"'") + "'";
+}
+
+function isReadableTextArtifactPath(path) {
+  const value = String(path || "").toLowerCase();
+  return (
+    value.endsWith(".patch") ||
+    value.endsWith(".diff") ||
+    value.endsWith(".md") ||
+    value.endsWith(".txt") ||
+    value.endsWith(".json") ||
+    value.endsWith(".log") ||
+    value.endsWith(".csv") ||
+    value.endsWith(".xml") ||
+    value.endsWith(".yaml") ||
+    value.endsWith(".yml")
+  );
 }
 
 function collection(response) {
