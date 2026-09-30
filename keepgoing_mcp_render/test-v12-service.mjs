@@ -359,6 +359,86 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   );
 }
 
+// Coding artifacts are job-owner scoped and only /workspace/outputs is exposed.
+{
+  const artifactStore = new MemoryJobStore();
+  const artifactEngine = {
+    async listArtifacts() {
+      return {
+        data: [
+          {
+            id: "artifact_patch",
+            path: "/workspace/outputs/fix.patch",
+            size_bytes: 123,
+            turn_id: "turn_artifact"
+          },
+          {
+            id: "artifact_internal",
+            path: "/workspace/project/.env",
+            size_bytes: 20,
+            turn_id: "turn_artifact"
+          }
+        ]
+      };
+    },
+    async readArtifactText(_sessionId, artifactId) {
+      return {
+        artifact: {
+          id: artifactId,
+          path: "/workspace/outputs/fix.patch",
+          size_bytes: 123
+        },
+        text: "diff --git a/a b/a\n"
+      };
+    }
+  };
+  const artifactOrchestrator = {
+    async cancel() { throw new Error("not used"); }
+  };
+  const artifactService = createV12Service({
+    engine: artifactEngine,
+    store: artifactStore,
+    orchestrator: artifactOrchestrator
+  });
+  const artifactJob = newJobRecord({
+    id: "kgj_33333333333333333333333333333333",
+    ownerSubjectHash: "artifact-owner",
+    now: 40_000
+  });
+  artifactJob.status = JOB_STATES.COMPLETED;
+  artifactJob.providerSessionId = "sess_artifacts";
+  await artifactStore.createOrGet({
+    job: artifactJob,
+    ownerSubjectHash: artifactJob.ownerSubjectHash
+  });
+
+  const listedArtifacts = await artifactService.artifacts(
+    artifactJob.id,
+    "artifact-owner",
+    false,
+    50
+  );
+  assert.equal(listedArtifacts.artifacts.length, 1);
+  assert.equal(listedArtifacts.artifacts[0].artifact_id, "artifact_patch");
+  assert.equal(listedArtifacts.artifacts[0].path, "/workspace/outputs/fix.patch");
+
+  const readArtifact = await artifactService.readArtifact(
+    artifactJob.id,
+    "artifact_patch",
+    "artifact-owner"
+  );
+  assert.match(readArtifact.text, /^diff --git/);
+
+  await assert.rejects(
+    () => artifactService.artifacts(artifactJob.id, "other-owner"),
+    /not found/i
+  );
+  await assert.rejects(
+    () => artifactService.readArtifact(artifactJob.id, "artifact_patch", "other-owner"),
+    /not found/i
+  );
+}
+
 const proCodingLimits = planLimits("pro", true, true);
 assert.equal(proCodingLimits.max_wall_seconds, 30 * 60);
 assert.equal(proCodingLimits.max_total_tool_calls, 3);
