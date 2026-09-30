@@ -30,6 +30,9 @@ export function newJobRecord({
   definitionHash,
   ownerSubjectHash,
   engine = "responses",
+  toolProfileName = "web",
+  toolPolicyHash = null,
+  toolWriteCapable = false,
   now = Date.now(),
   limits = {}
 }) {
@@ -41,6 +44,9 @@ export function newJobRecord({
     goalHash: goalHash || null,
     definitionHash: definitionHash || null,
     engine,
+    toolProfileName: String(toolProfileName || "web").slice(0, 64),
+    toolPolicyHash: toolPolicyHash ? String(toolPolicyHash).slice(0, 64) : null,
+    toolWriteCapable: Boolean(toolWriteCapable),
     status: JOB_STATES.QUEUED,
     attempt: 0,
     maxAttempts: normalised.maxAttempts,
