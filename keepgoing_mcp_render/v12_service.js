@@ -37,10 +37,11 @@ export function createV12Service({
     codingWorkspace = false,
     repositoryUrl = null,
     repositoryRef = null,
+    workspaceFiles = [],
     beforeCreateSession = null
   }) {
-    if ((repositoryUrl || repositoryRef) && !codingWorkspace) {
-      throw new Error("repositoryUrl/repositoryRef require codingWorkspace=true");
+    if ((repositoryUrl || repositoryRef || (workspaceFiles?.length || 0) > 0) && !codingWorkspace) {
+      throw new Error("repositoryUrl/repositoryRef/workspaceFiles require codingWorkspace=true");
     }
 
     // Validate workspace configuration before durable reservation/quota use.
@@ -48,7 +49,8 @@ export function createV12Service({
       ? normaliseCodingWorkspace({
           enabled: true,
           repositoryUrl,
-          repositoryRef
+          repositoryRef,
+          files: workspaceFiles
         })
       : null;
 
