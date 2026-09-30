@@ -2174,6 +2174,27 @@ app.get("/", async (_req, res) => {
 });
 
 
+app.get("/plugin", (_req, res) => {
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>KeepGoing — Durable AI work in ChatGPT</title>' +
+    '<meta name="description" content="KeepGoing lets supported AI work continue as one durable job across model turns, with recovery, bounded tools and explicit user stops.">' +
+    '<style>body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090D18;color:#F7F8FC;margin:0;padding:32px;line-height:1.55}.wrap{max-width:980px;margin:auto}.hero{padding:36px 0 22px}.eyebrow{color:#A99FFF;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px}.hero h1{font-size:clamp(38px,7vw,68px);line-height:1.02;margin:12px 0 18px;letter-spacing:-.04em;max-width:820px}.lead{font-size:clamp(18px,2.6vw,24px);color:#B7BED0;max-width:760px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:28px 0}.card{background:#111827;border:1px solid #27324A;border-radius:20px;padding:22px}.card h2{font-size:18px;margin:0 0 8px}.card p{margin:0;color:#AEB7CC}.flow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:24px 0}.step{background:#151C30;border:1px solid #2E3A58;border-radius:999px;padding:10px 14px;color:#DDE3F0}.arrow{color:#7567FF;font-weight:800}.notice{border-left:4px solid #7567FF;background:#11172A;padding:16px 18px;border-radius:12px;margin:28px 0;color:#C9D1E3}.links{display:flex;flex-wrap:wrap;gap:14px;margin-top:30px}.links a{color:#C2BBFF;text-decoration:none}.links a:hover{text-decoration:underline}.mark{display:inline-grid;place-items:center;width:52px;height:52px;border-radius:16px;background:#151C30;border:1px solid #33415F;margin-right:12px;vertical-align:middle}.mark svg{width:34px;height:34px}.foot{color:#7F8AA3;font-size:14px;margin-top:34px}</style></head><body><main class="wrap">' +
+    '<section class="hero"><div class="eyebrow">ChatGPT productivity plugin</div>' +
+    '<h1><span class="mark"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M13 32c0-10.5 8.5-19 19-19h7" fill="none" stroke="#7567FF" stroke-width="6" stroke-linecap="round"/><path d="M51 32c0 10.5-8.5 19-19 19h-7" fill="none" stroke="#27D3B2" stroke-width="6" stroke-linecap="round"/><path d="M37 7l9 6-9 6M27 57l-9-6 9-6" fill="none" stroke="#F7F8FC" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>KeepGoing</h1>' +
+    '<p class="lead">Turn substantial supported work into one durable job that can survive normal chat-turn boundaries, continue partial work safely, and be recovered later without starting over.</p></section>' +
+    '<div class="flow"><span class="step">Start once</span><span class="arrow">→</span><span class="step">Work across turns</span><span class="arrow">→</span><span class="step">Recover the same job</span><span class="arrow">→</span><span class="step">Stop only when done or genuinely blocked</span></div>' +
+    '<section class="grid"><article class="card"><h2>Durable by design</h2><p>Stable job IDs, server-side recovery, idempotent continuations and bounded retry logic.</p></article>' +
+    '<article class="card"><h2>Tool-aware</h2><p>Jobs can use explicitly approved web or MCP tool profiles. Tool access is allowlisted and budgeted.</p></article>' +
+    '<article class="card"><h2>Recoverable</h2><p>List active jobs in a later chat, inspect the latest result, resume requested input, or cancel cleanly.</p></article>' +
+    '<article class="card"><h2>Permission-scoped</h2><p>KeepGoing does not inherit every connector in your chat. Private tools require explicit server-side configuration and normal authorization.</p></article></section>' +
+    '<div class="notice"><strong>Existing accounts:</strong> connect KeepGoing through the ChatGPT Plugins Directory and sign in when prompted. This plugin page does not sell plans or initiate checkout.</div>' +
+    '<div class="links"><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a></div>' +
+    '<p class="foot">KeepGoing can advance its durable server job after a foreground chat turn ends, but it cannot independently force a new ChatGPT message to appear. Return to the same job to retrieve its latest result.</p>' +
+    '</main></body></html>';
+  res.type("html").send(html);
+});
+
+
 function infoPage(title, body) {
   return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#58a6ff}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/">← KeepGoing</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
 }
