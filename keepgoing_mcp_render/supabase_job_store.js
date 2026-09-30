@@ -43,7 +43,10 @@ export class SupabaseJobStore {
         p_token_budget_total: job.tokenBudgetTotal,
         p_tool_call_budget_total: job.toolCallBudgetTotal,
         p_wall_deadline_at: toIso(job.wallDeadlineAt),
-        p_start_lease_until: toIso(job.startLeaseUntil)
+        p_start_lease_until: toIso(job.startLeaseUntil),
+        p_tool_profile: job.toolProfileName || "web",
+        p_tool_policy_hash: job.toolPolicyHash || null,
+        p_tool_write_capable: Boolean(job.toolWriteCapable)
       })
     });
     const row = Array.isArray(rows) ? rows[0] : rows;
@@ -211,6 +214,9 @@ export class SupabaseJobStore {
 function toPatchRow(job, version) {
   return compact({
     engine: job.engine,
+    tool_profile: job.toolProfileName,
+    tool_policy_hash: job.toolPolicyHash,
+    tool_write_capable: job.toolWriteCapable,
     provider_session_id: job.providerSessionId,
     status: job.status,
     version,
@@ -244,6 +250,9 @@ function fromRow(row) {
     id: row.job_id,
     ownerSubjectHash: row.owner_subject_hash,
     engine: row.engine,
+    toolProfileName: row.tool_profile || "web",
+    toolPolicyHash: row.tool_policy_hash || null,
+    toolWriteCapable: Boolean(row.tool_write_capable),
     providerSessionId: row.provider_session_id,
     status: row.status,
     version: Number(row.version),
