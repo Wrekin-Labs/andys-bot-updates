@@ -228,7 +228,7 @@ app.post("/openai/webhook", express.text({ type: "application/json", limit: "512
   }
 });
 
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "384kb" }));
 app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
 app.set("trust proxy", 1);
