@@ -23,6 +23,9 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb = true,
+    mcpTools = [],
+    toolProfileName = "web",
+    toolPolicyHash = "",
     reasoningEffort = "medium",
     ownerSubjectHash,
     clientRequestId = null,
@@ -78,11 +81,14 @@ export class KeepGoingOrchestrator {
         prompt: initialPrompt,
         instructions,
         allowWeb,
+        mcpTools,
         reasoningEffort,
         metadata: {
           keepgoing: "v1.2",
           keepgoing_job_id: jobId,
-          request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined
+          request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined,
+          tool_profile: String(toolProfileName || "web").slice(0, 64),
+          tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined
         }
       });
     } catch (error) {
