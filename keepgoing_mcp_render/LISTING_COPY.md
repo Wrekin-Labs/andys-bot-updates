@@ -1,6 +1,6 @@
 # KeepGoing — Final Plugin Listing Copy
 
-Release candidate: `1.3.0-beta.23`
+Release candidate: `1.4.0-beta.24`
 
 ## Logo
 
@@ -39,7 +39,7 @@ It turns a substantial objective into one durable job with its own stable job ID
 
 KeepGoing is useful for longer research, comparisons, debugging, structured build work, and other multi-step tasks where continuity matters.
 
-For coding jobs, an opt-in coding workspace can clone a **public GitHub repository** into an isolated hosted sandbox. The durable Agent can then inspect the real files, edit locally, run tests and produce a patch/report instead of being limited to prompt context. This first coding mode does not receive GitHub write credentials, does not access private repositories, and does not push changes.
+For coding jobs, an opt-in coding workspace can clone a **public GitHub repository** into an isolated hosted sandbox. Beta.24 can also overlay a small set of explicitly selected task-relevant text files that are not yet in the repository. The durable Agent can then inspect the real files, edit locally, run tests and produce a patch/report instead of being limited to prompt context. This first coding mode does not receive GitHub write credentials, does not access private repositories, and does not push changes.
 
 The service includes bounded continuation limits, duplicate-job protection, recovery after transient service failures, owner-scoped job access, OAuth authentication, and a server-side watchdog that can keep supported work progressing within configured safety and cost limits.
 
