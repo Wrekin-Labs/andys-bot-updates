@@ -325,10 +325,27 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   assert.deepEqual(createdOptions.workspace, {
     enabled: true,
     repositoryUrl: "https://github.com/chipblock2/project-relay.git",
-    repositoryRef: "main"
+    repositoryRef: "main",
+    files: []
   });
   assert.match(createdOptions.instructions, /\/workspace\/project/);
   assert.match(createdOptions.instructions, /Do not attempt to push to GitHub/);
+
+  const localFileJob = await codeService.start({
+    goal: "work with selected local file",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code-files",
+    codingWorkspace: true,
+    workspaceFiles: [{
+      path: "src/local-only.js",
+      content: "export const localOnly = 1;\n"
+    }]
+  });
+  assert.equal(localFileJob.status, JOB_STATES.WORKING);
+  assert.deepEqual(createdOptions.workspace.files, [{
+    path: "src/local-only.js",
+    content: "export const localOnly = 1;\n"
+  }]);
 
   await assert.rejects(
     () => codeService.start({
@@ -355,6 +372,24 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   assert.equal(invalidQuotaReservations, 0);
   assert.equal(
     await codeStore.findByRequest("owner-code", "req-code-invalid"),
+    null
+  );
+
+  let secretFileQuota = 0;
+  await assert.rejects(
+    () => codeService.start({
+      goal: "unsafe selected file",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-secret",
+      codingWorkspace: true,
+      workspaceFiles: [{ path: ".env", content: "example" }],
+      beforeCreateSession: async () => { secretFileQuota++; }
+    }),
+    /(not allowed for inline handoff|safe relative project path)/
+  );
+  assert.equal(secretFileQuota, 0);
+  assert.equal(
+    await codeStore.findByRequest("owner-code", "req-code-secret"),
     null
   );
 }

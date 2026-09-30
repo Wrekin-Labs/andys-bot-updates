@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
-assert.match(source, /APP_VERSION = "1\.3\.0-beta\.23"/);
+assert.match(source, /APP_VERSION = "1\.4\.0-beta\.24"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
@@ -128,6 +128,7 @@ assert.match(source, /createWatchdog/);
 assert.match(source, /createOpenAIWebhookVerifier/);
 assert.doesNotMatch(source, /signing_secret[^\n]{0,80}res\.json/);
 assert.match(source, /express\.text\(\{ type: "application\/json"/);
+assert.match(source, /express\.json\(\{ limit: "384kb" \}\)/);
 assert.ok(
   source.indexOf('app.post("/openai/webhook"') <
   source.indexOf('app.use(express.json'),
@@ -148,9 +149,14 @@ assert.match(source, /context: \{ type: "string", maxLength: 4000/);
 assert.match(source, /codingWorkspace: z\.boolean\(\)\.default\(false\)/);
 assert.match(source, /repositoryUrl: z\.string\(\)\.url\(\)\.max\(500\)/);
 assert.match(source, /repositoryRef: z\.string\(\)\.max\(200\)/);
+assert.match(source, /workspaceFiles: z\.array\(z\.object\(\{/);
+assert.match(source, /path: z\.string\(\)\.min\(1\)\.max\(180\)/);
+assert.match(source, /content: z\.string\(\)\.max\(32000\)/);
+assert.match(source, /workspaceFiles: Array\.isArray\(args\.workspaceFiles\) \? args\.workspaceFiles : \[\]/);
 assert.match(source, /codingWorkspace: \{ type: "boolean", default: false/);
 assert.match(source, /repositoryUrl: \{ type: "string", format: "uri", maxLength: 500/);
 assert.match(source, /repositoryRef: \{ type: "string", maxLength: 200/);
+assert.match(source, /workspaceFiles: \{[\s\S]{0,120}type: "array"[\s\S]{0,120}maxItems: 8/);
 assert.match(source, /codingWorkspace: Boolean\(args\.codingWorkspace\)/);
 assert.match(source, /repositoryUrl: args\.repositoryUrl \|\| null/);
 assert.match(source, /repositoryRef: args\.repositoryRef \|\| null/);

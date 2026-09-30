@@ -53,7 +53,8 @@ assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
 assert.deepEqual(normaliseCodingWorkspace(null), {
   enabled: false,
   repositoryUrl: null,
-  repositoryRef: null
+  repositoryRef: null,
+  files: []
 });
 
 const hosted = buildAgentEnvironment({
@@ -124,6 +125,119 @@ const workspaceBody = JSON.parse(workspaceCalls[0].body);
 assert.equal(workspaceBody.environment.type, "openai_hosted");
 assert.equal(workspaceBody.environment.network.access, "restricted");
 assert.match(workspaceBody.environment.setup_commands[0].command, /git clone/);
+
+const inlineWorkspace = buildAgentEnvironment({
+  enabled: true,
+  repositoryUrl: "https://github.com/chipblock2/project-relay",
+  repositoryRef: "main",
+  files: [
+    { path: "src/local-change.js", content: "export const local = true;\n" },
+    { path: "notes/task.txt", content: "local-only task note\n" }
+  ]
+});
+assert.equal(inlineWorkspace.files.length, 2);
+assert.equal(inlineWorkspace.files[0].type, "inline");
+assert.equal(inlineWorkspace.files[0].path, "/workspace/input/src/local-change.js");
+assert.equal(
+  Buffer.from(inlineWorkspace.files[0].data, "base64").toString("utf8"),
+  "export const local = true;\n"
+);
+const overlayCommands = inlineWorkspace.setup_commands.filter(
+  (cmd) => cmd.command.includes("KeepGoing inline file path escaped project workspace")
+);
+assert.equal(overlayCommands.length, 2);
+for (const cmd of overlayCommands) {
+  assert.match(cmd.command, /realpath -m/);
+  assert.match(cmd.command, /\/workspace\/project/);
+  assert.match(cmd.command, /rm -rf/);
+  assert.match(cmd.command, /cp --/);
+}
+const firstOverlayIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => cmd.command.includes("KeepGoing inline file path escaped project workspace")
+);
+const checkoutIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => /git checkout/.test(cmd.command)
+);
+assert.ok(firstOverlayIndex > checkoutIndex, "local file overlay must happen after repository checkout");
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "../escape.txt", content: "x" }]
+  }),
+  /safe relative project path/
+);
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/./file.txt", content: "x" }]
+  }),
+  /safe relative project path/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/.git/config", content: "x" }]
+  }),
+  /safe relative project path/
+);
+const dottedNameWorkspace = buildAgentEnvironment({
+  enabled: true,
+  files: [{ path: "src/version..txt", content: "ok" }]
+});
+assert.equal(dottedNameWorkspace.files.length, 1);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "config/.env", content: "x" }]
+  }),
+  /not allowed for inline handoff/
+);
+
+const binaryLike = "a" + String.fromCharCode(0) + "b";
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/binary.txt", content: binaryLike }]
+  }),
+  /UTF-8 text/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "keys/client.pem", content: "x" }]
+  }),
+  /not allowed for inline handoff/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: Array.from({ length: 9 }, (_, i) => ({
+      path: "src/f" + i + ".js",
+      content: "x"
+    }))
+  }),
+  /at most 8 files/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/huge.txt", content: "x".repeat(32001) }]
+  }),
+  /32 KB/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: Array.from({ length: 5 }, (_, i) => ({
+      path: "src/big" + i + ".txt",
+      content: "x".repeat(30000)
+    }))
+  }),
+  /128 KB/
+);
+
 
 
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
