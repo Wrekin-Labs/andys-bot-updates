@@ -128,6 +128,7 @@ assert.match(source, /createWatchdog/);
 assert.match(source, /createOpenAIWebhookVerifier/);
 assert.doesNotMatch(source, /signing_secret[^\n]{0,80}res\.json/);
 assert.match(source, /express\.text\(\{ type: "application\/json"/);
+assert.match(source, /express\.json\(\{ limit: "384kb" \}\)/);
 assert.ok(
   source.indexOf('app.post("/openai/webhook"') <
   source.indexOf('app.use(express.json'),
