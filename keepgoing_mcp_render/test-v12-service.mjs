@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
-import { createV12Service, planLimits } from "./v12_service.js";
+import { createV12Service, planLimits, buildJobPrompt, JOB_INSTRUCTIONS } from "./v12_service.js";
 import { MemoryJobStore } from "./durable_store.js";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { JOB_STATES, newJobRecord } from "./durable_job.js";
 import { createToolProfileRegistry } from "./tool_profiles.js";
+
+assert.match(JOB_INSTRUCTIONS, /do not need a KeepGoing control tool/i);
+assert.match(JOB_INSTRUCTIONS, /server converts your final STATUS marker/i);
+assert.match(JOB_INSTRUCTIONS, /return STATUS: COMPLETED even when this session exposes no KeepGoing control tool/i);
+
+const completionPromptGuard = buildJobPrompt("smoke", "done", "safe", "");
+assert.match(completionPromptGuard, /do not need a KeepGoing control tool/i);
+assert.match(completionPromptGuard, /server converts your final STATUS marker/i);
+assert.match(completionPromptGuard, /return STATUS: COMPLETED even when this session exposes no KeepGoing control tool/i);
+
 
 let turn = 1;
 const sent = [];
@@ -345,9 +355,9 @@ assert.match(sent.at(-1).key, /^kg-user-/);
 
   const storedToolJob = await profileStore.get(toolJob.job_id);
   assert.equal(storedToolJob.toolCallBudgetTotal, 20);
-assert.equal(storedToolJob.toolProfileName, "developer-owner");
-assert.equal(storedToolJob.toolWriteCapable, true);
-assert.ok(/^[0-9a-f]{64}$/.test(storedToolJob.toolPolicyHash));
+  assert.equal(storedToolJob.toolProfileName, "developer-owner");
+  assert.equal(storedToolJob.toolWriteCapable, true);
+  assert.ok(/^[0-9a-f]{64}$/.test(storedToolJob.toolPolicyHash));
 }
 
 const limits = planLimits("business", true);
@@ -372,3 +382,8 @@ assert.equal(ownerToolLimits.max_total_tokens, 60_000);
 assert.equal(ownerToolLimits.max_total_tool_calls, 40);
 
 console.log("v1.2 service tests passed");
+
+const briefCheckpointPrompt = buildJobPrompt("goal", "done", "balanced", "x".repeat(4000) + "SHOULD_NOT_APPEAR");
+assert.match(briefCheckpointPrompt, /BRIEF TASK-SPECIFIC CHECKPOINT:/);
+assert.match(briefCheckpointPrompt, /not full chat history/);
+assert.doesNotMatch(briefCheckpointPrompt, /SHOULD_NOT_APPEAR/);

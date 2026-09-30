@@ -38,7 +38,8 @@ const created = await engine.createSession({
   prompt: "research this",
   instructions: "finish the job",
   allowWeb: true,
-  reasoningEffort: "high"
+  reasoningEffort: "high",
+  idempotencyKey: "kg-start-test"
 });
 assert.equal(created.id, "sess_abc");
 const createBody = JSON.parse(calls[0].init.body);
@@ -46,6 +47,8 @@ assert.equal(createBody.environment.type, "none");
 assert.equal(createBody.agent.model, "gpt-6-astra");
 assert.equal(createBody.agent.tools[0].type, "web_search");
 assert.equal(createBody.agent.tools[0].mode, "live");
+assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
+assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
 
 const mcpCreated = await engine.createSession({
   prompt: "edit the repo",
@@ -62,15 +65,18 @@ const mcpCreated = await engine.createSession({
     connection_origin: "service",
     required: true,
     credential_id: "cred_123"
-  }]
+  }],
+  idempotencyKey: "kg-mcp-start"
 });
 assert.equal(mcpCreated.id, "sess_abc");
-const mcpBody = JSON.parse(calls.at(-1).init.body);
+const mcpCall = calls.at(-1);
+const mcpBody = JSON.parse(mcpCall.init.body);
 assert.equal(mcpBody.agent.tools.length, 1);
 assert.equal(mcpBody.agent.tools[0].type, "mcp");
 assert.equal(mcpBody.agent.tools[0].server_label, "github");
 assert.deepEqual(mcpBody.agent.tools[0].allowed_tools, ["search", "fetch_file"]);
 assert.equal(mcpBody.agent.tools[0].credential_id, "cred_123");
+assert.equal(mcpCall.init.headers["Idempotency-Key"], "kg-mcp-start");
 
 await assert.rejects(
   () => engine.createSession({
@@ -79,7 +85,6 @@ await assert.rejects(
   }),
   /Invalid KeepGoing MCP tool configuration/
 );
-assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
 
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
 const sentCall = calls.at(-1);

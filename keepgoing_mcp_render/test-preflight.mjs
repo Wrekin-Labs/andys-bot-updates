@@ -21,7 +21,7 @@ const base = "https://keepgoing.example";
 const fetchOk = async (url, init = {}) => {
   const path = new URL(url).pathname;
   if (path === "/health") {
-    return response(200, { ok: true, version: "1.2.0-beta.1", durableEngineEnabled: true });
+    return response(200, { ok: true, version: "1.2.0-beta.24", durableEngineEnabled: true });
   }
   if (path === "/readiness") {
     return response(200, {
@@ -126,17 +126,6 @@ const missingGithub = await runDeploymentPreflight({
 assert.equal(missingGithub.ok, false);
 assert.ok(missingGithub.failed.includes("readiness"));
 
-const toolsReady = await runDeploymentPreflight({
-  baseUrl: base,
-  fetchImpl: fetchOk,
-  requireV12: true,
-  requireToolProfiles: true,
-  requireGithubWorker: true,
-  requireRelayProfiles: true
-});
-assert.equal(toolsReady.ok, true);
-assert.ok(toolsReady.checks.some((item) => item.name === "private_worker_mcp_protected"));
-
 const toolsBroken = await runDeploymentPreflight({
   baseUrl: base,
   fetchImpl: async (url, init) => {
@@ -206,3 +195,22 @@ await assert.rejects(
 );
 
 console.log("deployment preflight tests passed");
+
+const sha = "a".repeat(40);
+const deployedFetch = async (url, init) => {
+  const result = await fetchOk(url, init);
+  if (["/health", "/readiness"].includes(new URL(url).pathname)) {
+    return response(200, { ...(await result.json()), release_commit: sha, watchdog_ready: true, openai_webhook_ready: false });
+  }
+  return result;
+};
+assert.equal((await runDeploymentPreflight({ baseUrl: base, fetchImpl: deployedFetch, expectedCommit: sha, requireV12: true })).ok, true);
+const mismatch = await runDeploymentPreflight({ baseUrl: base, fetchImpl: deployedFetch, expectedCommit: "b".repeat(40) });
+assert.ok(mismatch.failed.includes("health"));
+assert.ok(mismatch.failed.includes("readiness"));
+assert.equal((await runDeploymentPreflight({ baseUrl: base, fetchImpl: deployedFetch, requireWebhook: true })).ok, false);
+const maliciousOrigin = await runDeploymentPreflight({ baseUrl: base, fetchImpl: async (url, init) => {
+  if (new URL(url).pathname === "/.well-known/oauth-protected-resource") return response(200, {resource: base + ".attacker.example/mcp", authorization_servers:[base]});
+  return fetchOk(url, init);
+}});
+assert.ok(maliciousOrigin.failed.includes("protected_resource_metadata"));

@@ -10,6 +10,7 @@ function engineWith({ failFirstSend = false } = {}) {
   let failedOnce = false;
   const seenProviderIds = [];
   const idempotencyKeys = [];
+  const startIdempotencyKeys = [];
   const scopedTurns = [];
 
   return {
@@ -17,11 +18,13 @@ function engineWith({ failFirstSend = false } = {}) {
     get creates() { return creates; },
     get seenProviderIds() { return seenProviderIds; },
     get idempotencyKeys() { return idempotencyKeys; },
+    get startIdempotencyKeys() { return startIdempotencyKeys; },
     get scopedTurns() { return scopedTurns; },
     advance() { turn += 1; },
 
-    async createSession() {
+    async createSession(options = {}) {
       creates++;
+      startIdempotencyKeys.push(options.idempotencyKey || null);
       await Promise.resolve();
       return { id: "sess_test", status: "in_progress" };
     },
@@ -114,6 +117,8 @@ async function startJob(kg, beforeCreateSession = null) {
   const jobId = await startJob(kg, async () => { quotaReservations++; });
 
   assert.equal(engine.creates, 1);
+  assert.equal(engine.startIdempotencyKeys.length, 1);
+  assert.match(engine.startIdempotencyKeys[0], /^kg-start-kgj_/);
   assert.equal(quotaReservations, 1);
 
   const [a, b] = await Promise.all([kg.reconcile(jobId), kg.reconcile(jobId)]);
@@ -206,14 +211,16 @@ async function startJob(kg, beforeCreateSession = null) {
   assert.equal(cancelled, 1);
 }
 
-// Lost acknowledgement during initial session creation is recovered by metadata.
+// Lost acknowledgement during initial session creation is recovered inline by metadata.
 {
   const store = new MemoryJobStore();
   let quotaReservations = 0;
   let creates = 0;
+  const startKeys = [];
   const engine = {
-    async createSession() {
+    async createSession(options = {}) {
       creates++;
+      startKeys.push(options.idempotencyKey);
       throw new Error("connection dropped after session creation");
     },
     async findSessionByMetadata(key, value) {
@@ -226,30 +233,122 @@ async function startJob(kg, beforeCreateSession = null) {
   let clock = 30_000;
   const kg = new KeepGoingOrchestrator({ engine, store, now: () => ++clock });
 
-  await assert.rejects(
-    () => kg.start({
-      initialPrompt: "recover me",
-      instructions: "finish",
-      ownerSubjectHash: "owner-recovery",
-      clientRequestId: "req-recovery",
-      beforeCreateSession: async () => { quotaReservations++; }
-    }),
-    /connection dropped/
-  );
+  const started = await kg.start({
+    initialPrompt: "recover me",
+    instructions: "finish",
+    ownerSubjectHash: "owner-recovery",
+    clientRequestId: "req-recovery",
+    beforeCreateSession: async () => { quotaReservations++; }
+  });
 
-  const pending = await store.listOwnerJobs("owner-recovery", { activeOnly: true });
-  assert.equal(pending.length, 1);
-  assert.equal(pending[0].status, JOB_STATES.QUEUED);
-  assert.equal(pending[0].providerSessionId, null);
+  assert.equal(started.created, true);
+  assert.equal(started.job.status, JOB_STATES.WORKING);
+  assert.equal(started.job.providerSessionId, "sess_recovered_start");
   assert.equal(quotaReservations, 1);
   assert.equal(creates, 1);
+  assert.match(startKeys[0], /^kg-start-kgj_/);
+}
 
-  const recovered = await kg.recoverStart(pending[0].id);
-  assert.equal(recovered.action, "start_recovered");
-  assert.equal(recovered.job.status, JOB_STATES.WORKING);
-  assert.equal(recovered.job.providerSessionId, "sess_recovered_start");
+// A transient provider failure retries the same idempotent session start.
+{
+  const store = new MemoryJobStore();
+  let creates = 0;
+  const startKeys = [];
+  const engine = {
+    async createSession(options = {}) {
+      creates++;
+      startKeys.push(options.idempotencyKey);
+      if (creates === 1) {
+        const error = new Error("temporary provider outage");
+        error.status = 503;
+        throw error;
+      }
+      return { id: "sess_retry_ok", status: "in_progress" };
+    },
+    async findSessionByMetadata() { return null; },
+    async cancelTurn() {}
+  };
+  let clock = 40_000;
+  const kg = new KeepGoingOrchestrator({
+    engine,
+    store,
+    now: () => ++clock,
+    sleep: async () => {}
+  });
+
+  const started = await kg.start({
+    initialPrompt: "retry safely",
+    instructions: "finish",
+    ownerSubjectHash: "owner-retry",
+    clientRequestId: "req-retry"
+  });
+
+  assert.equal(started.job.status, JOB_STATES.WORKING);
+  assert.equal(started.job.providerSessionId, "sess_retry_ok");
+  assert.equal(creates, 2);
+  assert.equal(startKeys[0], startKeys[1]);
+  assert.match(startKeys[0], /^kg-start-kgj_/);
+}
+
+// A failed pre-turn reservation can be revived by the same client request
+// without consuming quota twice or changing the durable job id.
+{
+  const store = new MemoryJobStore();
+  let creates = 0;
+  let available = false;
+  let quotaReservations = 0;
+  const startKeys = [];
+  const engine = {
+    async createSession(options = {}) {
+      creates++;
+      startKeys.push(options.idempotencyKey);
+      if (!available) {
+        const error = new Error("provider unavailable");
+        error.status = 503;
+        throw error;
+      }
+      return { id: "sess_revived", status: "in_progress" };
+    },
+    async findSessionByMetadata() { return null; },
+    async cancelTurn() {}
+  };
+
+  let clock = 100_000;
+  const kg = new KeepGoingOrchestrator({
+    engine,
+    store,
+    now: () => clock,
+    sleep: async () => {}
+  });
+  const request = {
+    initialPrompt: "revive me",
+    instructions: "finish",
+    ownerSubjectHash: "owner-revive",
+    clientRequestId: "req-revive",
+    beforeCreateSession: async () => { quotaReservations++; }
+  };
+
+  await assert.rejects(() => kg.start(request), /provider unavailable/);
+  const pending = await store.findByRequest("owner-revive", "req-revive");
+  assert.equal(pending.status, JOB_STATES.QUEUED);
+  const durableJobId = pending.id;
   assert.equal(quotaReservations, 1);
-  assert.equal(creates, 1);
+  assert.equal(creates, 3);
+  assert.equal(new Set(startKeys).size, 1);
+
+  clock += 61_000;
+  const failed = await kg.recoverStart(durableJobId);
+  assert.equal(failed.job.status, JOB_STATES.FAILED);
+  assert.equal(failed.job.safeErrorCode, "start_not_recovered");
+
+  available = true;
+  const revived = await kg.start(request);
+  assert.equal(revived.created, false);
+  assert.equal(revived.job.id, durableJobId);
+  assert.equal(revived.job.status, JOB_STATES.WORKING);
+  assert.equal(revived.job.providerSessionId, "sess_revived");
+  assert.equal(quotaReservations, 1);
+  assert.equal(new Set(startKeys).size, 1);
 }
 
 console.log("orchestrator tests passed");

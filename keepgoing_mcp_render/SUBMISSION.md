@@ -1,6 +1,6 @@
 # KeepGoing — Plugin Directory submission kit
 
-Version: **1.2.0-beta.2**  
+Version: **1.2.0-beta.24**
 Prepared: **30 September 2026**
 
 ## Package
@@ -20,8 +20,8 @@ CI also uploads the exact ZIP as the `keepgoing-plugin-submission` artifact.
 
 ## Listing
 
-**Display name:** KeepGoing  
-**Category:** Productivity  
+**Display name:** KeepGoing
+**Category:** Productivity
 **Subtitle:** Finish long AI work
 
 **Listing description**

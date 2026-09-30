@@ -1,5 +1,6 @@
 import express from "express";
 import crypto from "crypto";
+import { fileURLToPath } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -14,6 +15,10 @@ import { createToolProfileRegistry } from "./tool_profiles.js";
 import { createGithubWorker, createGithubWorkerMcpServer, normaliseRepoList } from "./github_worker.js";
 
 const app = express();
+app.disable("x-powered-by");
+const APP_VERSION = "1.2.0-beta.24";
+const RELEASE_COMMIT = /^[0-9a-f]{40}$/.test(process.env.RENDER_GIT_COMMIT || "") ? process.env.RENDER_GIT_COMMIT : null;
+const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const PRO_PRICE_ID = process.env.KEEPGOING_PRO_PRICE_ID || "price_1UJy24B86Ss16l9WEsqSRxh1";
@@ -54,11 +59,15 @@ const RELAY_MCP_AUTHORIZATION = process.env.KEEPGOING_RELAY_MCP_AUTHORIZATION ||
 const RELAY_ADMIN_PROFILE_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE || "");
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
-const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
-const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "";
+let paypalClientId = process.env.PAYPAL_CLIENT_ID || "";
+let paypalClientSecret = process.env.PAYPAL_CLIENT_SECRET || "";
 const PAYPAL_BASE = PAYPAL_MODE === "sandbox"
   ? "https://api-m.sandbox.paypal.com"
   : "https://api-m.paypal.com";
+const PAYPAL_BOOTSTRAP_TOKEN_HASH = "293b9c5e1f00676fe221870060d8796319b58fe2c97d678beb15a5910a5962c5";
+const PAYPAL_BOOTSTRAP_EXPIRES_AT = Date.parse("2026-09-30T00:00:00Z");
+const PAYPAL_CREDENTIAL_PREFIX = "kgpp_";
+let paypalBootstrapUsed = false;
 
 let paypalConfig = {
   product_id: "",
@@ -112,7 +121,7 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     try {
       await forwardBillingEvent("stripe", event.type, event.data?.object || {}, null);
     } catch (error) {
-      console.error("stripe_billing_ingest_error", String(error?.message || error));
+      console.error("stripe_billing_ingest_error", safeLogError(error), req.keepgoingRequestId || "");
       return res.status(500).json({ error: "billing_ingest_error" });
     }
   }
@@ -120,11 +129,11 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 });
 
 app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) return res.status(503).send("PayPal not configured");
+  if (!paypalClientId || !paypalClientSecret) return res.status(503).send("PayPal not configured");
   try {
     await ensurePayPalSetup();
   } catch (error) {
-    console.error("paypal_setup_error", String(error?.message || error));
+    console.error("paypal_setup_error", safeLogError(error), req.keepgoingRequestId || "");
     return res.status(503).send("PayPal setup incomplete");
   }
   if (!paypalConfig.webhook_id) return res.status(503).send("PayPal webhook not configured");
@@ -154,7 +163,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
     ',"webhook_id":' + JSON.stringify(paypalConfig.webhook_id) +
     ',"webhook_event":' + raw + '}';
 
-  const verify = await fetch(PAYPAL_BASE + "/v1/notifications/verify-webhook-signature", {
+  const verify = await fetchWithTimeout(PAYPAL_BASE + "/v1/notifications/verify-webhook-signature", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + token,
@@ -164,7 +173,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
   });
   const verification = await verify.json().catch(() => ({}));
   if (!verify.ok || verification.verification_status !== "SUCCESS") {
-    console.error("paypal_webhook_verify_failed", verify.status, verification);
+    console.error("paypal_webhook_verify_failed", verify.status, String(verification?.verification_status || "unknown"), req.keepgoingRequestId || "");
     return res.status(400).send("Invalid PayPal webhook signature");
   }
 
@@ -189,7 +198,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
     try {
       await forwardBillingEvent("paypal", event.event_type, event.resource || {}, tier);
     } catch (error) {
-      console.error("paypal_billing_ingest_error", String(error?.message || error));
+      console.error("paypal_billing_ingest_error", safeLogError(error), req.keepgoingRequestId || "");
       return res.status(500).json({ error: "billing_ingest_error" });
     }
   }
@@ -237,6 +246,16 @@ app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
 app.set("trust proxy", 1);
 
+app.use((req, res, next) => {
+  const supplied = String(req.headers["x-request-id"] || "").trim();
+  const requestId = /^[A-Za-z0-9._:-]{1,100}$/.test(supplied)
+    ? supplied
+    : crypto.randomUUID();
+  req.keepgoingRequestId = requestId;
+  res.set("X-Request-Id", requestId);
+  next();
+});
+
 const rateWindows = new Map();
 
 function clientIp(req) {
@@ -276,6 +295,8 @@ app.use("/oauth/authorize", rateLimit("oauth-authorize", 30, 15 * 60 * 1000));
 app.use("/oauth/token", rateLimit("oauth-token", 60, 15 * 60 * 1000));
 app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
+app.use("/paypal/start-subscription", rateLimit("paypal-start", 20, 15 * 60 * 1000));
+app.use("/owner/paypal-setup", rateLimit("paypal-bootstrap", 20, 15 * 60 * 1000));
 app.use("/worker-mcp", rateLimit("worker-mcp", 600, 60 * 1000));
 
 app.use((req, res, next) => {
@@ -285,14 +306,27 @@ app.use((req, res, next) => {
   res.set("Strict-Transport-Security", "max-age=31536000");
   res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-  if (
+  const sensitivePath =
     req.path === "/mcp" ||
     req.path === "/worker-mcp" ||
+    req.path === "/subscribe" ||
+    req.path.startsWith("/oauth/") ||
     req.path.startsWith("/billing/") ||
     req.path.startsWith("/paypal/") ||
-    req.path.startsWith("/openai/")
-  ) {
+    req.path.startsWith("/openai/") ||
+    req.path.startsWith("/owner/");
+
+  if (sensitivePath) {
     res.set("Cache-Control", "no-store");
+  }
+
+  if (
+    sensitivePath ||
+    req.path === "/health" ||
+    req.path === "/readiness" ||
+    req.path.startsWith("/.well-known/")
+  ) {
+    res.set("X-Robots-Tag", "noindex, nofollow");
   }
   next();
 });
@@ -304,7 +338,7 @@ const BUSINESS_MAX_OUTPUT_TOKENS = Number(process.env.KEEPGOING_BUSINESS_MAX_OUT
 const PRO_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_PRO_MAX_TOOL_CALLS || 3);
 const BUSINESS_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_BUSINESS_MAX_TOOL_CALLS || 5);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "300caf15b670e9aa648ffc6aa9f7249297566ff6b0ba37898ee4f2da7bd91697";
+const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "";
 
 let v12RuntimeCache = null;
 let githubWorkerCache = null;
@@ -442,7 +476,6 @@ function builtInToolProfiles() {
       "supervised_list_apps",
       "supervised_app_status"
     ];
-
     const relayDeveloperTools = [
       ...relayReadTools,
       "commandport_owner_preview_text_replace",
@@ -473,7 +506,6 @@ function builtInToolProfiles() {
       "supervised_owner_start",
       "supervised_owner_restart"
     ];
-
     profiles["relay-read"] = {
       description: "Owner-only read/diagnostic access to Project Relay linked workstations and approved roots.",
       ownerOnly: true,
@@ -482,7 +514,6 @@ function builtInToolProfiles() {
       maxToolCalls: 30,
       servers: [relayServerConfig(relayReadTools)]
     };
-
     profiles["relay-developer"] = {
       description: "Owner-only Project Relay developer access for approved-root edits, bounded commands, sandbox work and supervised apps.",
       ownerOnly: true,
@@ -493,27 +524,26 @@ function builtInToolProfiles() {
     };
 
     if (RELAY_ADMIN_PROFILE_ENABLED) {
-      const relayAdminTools = [
-        ...relayDeveloperTools,
-        "commandport_owner_fs_copy",
-        "commandport_owner_fs_mkdir",
-        "commandport_owner_fs_move",
-        "commandport_owner_fs_delete",
-        "commandport_owner_service_action",
-        "commandport_owner_scheduled_task_action",
-        "commandport_owner_software_install",
-        "commandport_owner_software_upgrade",
-        "commandport_owner_software_uninstall",
-        "commandport_owner_self_update",
-        "commandport_owner_power_action"
-      ];
       profiles["relay-admin"] = {
         description: "Explicitly enabled owner-only Project Relay administration profile. Includes destructive system actions.",
         ownerOnly: true,
         writeCapable: true,
         allowWeb: true,
         maxToolCalls: 80,
-        servers: [relayServerConfig(relayAdminTools)]
+        servers: [relayServerConfig([
+          ...relayDeveloperTools,
+          "commandport_owner_fs_copy",
+          "commandport_owner_fs_mkdir",
+          "commandport_owner_fs_move",
+          "commandport_owner_fs_delete",
+          "commandport_owner_service_action",
+          "commandport_owner_scheduled_task_action",
+          "commandport_owner_software_install",
+          "commandport_owner_software_upgrade",
+          "commandport_owner_software_uninstall",
+          "commandport_owner_self_update",
+          "commandport_owner_power_action"
+        ])]
       };
     }
   }
@@ -561,13 +591,7 @@ function getV12Runtime() {
     env: workerProfileEnv()
   });
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
-  const service = createV12Service({
-    engine,
-    store,
-    orchestrator,
-    toolProfiles,
-    model: MODEL
-  });
+  const service = createV12Service({ engine, store, orchestrator, toolProfiles, model: MODEL });
   const watchdog = createWatchdog({ store, orchestrator });
   const webhookProcessor = OPENAI_WEBHOOK_SECRET
     ? createWebhookProcessor({
@@ -589,6 +613,11 @@ function safeLogError(error) {
   return /password|token|secret|credential|authorization/i.test(message)
     ? "redacted protected error"
     : message.slice(0, 500);
+}
+
+function fetchWithTimeout(url, init = {}, timeoutMs = 10_000) {
+  if (init.signal) return fetch(url, init);
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 function durableOwnerHash(access) {
@@ -707,9 +736,135 @@ function htmlEscape(value) {
     .replace(/'/g, "&#39;");
 }
 
+function setOAuthPageHeaders(res) {
+  res.set("Cache-Control", "no-store");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  res.set(
+    "Content-Security-Policy",
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+  );
+  return res;
+}
+
+
+function validPayPalBootstrapToken(value) {
+  if (paypalBootstrapUsed || Date.now() > PAYPAL_BOOTSTRAP_EXPIRES_AT) return false;
+  const candidate = digest(String(value || ""));
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(candidate, "hex"),
+      Buffer.from(PAYPAL_BOOTSTRAP_TOKEN_HASH, "hex")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function paypalAccessTokenFor(clientId, clientSecret) {
+  const id = String(clientId || "").trim();
+  const secret = String(clientSecret || "").trim();
+  if (!id || !secret) throw new Error("PayPal credentials are required");
+  const basic = Buffer.from(id + ":" + secret).toString("base64");
+  const response = await fetchWithTimeout(PAYPAL_BASE + "/v1/oauth2/token", {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + basic,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: "grant_type=client_credentials"
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(data?.error_description || data?.error || ("PayPal OAuth failed (" + response.status + ")"));
+  }
+  return data.access_token;
+}
+
+async function loadStoredPayPalCredentials() {
+  if (paypalClientId && paypalClientSecret) return true;
+  if (!BILLING_CONFIG_URL || !BILLING_INGEST_TOKEN || !OAUTH_SECRET) return false;
+  const stored = await billingConfig("get");
+  const sealed = String(stored.credentials_encrypted || "");
+  if (!sealed) return false;
+  const payload = unsealToken(PAYPAL_CREDENTIAL_PREFIX, sealed);
+  const id = String(payload?.client_id || "").trim();
+  const secret = String(payload?.client_secret || "").trim();
+  if (!id || !secret) return false;
+  paypalClientId = id;
+  paypalClientSecret = secret;
+  paypalBootstrapUsed = true;
+  return true;
+}
+
+async function persistPayPalCredentials(clientId, clientSecret) {
+  const id = String(clientId || "").trim();
+  const secret = String(clientSecret || "").trim();
+  if (id.length < 20 || secret.length < 20) throw new Error("PayPal credentials look incomplete");
+
+  await paypalAccessTokenFor(id, secret);
+
+  const stored = await billingConfig("get");
+  const credentialsEncrypted = sealToken(PAYPAL_CREDENTIAL_PREFIX, {
+    client_id: id,
+    client_secret: secret,
+    saved_at: new Date().toISOString()
+  });
+  await billingConfig("set", { ...stored, credentials_encrypted: credentialsEncrypted });
+
+  paypalClientId = id;
+  paypalClientSecret = secret;
+  paypalSetupComplete = false;
+  paypalSetupError = "";
+  paypalSetupPromise = null;
+
+  const ready = await ensurePayPalSetup();
+  if (!ready) throw new Error("PayPal setup did not complete");
+  paypalBootstrapUsed = true;
+  return true;
+}
+
+app.get("/owner/paypal-setup", (req, res) => {
+  setOAuthPageHeaders(res);
+  const setupToken = String(req.query?.setup || "");
+  if (!validPayPalBootstrapToken(setupToken)) {
+    return res.status(410).type("html").send(infoPage(
+      "PayPal setup link expired",
+      "<p>This one-time setup link is invalid, expired or already used.</p>"
+    ));
+  }
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect PayPal Live — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;display:grid;place-items:center;min-height:100vh;padding:24px}.card{width:min(680px,100%);box-sizing:border-box;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:30px}label{display:block;font-weight:700;margin:18px 0 8px}input{width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #484f58;background:#0d1117;color:#fff;font:inherit}button{width:100%;margin-top:20px;padding:13px;border:0;border-radius:10px;background:#5F50E6;color:#fff;font-weight:700;font-size:16px}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect PayPal Live</h1><p>Paste the Live credentials from the KeepGoing PayPal app. They are validated against PayPal, encrypted with KeepGoing&#39;s server key, and stored in the protected billing configuration. They are never returned to ChatGPT.</p><form method="post" action="/owner/paypal-setup"><input type="hidden" name="setup" value="' + htmlEscape(setupToken) + '"><label for="client_id">PayPal Client ID</label><input id="client_id" name="client_id" type="password" autocomplete="off" required><label for="client_secret">PayPal Secret key</label><input id="client_secret" name="client_secret" type="password" autocomplete="off" required><button type="submit">Connect PayPal Live</button></form><p class="muted">Use the Live app credentials only. Do not paste these credentials into a chat message.</p></div></body></html>';
+  return res.type("html").send(html);
+});
+
+app.post("/owner/paypal-setup", async (req, res) => {
+  setOAuthPageHeaders(res);
+  const setupToken = String(req.body?.setup || "");
+  if (!validPayPalBootstrapToken(setupToken)) {
+    return res.status(410).type("html").send(infoPage(
+      "PayPal setup link expired",
+      "<p>This one-time setup link is invalid, expired or already used.</p>"
+    ));
+  }
+
+  try {
+    await persistPayPalCredentials(req.body?.client_id, req.body?.client_secret);
+    return res.type("html").send(infoPage(
+      "PayPal Live connected",
+      "<p><strong>Success.</strong> KeepGoing validated the Live credentials and created or recovered its PayPal product, subscription plans and webhook.</p><p>You can close this tab.</p>"
+    ));
+  } catch (error) {
+    console.error("paypal_secure_bootstrap_error", safeLogError(error));
+    const message = htmlEscape(safeLogError(error));
+    return res.status(400).type("html").send(infoPage(
+      "PayPal setup failed",
+      "<p>The credentials were not stored because validation/setup failed.</p><p><code>" + message + "</code></p><p>Go back and check that you copied the Live Client ID and Secret key.</p>"
+    ));
+  }
+});
+
 async function forwardBillingEvent(provider, type, object, tier) {
   if (!BILLING_INGEST_URL || !BILLING_INGEST_TOKEN) throw new Error("billing_ingest_not_configured");
-  const response = await fetch(BILLING_INGEST_URL, {
+  const response = await fetchWithTimeout(BILLING_INGEST_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -725,7 +880,7 @@ async function forwardBillingEvent(provider, type, object, tier) {
 async function billingConfig(action, config) {
   if (!BILLING_CONFIG_URL || !BILLING_INGEST_TOKEN) throw new Error("billing_config_not_configured");
   const provider = "paypal_" + PAYPAL_MODE;
-  const response = await fetch(BILLING_CONFIG_URL, {
+  const response = await fetchWithTimeout(BILLING_CONFIG_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -739,24 +894,12 @@ async function billingConfig(action, config) {
 }
 
 async function paypalAccessToken() {
-  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) throw new Error("PayPal credentials are not configured");
-  const basic = Buffer.from(PAYPAL_CLIENT_ID + ":" + PAYPAL_CLIENT_SECRET).toString("base64");
-  const response = await fetch(PAYPAL_BASE + "/v1/oauth2/token", {
-    method: "POST",
-    headers: {
-      Authorization: "Basic " + basic,
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: "grant_type=client_credentials"
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.access_token) throw new Error(data?.error_description || data?.error || ("PayPal OAuth failed (" + response.status + ")"));
-  return data.access_token;
+  return paypalAccessTokenFor(paypalClientId, paypalClientSecret);
 }
 
 async function paypalApi(path, init = {}) {
   const token = await paypalAccessToken();
-  const response = await fetch(PAYPAL_BASE + path, {
+  const response = await fetchWithTimeout(PAYPAL_BASE + path, {
     ...init,
     headers: {
       Authorization: "Bearer " + token,
@@ -775,6 +918,20 @@ async function paypalApi(path, init = {}) {
     throw error;
   }
   return data;
+}
+
+function safePayPalApprovalUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return "";
+    const host = url.hostname.toLowerCase();
+    const allowed = PAYPAL_MODE === "sandbox"
+      ? new Set(["www.sandbox.paypal.com", "www.paypal.com"])
+      : new Set(["www.paypal.com"]);
+    return allowed.has(host) ? url.href : "";
+  } catch {
+    return "";
+  }
 }
 
 function paypalPlanBody(productId, name, description, value) {
@@ -799,7 +956,7 @@ function paypalPlanBody(productId, name, description, value) {
 }
 
 async function ensurePayPalSetup() {
-  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) return false;
+  if (!paypalClientId || !paypalClientSecret) return false;
   if (paypalSetupComplete) return true;
   if (paypalSetupPromise) return paypalSetupPromise;
 
@@ -923,6 +1080,7 @@ async function ensurePayPalSetup() {
       paypalConfig.business_plan_id &&
       paypalConfig.webhook_id
     );
+    if (paypalSetupComplete) paypalSetupError = "";
     return paypalSetupComplete;
   })();
 
@@ -947,7 +1105,7 @@ function requestToken(req) {
 
 async function oauthCodeLedger(action, value, expiresInSeconds = 300) {
   if (!OAUTH_CODE_URL || !BILLING_INGEST_TOKEN) throw new Error("oauth_code_ledger_not_configured");
-  const response = await fetch(OAUTH_CODE_URL, {
+  const response = await fetchWithTimeout(OAUTH_CODE_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -971,7 +1129,7 @@ async function validateCustomerToken(token, consume = false) {
   }
   if (!AUTH_URL) return { ok: false, error: "billing_auth_not_configured" };
   try {
-    const response = await fetch(AUTH_URL, {
+    const response = await fetchWithTimeout(AUTH_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token, consume })
@@ -1145,9 +1303,6 @@ async function waitForJob(jobId, waitSeconds = 20) {
 
 async function startPersistentJobCompat(args, access) {
   if (!v12ForAccess(access)) {
-    if (args.toolProfile && args.toolProfile !== "web") {
-      throw new Error("MCP tool profiles require KeepGoing v1.2");
-    }
     const legacy = await startJob({
       ...args,
       tier: access.tier || "pro",
@@ -1175,7 +1330,7 @@ async function startPersistentJobCompat(args, access) {
   });
 }
 
-async function listToolProfilesCompat(access) {
+function listToolProfilesCompat(access) {
   if (!v12ForAccess(access)) {
     return {
       profiles: [{
@@ -1251,13 +1406,23 @@ async function resumePersistentJobCompat(jobId, input, access) {
 
 function createMcpServer(access = {}) {
   const v12Access = v12ForAccess(access);
+  const ownerAutoContinue = Boolean(access?.admin || access?.tier === "owner");
   const oauthSecuritySchemes = [{ type: "oauth2", scopes: [OAUTH_SCOPE] }];
   const oauthMeta = { securitySchemes: oauthSecuritySchemes };
 
+  const publicV12Instructions = "Use KeepGoing when the user explicitly asks to use KeepGoing for a substantial objective or explicitly asks KeepGoing to continue or finish an existing objective. Prefer continue_until_done for that explicit KeepGoing intent. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
+  const ownerV12Instructions = "OWNER MODE: Treat plain continuation phrases such as continue, keep going, finish it, until done, don't stop, carry on, or equivalent as KeepGoing intent when they refer to the current substantial objective. Prefer continue_until_done for those phrases even when the user does not repeat the word KeepGoing. Preserve and reuse the same durable job where possible; never create duplicates just to continue. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
+  const startToolDescription = ownerAutoContinue
+    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
+    : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
+  const continueToolDescription = ownerAutoContinue
+    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. Reuse the same job where possible."
+    : "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data.";
+
   const server = new McpServer(
-    { name: "KeepGoing", version: v12Access ? "1.2.0-beta.2" : "1.1.0" },
+    { name: "KeepGoing", version: v12Access ? APP_VERSION : "1.1.0" },
     { instructions: v12Access
-      ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Before starting, gather relevant context already available in the conversation. If the objective requires repository code, files, Project Relay/workstation access, or another external capability, call list_tool_profiles first and choose the least-powerful approved profile that can complete the job; pass its name as toolProfile. Prefer read-only profiles unless writes are required. Never select an owner/write/admin profile for a non-owner account. Prefer continue_until_done for these natural-language requests. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
+      ? (ownerAutoContinue ? ownerV12Instructions : publicV12Instructions)
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -1288,10 +1453,12 @@ function createMcpServer(access = {}) {
         structuredContent: profile
       };
     });
+  }
 
+  if (v12Access) {
     server.registerTool("list_tool_profiles", {
       title: "List KeepGoing tool profiles",
-      description: "List the approved background-tool profiles available to this KeepGoing account. Use before starting a job that needs GitHub, files, Project Relay, or another configured MCP server. Does not reveal credentials or server secrets.",
+      description: "List background tool profiles available to the authenticated KeepGoing account. Returns safe capability metadata only and never returns credentials.",
       inputSchema: {},
       outputSchema: {
         profiles: z.array(z.object({
@@ -1310,7 +1477,7 @@ function createMcpServer(access = {}) {
         }))
       },
       securitySchemes: oauthSecuritySchemes,
-      _meta: oauthMeta,
+      _meta: { ...oauthMeta },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1319,7 +1486,7 @@ function createMcpServer(access = {}) {
       }
     }, async () => {
       try {
-        const result = await listToolProfilesCompat(access);
+        const result = listToolProfilesCompat(access);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {
         return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
@@ -1329,14 +1496,14 @@ function createMcpServer(access = {}) {
 
   server.registerTool("start_persistent_job", {
     title: "Start persistent job",
-    description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. For code, repository, file or workstation tasks, call list_tool_profiles first and pass the least-powerful suitable toolProfile. If relevant prior-chat or connected-tool context is available, gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
+    description: startToolDescription,
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(20000).optional(),
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
       toolProfile: z.string().min(1).max(64).optional()
     },
     outputSchema: {
@@ -1361,14 +1528,14 @@ function createMcpServer(access = {}) {
 
   server.registerTool("continue_until_done", {
     title: "Continue until done",
-    description: "PRIMARY KeepGoing entrypoint when the user says continue, keep going, finish it, until done, don't stop, complete the objective, or equivalent. For code, repository, file or workstation tasks, call list_tool_profiles first and pass the least-powerful suitable toolProfile so the background job has the tools it actually needs. Collect relevant current-chat context and pass it in context. Starts or idempotently recovers one durable job that keeps advancing server-side until completed or genuinely blocked by required user input/approval or a configured safety/cost limit. Never ask the user to type continue just to advance the same objective.",
+    description: continueToolDescription,
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
       mode: z.enum(["safe","balanced","max"]).default("max"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(20000).optional(),
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
       toolProfile: z.string().min(1).max(64).optional()
     },
     outputSchema: {
@@ -1533,7 +1700,7 @@ function createMcpServer(access = {}) {
       {
         name: "start_persistent_job",
         title: "Start persistent job",
-        description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If relevant prior-chat or connected-tool context is available, the host should gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
+        description: startToolDescription,
         inputSchema: {
           type: "object",
           properties: {
@@ -1542,7 +1709,7 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 20000 },
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
             toolProfile: { type: "string", minLength: 1, maxLength: 64 }
           },
           required: ["goal"],
@@ -1567,7 +1734,7 @@ function createMcpServer(access = {}) {
       {
         name: "continue_until_done",
         title: "Continue until done",
-        description: "PRIMARY entrypoint for 'continue', 'keep going', 'finish it', 'until done', 'don't stop', or equivalent. Gather relevant current-chat and connected-tool/plugin context first when useful, pass it in context, and keep the same durable job running until completion or a genuine required-user-input/safety stop. Never ask the user to type continue just to advance the same objective.",
+        description: continueToolDescription,
         inputSchema: {
           type: "object",
           properties: {
@@ -1576,7 +1743,7 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 20000 },
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
             toolProfile: { type: "string", minLength: 1, maxLength: 64 }
           },
           required: ["goal"],
@@ -1730,7 +1897,7 @@ function createMcpServer(access = {}) {
       tools.push({
         name: "list_tool_profiles",
         title: "List KeepGoing tool profiles",
-        description: "List approved background-tool profiles available to this account without revealing MCP credentials or secret headers.",
+        description: "List background tool profiles available to the authenticated KeepGoing account. Returns safe capability metadata only and never returns credentials.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1758,17 +1925,14 @@ function createMcpServer(access = {}) {
                         tool_count: { type: "number" },
                         required: { type: "boolean" }
                       },
-                      required: ["label", "tool_count", "required"],
+                      required: ["label","tool_count","required"],
                       additionalProperties: false
                     }
                   },
-                  max_tool_calls: { type: ["number", "null"] },
-                  policy_hash: { type: ["string", "null"] }
+                  max_tool_calls: { type: ["number","null"] },
+                  policy_hash: { type: ["string","null"] }
                 },
-                required: [
-                  "name","description","owner_only","write_capable","web",
-                  "mcp_servers","max_tool_calls","policy_hash"
-                ],
+                required: ["name","description","owner_only","write_capable","web","mcp_servers","max_tool_calls","policy_hash"],
                 additionalProperties: false
               }
             }
@@ -1865,13 +2029,24 @@ app.get("/.well-known/openai-apps-challenge", (_req, res) => {
   res.type("text/plain").send(OPENAI_APPS_CHALLENGE);
 });
 
+app.get("/.well-known/security.txt", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=3600");
+  res.type("text/plain").send([
+    "Contact: mailto:info@thesmashroom.co.uk",
+    "Expires: 2027-09-29T23:59:59Z",
+    "Preferred-Languages: en",
+    "Canonical: " + PUBLIC_BASE_URL + "/.well-known/security.txt",
+    "Policy: " + PUBLIC_BASE_URL + "/security"
+  ].join("\n") + "\n");
+});
+
 app.get("/.well-known/oauth-protected-resource", (_req, res) => {
   res.json({
     resource: PUBLIC_BASE_URL,
     authorization_servers: [PUBLIC_BASE_URL],
     scopes_supported: [OAUTH_SCOPE],
     bearer_methods_supported: ["header"],
-    resource_documentation: PUBLIC_BASE_URL + "/plugin",
+    resource_documentation: PUBLIC_BASE_URL + "/install",
     resource_policy_uri: PUBLIC_BASE_URL + "/privacy",
     resource_tos_uri: PUBLIC_BASE_URL + "/terms"
   });
@@ -1893,6 +2068,7 @@ app.get("/.well-known/oauth-authorization-server", (_req, res) => {
 });
 
 app.get("/oauth/authorize", async (req, res) => {
+  setOAuthPageHeaders(res);
   const responseType = String(req.query.response_type || "");
   const clientId = String(req.query.client_id || "");
   const redirectUri = String(req.query.redirect_uri || "");
@@ -1930,11 +2106,13 @@ app.get("/oauth/authorize", async (req, res) => {
     .map(([k, v]) => '<input type="hidden" name="' + htmlEscape(k) + '" value="' + htmlEscape(v) + '">')
     .join("");
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:560px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px;box-sizing:border-box}input{width:100%;padding:13px;border-radius:10px;border:1px solid #444;background:#0d1117;color:#fff;box-sizing:border-box;margin:10px 0 14px}button{width:100%;padding:12px;border:0;border-radius:10px;font-weight:700}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect KeepGoing</h1><p>Enter the private activation token for your existing KeepGoing account.</p><form method="post" action="/oauth/authorize">' + fields + '<label>Activation token</label><input name="activation_token" type="password" autocomplete="off" required><button type="submit">Connect to ChatGPT</button></form><p class="muted">KeepGoing never asks for your ChatGPT password. This page only verifies your existing KeepGoing account access.</p></div></body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#0d1117"><link rel="icon" href="/icon.svg"><title>Connect KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;display:grid;place-items:center;min-height:100vh;padding:24px}.card{width:min(620px,100%);box-sizing:border-box;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:30px}.brand{display:flex;align-items:center;gap:14px;margin-bottom:18px}.brand img{width:58px;height:58px;border-radius:14px}label{display:block;font-weight:700;margin:18px 0 8px}input{width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #484f58;background:#0d1117;color:#fff;font:inherit}button{width:100%;margin-top:18px;padding:13px;border:0;border-radius:10px;background:#5F50E6;color:#fff;font-weight:700;font-size:16px}.muted{color:#8b949e;font-size:14px}a{color:#A99FFF}</style></head><body><div class="card"><div class="brand"><img src="/icon.svg" alt=""><div><h1 style="margin:0">Connect KeepGoing</h1><div class="muted">Connect an existing KeepGoing account to ChatGPT</div></div></div><p>Enter your private KeepGoing activation token. This authorization page does not sell, upgrade or change subscriptions.</p><form method="post" action="/oauth/authorize">' + fields + '<label for="activation_token">Activation token</label><input id="activation_token" name="activation_token" type="password" autocomplete="off" required autofocus><button type="submit">Connect to ChatGPT</button></form><p class="muted">KeepGoing never asks for your ChatGPT password. Do not share your activation token. <a href="/privacy">Privacy</a> · <a href="/support">Support</a></p></div></body></html>';
   res.type("html").send(html);
+
 });
 
 app.post("/oauth/authorize", async (req, res) => {
+  setOAuthPageHeaders(res);
   const clientId = String(req.body.client_id || "");
   const redirectUri = String(req.body.redirect_uri || "");
   const state = String(req.body.state || "");
@@ -1959,7 +2137,7 @@ app.post("/oauth/authorize", async (req, res) => {
 
   const access = await validateCustomerToken(activationToken, false);
   if (!access.ok) {
-    return res.status(401).type("html").send('<!doctype html><html><body style="font-family:system-ui;padding:32px"><h1>KeepGoing could not be connected</h1><p>The activation token is invalid or the KeepGoing account is not active.</p><p>Return to ChatGPT and try again.</p></body></html>');
+    return res.status(401).type("html").send('<!doctype html><html><body style="font-family:system-ui;padding:32px"><h1>KeepGoing could not be connected</h1><p>The activation token is invalid or the subscription is not active.</p><p>Return to ChatGPT and try again.</p></body></html>');
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -2092,7 +2270,7 @@ app.post("/billing/claim", async (req, res) => {
   if (!sessionId) return res.status(400).json({ error: "session_id_required" });
   if (!CLAIM_URL || !BILLING_INGEST_TOKEN) return res.status(503).json({ error: "claim_not_configured" });
   try {
-    const response = await fetch(CLAIM_URL, {
+    const response = await fetchWithTimeout(CLAIM_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -2103,19 +2281,81 @@ app.post("/billing/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    return res.status(502).json({ error: String(error?.message || error) });
+    console.error("stripe_claim_error", safeLogError(error));
+    return res.status(502).json({ error: "claim_upstream_error" });
   }
 });
 
+app.post("/paypal/start-subscription", async (req, res) => {
+  const tier = String(req.body?.tier || "").trim().toLowerCase();
+  if (tier !== "pro" && tier !== "business") {
+    return res.status(400).type("html").send(infoPage("Invalid subscription", "<p>Please return to the subscription page and choose Pro or Business.</p>"));
+  }
+  try {
+    await ensurePayPalSetup();
+    const planId = tier === "business" ? paypalConfig.business_plan_id : paypalConfig.pro_plan_id;
+    if (!planId) {
+      return res.status(503).type("html").send(infoPage("Checkout temporarily unavailable", "<p>PayPal checkout is not ready yet. Please try again shortly.</p>"));
+    }
+    const claimId = "kgc_" + crypto.randomBytes(32).toString("hex");
+    const subscription = await paypalApi("/v1/billing/subscriptions", {
+      method: "POST",
+      headers: { "PayPal-Request-Id": "keepgoing-" + PAYPAL_MODE + "-" + tier + "-" + claimId.slice(-24) },
+      body: JSON.stringify({
+        plan_id: planId,
+        custom_id: claimId,
+        application_context: {
+          brand_name: "KeepGoing",
+          locale: "en-GB",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "SUBSCRIBE_NOW",
+          return_url: PUBLIC_BASE_URL + "/paypal/return?claim_id=" + encodeURIComponent(claimId),
+          cancel_url: PUBLIC_BASE_URL + "/subscribe?cancelled=1"
+        }
+      })
+    });
+    const approval = Array.isArray(subscription?.links)
+      ? subscription.links.find((link) => String(link?.rel || "").toLowerCase() === "approve")
+      : null;
+    const approvalUrl = safePayPalApprovalUrl(approval?.href);
+    if (!approvalUrl) throw new Error("PayPal approval URL missing or invalid");
+    return res.redirect(303, approvalUrl);
+  } catch (error) {
+    console.error("paypal_start_subscription_error", safeLogError(error), req.keepgoingRequestId || "");
+    return res.status(502).type("html").send(infoPage("Could not start PayPal checkout", "<p>PayPal checkout could not be started. No subscription was activated. Please return and try again.</p>"));
+  }
+});
+
+app.get("/paypal/return", (req, res) => {
+  const subscriptionId = String(req.query?.subscription_id || req.query?.subscriptionId || "").trim();
+  const claimId = String(req.query?.claim_id || "").trim();
+  if (!subscriptionId || !/^I-[A-Z0-9]+$/i.test(subscriptionId) || !/^kgc_[0-9a-f]{64}$/.test(claimId)) {
+    return res.status(400).type("html").send(infoPage("Could not confirm PayPal subscription", "<p>The PayPal return information is incomplete. Please return to the subscription page and try again.</p>"));
+  }
+  const target = "/subscribe?subscription_id=" + encodeURIComponent(subscriptionId) + "&claim_id=" + encodeURIComponent(claimId);
+  return res.redirect(303, target);
+});
 app.post("/paypal/claim", async (req, res) => {
   const subscriptionId = String(req.body?.subscription_id || "");
+  const claimId = String(req.body?.claim_id || "").trim();
   if (!subscriptionId) return res.status(400).json({ error: "subscription_id_required" });
+  if (!/^kgc_[0-9a-f]{64}$/.test(claimId)) return res.status(400).json({ error: "claim_id_invalid" });
   if (!CLAIM_URL || !BILLING_INGEST_TOKEN) return res.status(503).json({ error: "claim_not_configured" });
   try {
     await ensurePayPalSetup();
     const sub = await paypalApi("/v1/billing/subscriptions/" + encodeURIComponent(subscriptionId), { method: "GET" });
+    const customId = String(sub.custom_id || "");
+    const expectedClaim = Buffer.from(customId, "utf8");
+    const suppliedClaim = Buffer.from(claimId, "utf8");
+    const claimMatches = Boolean(
+      customId &&
+      expectedClaim.length === suppliedClaim.length &&
+      crypto.timingSafeEqual(expectedClaim, suppliedClaim)
+    );
+    if (!claimMatches) return res.status(403).json({ error: "claim_mismatch" });
+
     const status = String(sub.status || "").toUpperCase();
-    if (!["ACTIVE","APPROVED"].includes(status)) {
+    if (status !== "ACTIVE") {
       return res.status(409).json({ error: "subscription_not_active", status });
     }
     const planId = String(sub.plan_id || "");
@@ -2126,7 +2366,7 @@ app.post("/paypal/claim", async (req, res) => {
 
     await forwardBillingEvent("paypal", "BILLING.SUBSCRIPTION.ACTIVATED", { ...sub, status: "ACTIVE" }, tier);
 
-    const response = await fetch(CLAIM_URL, {
+    const response = await fetchWithTimeout(CLAIM_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -2137,96 +2377,142 @@ app.post("/paypal/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    return res.status(502).json({ error: String(error?.message || error) });
+    console.error("paypal_claim_error", safeLogError(error));
+    return res.status(502).json({ error: "claim_upstream_error" });
   }
 });
 
 app.get("/billing/success", (req, res) => {
   const sessionId = String(req.query.session_id || "");
   const sessionJson = JSON.stringify(sessionId);
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing subscription</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:680px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:18px;width:100%;box-sizing:border-box}button,a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:14px;border-radius:10px;margin:14px 0}.ok{color:#3fb950}.muted{color:#8b949e}</style></head><body><div class="card"><h1>KeepGoing subscription</h1><p id="status">Confirming your Stripe subscription…</p><div id="result"></div><p><a href="/">Return to plans</a></p></div><script>const sessionId=' + sessionJson + ';(async()=>{const status=document.getElementById("status"),result=document.getElementById("result");if(!sessionId){status.textContent="Missing checkout session.";return;}for(let i=0;i<12;i++){const r=await fetch("/billing/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:sessionId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){status.innerHTML="<span class=\"ok\">Subscription active.</span>";result.innerHTML="<p>Your "+j.tier+" plan includes "+j.monthly_limit+" KeepGoing jobs per month.</p><p>Save this private activation token. ChatGPT asks for it when you connect KeepGoing:</p><code id=\"mcp\"></code><button id=\"copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p><p class=\"muted\">Keep the token private. Claiming again rotates it.</p>";document.getElementById("mcp").textContent=j.token;document.getElementById("copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error!=="subscription_not_found"){status.textContent=j.error||"Could not activate subscription.";return;}await new Promise(r=>setTimeout(r,1500));}status.textContent="Payment completed, but activation is still processing. Refresh this page in a moment.";})().catch(()=>{document.getElementById("status").textContent="Could not confirm subscription.";});</script></body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing subscription</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:680px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:18px;width:100%;box-sizing:border-box}button,a{color:#A99FFF}code{display:block;word-break:break-all;background:#0d1117;padding:14px;border-radius:10px;margin:14px 0}.ok{color:#3fb950}.muted{color:#8b949e}</style></head><body><div class="card"><h1>KeepGoing subscription</h1><p id="status">Confirming your Stripe subscription…</p><div id="result"></div><p><a href="/subscribe">Return to subscription page</a></p></div><script>const sessionId=' + sessionJson + ';(async()=>{const status=document.getElementById("status"),result=document.getElementById("result");if(!sessionId){status.textContent="Missing checkout session.";return;}for(let i=0;i<12;i++){const r=await fetch("/billing/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:sessionId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){status.innerHTML="<span class=\"ok\">Subscription active.</span>";result.innerHTML="<p>Your "+j.tier+" plan includes "+j.monthly_limit+" KeepGoing jobs per month.</p><p>Save this private activation token. ChatGPT asks for it when you connect KeepGoing:</p><code id=\"mcp\"></code><button id=\"copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p><p class=\"muted\">Keep the token private. Claiming again rotates it.</p>";document.getElementById("mcp").textContent=j.token;document.getElementById("copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error!=="subscription_not_found"){status.textContent=j.error||"Could not activate subscription.";return;}await new Promise(r=>setTimeout(r,1500));}status.textContent="Payment completed, but activation is still processing. Refresh this page in a moment.";})().catch(()=>{document.getElementById("status").textContent="Could not confirm subscription.";});</script></body></html>';
   res.type("html").send(html);
 });
 
-app.get("/", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+app.get("/subscribe", async (req, res) => {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
 
-  const paypalReady = Boolean(PAYPAL_CLIENT_ID && paypalConfig.pro_plan_id && paypalConfig.business_plan_id);
-  const sdk = paypalReady
-    ? '<script src="https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=GBP&components=buttons&vault=true&intent=subscription"></script>'
-    : '';
-  const buttons = paypalReady
-    ? '<script>function kgApprove(data){const result=document.getElementById("kg-result");result.textContent="Activating account…";fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:data.subscriptionID})}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok||!j.token)throw new Error(j.error||"Activation failed");result.innerHTML="<strong>Your KeepGoing account is active.</strong><p>Save this private activation token. You will enter it only on the KeepGoing connection page in ChatGPT.</p><code id=\"kg-token\"></code><button id=\"kg-copy\" type=\"button\">Copy activation token</button><p><a href=\"/install\">Open connection instructions</a></p>";document.getElementById("kg-token").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);}).catch(e=>{result.textContent=e.message;});}paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.pro_plan_id) + '}),onApprove:kgApprove}).render("#paypal-pro");paypal.Buttons({createSubscription:(data,actions)=>actions.subscription.create({plan_id:' + JSON.stringify(paypalConfig.business_plan_id) + '}),onApprove:kgApprove}).render("#paypal-business");</script>'
-    : '';
+  const paypalReady = Boolean(paypalClientId && paypalClientSecret && paypalSetupComplete && paypalConfig.pro_plan_id && paypalConfig.business_plan_id);
+  const cancelled = String(req.query?.cancelled || "") === "1";
+  const returnedSubscriptionId = String(req.query?.subscription_id || "").trim();
+  const returnedClaimId = String(req.query?.claim_id || "").trim();
+  const canActivate = Boolean(/^I-[A-Z0-9]+$/i.test(returnedSubscriptionId) && /^kgc_[0-9a-f]{64}$/.test(returnedClaimId));
 
   const setupMessage = paypalReady
-    ? '<div class="status good"><span></span>Secure checkout available</div>'
-    : '<div class="status pending"><span></span>New paid accounts are temporarily unavailable while checkout is being activated</div>';
+    ? '<p class="good">Secure PayPal subscription checkout is ready.</p>'
+    : '<div class="notice"><strong>Checkout is being activated.</strong><br>The KeepGoing service is online, but new paid subscriptions are temporarily unavailable.</div>';
+  const cancelMessage = cancelled
+    ? '<div class="notice">PayPal checkout was cancelled. No KeepGoing subscription was activated.</div>'
+    : "";
+  const proAction = paypalReady
+    ? '<form method="post" action="/paypal/start-subscription"><input type="hidden" name="tier" value="pro"><button class="checkout" type="submit">Continue with PayPal</button></form>'
+    : '<span class="muted">Payment button appears when PayPal checkout is ready.</span>';
+  const bizAction = paypalReady
+    ? '<form method="post" action="/paypal/start-subscription"><input type="hidden" name="tier" value="business"><button class="checkout" type="submit">Continue with PayPal</button></form>'
+    : '<span class="muted">Payment button appears when PayPal checkout is ready.</span>';
 
-  const proAction = paypalReady ? '<div class="pay" id="paypal-pro"></div>' : '<p class="small">Checkout will appear here when live billing is ready.</p>';
-  const bizAction = paypalReady ? '<div class="pay" id="paypal-business"></div>' : '<p class="small">Checkout will appear here when live billing is ready.</p>';
+  const activationScript = canActivate
+    ? '<script>const subscriptionId=' + JSON.stringify(returnedSubscriptionId) + ';const claimId=' + JSON.stringify(returnedClaimId) + ';(async()=>{const result=document.getElementById("kg-result");for(let i=0;i<20;i++){result.textContent="Activating subscription…";const r=await fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:subscriptionId,claim_id:claimId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\" type=\"button\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);history.replaceState(null,"","/subscribe");return;}if(j.error==="subscription_not_active"&&(j.status==="APPROVED"||j.status==="APPROVAL_PENDING")){await new Promise(x=>setTimeout(x,1500));continue;}throw new Error(j.error||"Activation failed");}result.textContent="PayPal approved the subscription, but activation is still processing. Refresh this page in a moment.";})().catch(e=>{document.getElementById("kg-result").textContent=e.message||"Could not confirm subscription.";});</script>'
+    : "";
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>KeepGoing — Durable AI work that keeps moving</title>' +
-    '<meta name="description" content="KeepGoing turns substantial AI work into one durable job that can continue across model turns, recover progress and stop safely when user input is genuinely required.">' +
-    '<style>:root{--bg:#080C16;--panel:#101727;--panel2:#151D31;--text:#F7F8FC;--muted:#AEB7CB;--border:#293652;--violet:#7567FF;--violet2:#A99FFF;--mint:#27D3B2;--good:#55D69E;--warn:#F2C66D}*{box-sizing:border-box}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 15% -10%,#1A1D45 0,transparent 34%),var(--bg);color:var(--text);margin:0;line-height:1.55}.wrap{width:min(1120px,calc(100% - 36px));margin:auto}.nav{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 0}.brand{display:flex;align-items:center;gap:11px;font-size:18px;font-weight:800;letter-spacing:-.02em}.brand svg{width:36px;height:36px}.navlinks{display:flex;gap:18px;flex-wrap:wrap}.nav a,.footer a{color:#C9C4FF;text-decoration:none}.hero{padding:68px 0 48px;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:38px;align-items:center}.eyebrow{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--violet2)}h1{font-size:clamp(44px,7vw,78px);letter-spacing:-.055em;line-height:.98;margin:12px 0 22px;max-width:850px}.lead{font-size:clamp(18px,2.3vw,24px);color:var(--muted);max-width:760px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border-radius:12px;text-decoration:none;font-weight:750}.primary{background:linear-gradient(135deg,var(--violet),#6455EC);color:white}.secondary{border:1px solid var(--border);background:#111827;color:#E8EBF3}.heroCard{background:linear-gradient(180deg,#131B30,#0D1424);border:1px solid var(--border);border-radius:26px;padding:24px}.heroCard .flow{display:grid;gap:10px}.flowrow{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #26344F;background:#0D1424;border-radius:14px}.dot{width:10px;height:10px;border-radius:50%;background:var(--violet)}.flowrow:nth-child(2) .dot{background:#8C7EFF}.flowrow:nth-child(3) .dot{background:var(--mint)}.flowrow:nth-child(4) .dot{background:var(--good)}.status{display:flex;align-items:flex-start;gap:9px;margin-top:18px;color:var(--muted);font-size:14px}.status span{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:0 0 auto}.status.good span{background:var(--good)}.status.pending span{background:var(--warn)}.section{padding:58px 0}.section h2{font-size:clamp(30px,4vw,44px);letter-spacing:-.035em;margin:0 0 12px}.sectionLead{color:var(--muted);max-width:720px;margin:0 0 28px}.features{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:var(--panel);border:1px solid var(--border);border-radius:20px;padding:22px}.card h3{margin:8px 0 8px;font-size:18px}.card p{color:var(--muted);margin:0}.icon{width:36px;height:36px;display:grid;place-items:center;border-radius:11px;background:#1A2140;color:var(--violet2);font-weight:900}.proof{display:grid;grid-template-columns:1fr 1fr;gap:16px}.proof .card{padding:26px}.proof ul{margin:12px 0 0;padding-left:20px;color:var(--muted)}.pricing{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.priceCard{position:relative}.priceCard.featured{border-color:#6F61F1;background:linear-gradient(180deg,#171D3B,#111827)}.tag{position:absolute;right:16px;top:16px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:#DAD6FF}.price{font-size:38px;font-weight:850;letter-spacing:-.04em;margin:10px 0 4px}.price span{font-size:15px;color:var(--muted);font-weight:600}.small{color:var(--muted);font-size:14px}.pay{margin-top:18px;min-height:42px}#kg-result{margin:20px 0;padding:0 4px}#kg-result code{display:block;background:#080C16;border:1px solid var(--border);padding:12px;border-radius:10px;word-break:break-all;margin:10px 0}#kg-result button{background:#EDEBFF;color:#171329;border:0;border-radius:10px;padding:10px 14px;font-weight:800}.faq{display:grid;grid-template-columns:1fr 1fr;gap:14px}.footer{border-top:1px solid #202B42;margin-top:40px;padding:28px 0 42px;color:#7F8AA3;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}.footerLinks{display:flex;gap:14px;flex-wrap:wrap}@media(max-width:840px){.hero{grid-template-columns:1fr}.features{grid-template-columns:1fr 1fr}.pricing{grid-template-columns:1fr}.proof,.faq{grid-template-columns:1fr}}@media(max-width:520px){.wrap{width:min(100% - 24px,1120px)}.navlinks{display:none}.hero{padding-top:44px}.features{grid-template-columns:1fr}h1{font-size:48px}}</style>' + sdk + '</head><body>' +
-    '<header class="wrap nav"><div class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M13 32c0-10.5 8.5-19 19-19h7" fill="none" stroke="#7567FF" stroke-width="6" stroke-linecap="round"/><path d="M51 32c0 10.5-8.5 19-19 19h-7" fill="none" stroke="#27D3B2" stroke-width="6" stroke-linecap="round"/><path d="M37 7l9 6-9 6M27 57l-9-6 9-6" fill="none" stroke="#F7F8FC" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>KeepGoing</div><nav class="navlinks"><a href="#how">How it works</a><a href="#pricing">Plans</a><a href="/plugin">ChatGPT plugin</a><a href="/support">Support</a></nav></header>' +
-    '<main><section class="wrap hero"><div><div class="eyebrow">Durable AI jobs</div><h1>Long AI work, without the constant “continue”.</h1><p class="lead">KeepGoing turns substantial supported work into one durable job that can continue across model turns, recover after interruptions, and stop safely only when it is finished or genuinely needs you.</p><div class="actions"><a class="btn primary" href="#pricing">View plans</a><a class="btn secondary" href="/plugin">Already have access? Use the ChatGPT plugin</a></div></div><aside class="heroCard"><div class="eyebrow">One objective · one job</div><div class="flow"><div class="flowrow"><span class="dot"></span><div><strong>Start</strong><div class="small">Stable durable job ID</div></div></div><div class="flowrow"><span class="dot"></span><div><strong>Continue</strong><div class="small">PARTIAL work advances safely</div></div></div><div class="flowrow"><span class="dot"></span><div><strong>Recover</strong><div class="small">Watchdog + webhook repair progress</div></div></div><div class="flowrow"><span class="dot"></span><div><strong>Finish</strong><div class="small">Complete or genuinely blocked</div></div></div></div>' + setupMessage + '</aside></section>' +
-    '<section id="how" class="wrap section"><h2>Built for work that takes more than one turn</h2><p class="sectionLead">KeepGoing owns the job lifecycle instead of relying on you to restart the same objective again and again.</p><div class="features"><article class="card"><div class="icon">∞</div><h3>Durable continuation</h3><p>Stable job state, idempotent continuation and loop protection across multiple model turns.</p></article><article class="card"><div class="icon">↻</div><h3>Recoverable</h3><p>Return in another chat, list active jobs and pick up the exact same durable objective.</p></article><article class="card"><div class="icon">✓</div><h3>Permission-scoped tools</h3><p>Approved web and MCP profiles use explicit allowlists, hard budgets and safe audit metadata.</p></article><article class="card"><div class="icon">!</div><h3>Safe user stops</h3><p>Credentials, approvals and genuinely missing facts stop in input_required instead of being invented.</p></article></div></section>' +
-    '<section class="wrap section"><h2>Reliability you can inspect</h2><div class="proof"><article class="card"><h3>Server-side recovery</h3><ul><li>Signed OpenAI lifecycle webhooks</li><li>Watchdog repair after missed events</li><li>Duplicate-start and duplicate-turn protection</li><li>Hard token, tool-call, attempt and wall-clock ceilings</li></ul></article><article class="card"><h3>Controlled external tools</h3><ul><li>Per-job tool profiles</li><li>Owner-only write profiles</li><li>GitHub safe-branch + PR workflow</li><li>Project Relay local Owner Full Control still applies</li></ul></article></div></section>' +
-    '<section id="pricing" class="wrap section"><h2>Choose how much durable work you need</h2><p class="sectionLead">Monthly job limits keep costs predictable. Per-job safety limits prevent runaway continuations.</p><div class="pricing"><article class="card priceCard"><div class="eyebrow">Free</div><div class="price">£0</div><p>3 jobs/month</p><p class="small">Free rollout follows the paid beta.</p></article><article class="card priceCard featured"><span class="tag">Popular</span><div class="eyebrow">Pro</div><div class="price">£7.99<span>/month</span></div><p>100 jobs/month</p><p class="small">Up to 3 public-web/tool calls per job. Durable continuation budgets included.</p>' + proAction + '</article><article class="card priceCard"><div class="eyebrow">Business</div><div class="price">£29<span>/month</span></div><p>500 jobs/month</p><p class="small">Up to 5 public-web/tool calls per job with larger continuation ceilings.</p>' + bizAction + '</article></div><div id="kg-result" aria-live="polite"></div></section>' +
-    '<section class="wrap section"><h2>Questions before you start</h2><div class="faq"><article class="card"><h3>Does KeepGoing control ChatGPT itself?</h3><p>No. It runs a durable server-side job. It cannot expose private reasoning or force a new ChatGPT message after a chat turn ends.</p></article><article class="card"><h3>Can it use GitHub or my PC?</h3><p>Only when an approved background tool profile is explicitly configured. Those tools keep their own authorization and local safety boundaries.</p></article><article class="card"><h3>Will it keep going forever?</h3><p>No. Every job has attempt, token, tool-call and wall-clock ceilings, plus repeated-output loop protection.</p></article><article class="card"><h3>Already have a KeepGoing account?</h3><p>Use the commerce-neutral <a href="/plugin">ChatGPT plugin page</a> and connect your existing account through OAuth.</p></article></div></section></main>' +
-    '<footer class="wrap footer"><span>KeepGoing · commercial beta</span><span class="footerLinks"><a href="/plugin">Plugin</a><a href="/install">Connect</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/security">Security</a></span></footer>' + buttons + '</body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#0d1117"><title>KeepGoing direct subscriptions</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px;line-height:1.55}.wrap{max-width:900px;margin:auto}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin:22px 0}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}a{color:#A99FFF}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}.checkout{width:100%;border:0;border-radius:999px;background:#ffc439;color:#111;padding:13px 18px;font:700 16px system-ui;cursor:pointer;margin-top:10px}button{padding:10px 14px;margin-top:8px}#kg-result{margin:18px 0}</style></head><body><div class="wrap"><h1>KeepGoing direct subscriptions</h1><p>This is KeepGoing’s direct web checkout, separate from the ChatGPT plugin experience.</p>' + cancelMessage + setupMessage + '<div class="plans"><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month · up to 3 hosted web tool calls per job.</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month · up to 5 hosted web tool calls per job.</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted">You are redirected to PayPal to approve the subscription. KeepGoing never receives your PayPal password or full card details. After PayPal confirms an active subscription, KeepGoing issues a private activation token.</p><p><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/refunds">Refunds & cancellation</a> · <a href="/support">Support</a></p></div>' + activationScript + '</body></html>';
+  res.type("html").send(html);
+});
+app.get(["/", "/plugin"], (_req, res) => {
+  const socialImage = PUBLIC_BASE_URL + "/icon.png";
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><meta name="description" content="KeepGoing keeps substantial AI jobs progressing without repeated continue prompts."><link rel="canonical" href="' + htmlEscape(PUBLIC_BASE_URL + "/") + '"><link rel="icon" href="/icon.svg"><link rel="manifest" href="/manifest.json"><meta property="og:type" content="website"><meta property="og:site_name" content="KeepGoing"><meta property="og:title" content="KeepGoing — persistent AI work"><meta property="og:description" content="Durable AI jobs that keep progressing without repeated continue prompts."><meta property="og:url" content="' + htmlEscape(PUBLIC_BASE_URL + "/") + '"><meta property="og:image" content="' + htmlEscape(socialImage) + '"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="KeepGoing — persistent AI work"><meta name="twitter:description" content="Durable AI jobs that keep progressing without repeated continue prompts."><meta name="twitter:image" content="' + htmlEscape(socialImage) + '"><title>KeepGoing — persistent AI work</title><script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"KeepGoing","applicationCategory":"ProductivityApplication","operatingSystem":"Web","description":"Durable AI jobs that keep progressing without repeated continue prompts."}</script><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px;line-height:1.55}.wrap{max-width:1040px;margin:auto}.hero{display:flex;gap:20px;align-items:center;margin-bottom:24px}.logo{width:92px;height:92px;border-radius:24px}.tag{color:#A99FFF;font-weight:700;letter-spacing:.04em}.actions{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}.btn{display:inline-block;padding:11px 16px;border-radius:10px;background:#5F50E6;color:#fff;text-decoration:none;font-weight:700}.btn.secondary{background:#21262d;border:1px solid #30363d}.grid,.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin:22px 0}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.muted{color:#8b949e}.notice{background:#10253a;border:1px solid #5F50E6;border-radius:12px;padding:14px;margin:18px 0}a{color:#A99FFF}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}h2{margin-top:34px}</style></head><body><div class="wrap"><div class="hero"><img class="logo" src="/icon.svg" alt="KeepGoing icon"><div><div class="tag">CONTINUE WITHOUT THE CHASING</div><h1>KeepGoing</h1><p>Persistent AI background jobs for substantial work, research and long-running tasks. KeepGoing preserves the same job so ChatGPT can resume, check and continue it instead of repeatedly restarting the work.</p><div class="actions"><a class="btn" href="/install">Connect existing account</a><a class="btn secondary" href="/status">Service status</a></div></div></div><div class="notice"><strong>Existing KeepGoing account required.</strong><br>Connect the app in ChatGPT and use your existing activation token. Purchasing and account upgrades are not part of the ChatGPT plugin experience.</div><h2>Built for work that takes more than one turn</h2><div class="grid"><div class="card"><h3>Keep the same job</h3><p>Stable job IDs let ChatGPT check, wait on and resume the same durable task instead of starting again.</p></div><div class="card"><h3>Continue automatically</h3><p>The watchdog can advance partial work server-side, within hard cost and safety limits.</p></div><div class="card"><h3>Recover in a new chat</h3><p>List your own active jobs later and carry on from the same durable state.</p></div></div><h2>Existing-account access</h2><div class="card"><p>KeepGoing uses the limits and features already attached to your existing account. If a requested feature is unavailable for your current entitlement, KeepGoing can explain that limitation without starting a purchase or upgrade flow in ChatGPT.</p></div><h2>Useful for</h2><div class="grid"><div class="card"><strong>Research & comparisons</strong><p>Longer evidence-gathering jobs that need multiple passes.</p></div><div class="card"><strong>Build & debugging work</strong><p>Structured objectives where the job should keep progressing until a real blocker appears.</p></div><div class="card"><strong>Operational follow-through</strong><p>Multi-step work where you want a stable checkpoint and clear completion state.</p></div></div><h2>Questions?</h2><p><a href="/faq">Read the FAQ</a> or <a href="/support">contact support</a>.</p><p class="muted" style="margin-top:26px"><a href="/install">Install</a> · <a href="/status">Status</a> · <a href="/faq">FAQ</a> · <a href="/changelog">Changelog</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/refunds">Refunds & cancellation</a> · <a href="/support">Support</a> · <a href="/security">Security</a></p></div></body></html>';
   res.type("html").send(html);
 });
 
-app.get("/plugin", (_req, res) => {
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>KeepGoing — Durable AI work in ChatGPT</title>' +
-    '<meta name="description" content="KeepGoing lets supported AI work continue as one durable job across model turns, with recovery, bounded tools and explicit user stops.">' +
-    '<style>body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090D18;color:#F7F8FC;margin:0;padding:32px;line-height:1.55}.wrap{max-width:980px;margin:auto}.hero{padding:36px 0 22px}.eyebrow{color:#A99FFF;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px}.hero h1{font-size:clamp(38px,7vw,68px);line-height:1.02;margin:12px 0 18px;letter-spacing:-.04em;max-width:820px}.lead{font-size:clamp(18px,2.6vw,24px);color:#B7BED0;max-width:760px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:28px 0}.card{background:#111827;border:1px solid #27324A;border-radius:20px;padding:22px}.card h2{font-size:18px;margin:0 0 8px}.card p{margin:0;color:#AEB7CC}.flow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:24px 0}.step{background:#151C30;border:1px solid #2E3A58;border-radius:999px;padding:10px 14px;color:#DDE3F0}.arrow{color:#7567FF;font-weight:800}.notice{border-left:4px solid #7567FF;background:#11172A;padding:16px 18px;border-radius:12px;margin:28px 0;color:#C9D1E3}.links{display:flex;flex-wrap:wrap;gap:14px;margin-top:30px}.links a{color:#C2BBFF;text-decoration:none}.links a:hover{text-decoration:underline}.mark{display:inline-grid;place-items:center;width:52px;height:52px;border-radius:16px;background:#151C30;border:1px solid #33415F;margin-right:12px;vertical-align:middle}.mark svg{width:34px;height:34px}.foot{color:#7F8AA3;font-size:14px;margin-top:34px}</style></head><body><main class="wrap">' +
-    '<section class="hero"><div class="eyebrow">ChatGPT productivity plugin</div>' +
-    '<h1><span class="mark"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M13 32c0-10.5 8.5-19 19-19h7" fill="none" stroke="#7567FF" stroke-width="6" stroke-linecap="round"/><path d="M51 32c0 10.5-8.5 19-19 19h-7" fill="none" stroke="#27D3B2" stroke-width="6" stroke-linecap="round"/><path d="M37 7l9 6-9 6M27 57l-9-6 9-6" fill="none" stroke="#F7F8FC" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>KeepGoing</h1>' +
-    '<p class="lead">Turn substantial supported work into one durable job that can survive normal chat-turn boundaries, continue partial work safely, and be recovered later without starting over.</p></section>' +
-    '<div class="flow"><span class="step">Start once</span><span class="arrow">→</span><span class="step">Work across turns</span><span class="arrow">→</span><span class="step">Recover the same job</span><span class="arrow">→</span><span class="step">Stop only when done or genuinely blocked</span></div>' +
-    '<section class="grid"><article class="card"><h2>Durable by design</h2><p>Stable job IDs, server-side recovery, idempotent continuations and bounded retry logic.</p></article>' +
-    '<article class="card"><h2>Tool-aware</h2><p>Jobs can use explicitly approved web or MCP tool profiles. Tool access is allowlisted and budgeted.</p></article>' +
-    '<article class="card"><h2>Recoverable</h2><p>List active jobs in a later chat, inspect the latest result, resume requested input, or cancel cleanly.</p></article>' +
-    '<article class="card"><h2>Permission-scoped</h2><p>KeepGoing does not inherit every connector in your chat. Private tools require explicit server-side configuration and normal authorization.</p></article></section>' +
-    '<div class="notice"><strong>Existing accounts:</strong> connect KeepGoing through the ChatGPT Plugins Directory and sign in when prompted. This plugin page does not sell plans or initiate checkout.</div>' +
-    '<div class="links"><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a></div>' +
-    '<p class="foot">KeepGoing can advance its durable server job after a foreground chat turn ends, but it cannot independently force a new ChatGPT message to appear. Return to the same job to retrieve its latest result.</p>' +
-    '</main></body></html>';
+app.get("/icon.svg", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  res.type("image/svg+xml").send('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><defs><linearGradient id="kg" x1="48" y1="48" x2="208" y2="208" gradientUnits="userSpaceOnUse"><stop stop-color="#7567FF"/><stop offset="1" stop-color="#27D3B2"/></linearGradient></defs><rect width="256" height="256" rx="56" fill="#0B1020"/><path d="M54 128c0-40.87 33.13-74 74-74h29" fill="none" stroke="url(#kg)" stroke-width="24" stroke-linecap="round"/><path d="M202 128c0 40.87-33.13 74-74 74H99" fill="none" stroke="url(#kg)" stroke-width="24" stroke-linecap="round"/><path d="M151 34l36 20-36 20M105 222l-36-20 36-20" fill="none" stroke="#F7F8FC" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/><circle cx="128" cy="128" r="33" fill="#151C30" stroke="#F7F8FC" stroke-width="5"/><path d="M119 109l29 19-29 19z" fill="url(#kg)"/></svg>');
+});
+
+app.get("/icon.png", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  res.type("png").sendFile(ICON_PNG_FILE);
+});
+
+app.get("/manifest.json", (_req, res) => {
+  res.json({
+    name: "KeepGoing",
+    short_name: "KeepGoing",
+    description: "Persistent AI jobs that continue without repeated continue prompts.",
+    start_url: "/",
+    display: "standalone",
+    background_color: "#0d1117",
+    theme_color: "#5F50E6",
+    icons: [{ src: "/icon.png", sizes: "256x256", type: "image/png" }, { src: "/icon.svg", sizes: "any", type: "image/svg+xml" }]
+  });
+});
+
+app.get("/robots.txt", (_req, res) => {
+  res.type("text/plain").send("User-agent: *\nAllow: /\nDisallow: /subscribe\nDisallow: /oauth/\nDisallow: /billing/\nDisallow: /paypal/\nDisallow: /openai/\nDisallow: /mcp\nSitemap: " + PUBLIC_BASE_URL + "/sitemap.xml\n");
+});
+
+app.get("/sitemap.xml", (_req, res) => {
+  const paths = ["/", "/plugin", "/install", "/faq", "/status", "/changelog", "/privacy", "/terms", "/refunds", "/support", "/security"];
+  const urls = paths.map((path) => "<url><loc>" + htmlEscape(PUBLIC_BASE_URL + path) + "</loc></url>").join("");
+  res.type("application/xml").send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + urls + "</urlset>");
+});
+
+app.get("/faq", (_req, res) => {
+  res.type("html").send(infoPage("Frequently asked questions", [
+    "<h2>What problem does KeepGoing solve?</h2><p>It gives substantial AI work a stable durable job so you do not have to repeatedly restart the same objective or type continue just to advance it.</p>",
+    "<h2>Does it bypass ChatGPT limits or safeguards?</h2><p>No. KeepGoing works through normal OpenAI and ChatGPT permissions, plan limits and safety controls.</p>",
+    "<h2>Can it create new ChatGPT messages by itself?</h2><p>No. The server-side job can continue supported work in the background, and ChatGPT can later retrieve the durable result or status.</p>",
+    "<h2>What happens if information is genuinely missing?</h2><p>The job enters <code>input_required</code> instead of inventing a credential, approval or fact. You can then resume that same job.</p>",
+    "<h2>Can I recover a job in another chat?</h2><p>Yes. <code>list_persistent_jobs</code> returns your own recent jobs, and status/result tools reuse the same job ID.</p>",
+    "<h2>Is my activation token my ChatGPT password?</h2><p>No. KeepGoing never needs your ChatGPT password. Treat the activation token as a private KeepGoing credential.</p>",
+    "<h2>What if my account does not include a feature?</h2><p>KeepGoing can explain that a feature is unavailable for your current entitlement. The ChatGPT plugin does not initiate purchases or upgrades.</p>"
+  ].join("")));
+});
+
+app.get("/status", (_req, res) => {
+  const html = infoPage("Service status", [
+    "<p id=\"summary\">Checking KeepGoing…</p>",
+    "<ul><li>API / engine: <strong id=\"engine\">checking</strong></li><li>Durable store: <strong id=\"store\">checking</strong></li><li>Account connection: <strong id=\"oauth\">checking</strong></li></ul>",
+    "<p class=\"muted\">This public status page reports the plugin-facing service, durable store and account connection. The watchdog is the production continuation mechanism; the OpenAI webhook is optional.</p>",
+    "<script>(async()=>{const e=id=>document.getElementById(id);try{const r=await fetch(\"/readiness\",{cache:\"no-store\"});const j=await r.json();e(\"summary\").textContent=j.ok?\"KeepGoing core service is operational.\":\"KeepGoing is currently degraded.\";e(\"engine\").textContent=j.engine_ready?\"operational\":\"degraded\";e(\"store\").textContent=j.durable_store_ready?\"operational\":\"degraded\";e(\"oauth\").textContent=j.oauth_ready?\"operational\":\"degraded\";}catch{e(\"summary\").textContent=\"Status check unavailable.\";}})();</script>"
+  ].join(""));
   res.type("html").send(html);
 });
 
-
+app.get("/changelog", (_req, res) => {
+  res.type("html").send(infoPage("Changelog", [
+    "<h2>1.2.0-beta.23 — 30 September 2026</h2><ul><li>Added permission-scoped background MCP tool profiles with explicit allowlists, durable policy hashes and safe tool-call auditing.</li><li>Added the owner-only private GitHub worker with repository allowlists, KeepGoing-safe branch writes, conflict-aware file updates and pull-request creation.</li><li>Added Project Relay read/developer profiles while keeping destructive Relay administration disabled unless explicitly configured.</li><li>Added final Plugin Directory package validation, branded light/dark assets, commerce-neutral plugin listing, reproducible submission ZIP and beta.23 commercial release checks.</li></ul>",
+    "<h2>1.2.0-beta.22 — 29 September 2026</h2><ul><li>Added final OpenAI submission metadata directly to the plugin package: five positive tests, three negative tests, UK availability, commerce declaration and release notes.</li><li>Polished the public listing description and prepared the upload-ready package copy.</li></ul><h2>1.2.0-beta.21 — 29 September 2026</h2><ul><li>Hardened public-directory metadata and plugin-facing commerce boundaries for current OpenAI review requirements.</li><li>Added the required support URL, directory-length short description, accessible light/dark brand colors, and removed subscription-plan cards from the plugin website.</li><li>Added a complete submission-readiness checklist with reviewer tests and annotation justifications.</li></ul><h2>1.2.0-beta.20 — 29 September 2026</h2><ul><li>Hardened durable job startup against transient provider/session failures.</li><li>Initial Agent-session creation now uses a deterministic idempotency key, retries transient failures, recovers accepted sessions by metadata, and can revive a failed pre-turn reservation from the same client request without consuming quota twice.</li><li>The production startup command now runs the full regression suite before serving traffic.</li></ul><h2>1.2.0-beta.19 — 29 September 2026</h2><ul><li>Replaced the embedded PayPal JavaScript button flow with a server-side PayPal subscription approval redirect after live-browser verification found the embedded buttons were not rendering.</li><li>Added server-generated claim binding, validated PayPal approval URLs, cancellation return handling and post-approval activation recovery.</li></ul><h2>1.2.0-beta.18 — 29 September 2026</h2><ul><li>Cleared stale PayPal setup-error state whenever Live checkout is healthy.</li><li>Final commercial readiness/status cleanup after successful PayPal Live bootstrap.</li></ul><h2>1.2.0-beta.17 — 29 September 2026</h2><ul><li>Added a one-time secure PayPal Live bootstrap page so credentials no longer need to be pasted into chat or Render manually.</li><li>PayPal credentials are validated live, encrypted with KeepGoing's server key and persisted only in the protected billing config.</li><li>Stored PayPal credentials are loaded automatically after service restarts.</li></ul><h2>1.2.0-beta.16 — 29 September 2026</h2><ul><li>Removed unsupported automatic Agent-session webhook provisioning introduced in beta.15.</li><li>Promoted the proven watchdog recovery path to the production durability requirement.</li><li>OpenAI webhook support remains optional and can be enabled only when a compatible event stream is configured.</li><li>Readiness now reports <code>continuation_mode</code> and <code>watchdog_ready</code>.</li></ul><h2>1.2.0-beta.15 — 29 September 2026</h2><ul><li>Added managed OpenAI webhook provisioning using the existing project API key.</li><li>KeepGoing now creates or updates its Agents-session webhook and obtains/rotates the signing secret automatically when no manual secret is configured.</li><li>Readiness exposes only managed/ready/error booleans; the signing secret is never returned.</li></ul><h2>1.2.0-beta.14 — 29 September 2026</h2><ul><li>Added the official portable OpenAI plugin package manifest.</li><li>Bundled the KeepGoing PNG asset as both the plugin composer icon and logo.</li><li>Added the portable MCP package definition for the live KeepGoing endpoint.</li><li>Added CI validation for plugin package metadata and asset paths.</li></ul><h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
+    "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
+    "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
+  ].join("")));
+});
 function infoPage(title, body) {
-  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#A99FFF}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/plugin">← KeepGoing plugin</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#A99FFF}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/">← KeepGoing</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
 }
 
 app.get("/install", (_req, res) => {
   res.type("html").send(infoPage("Install KeepGoing", [
     "<p><strong>Connection endpoint:</strong> <code>" + htmlEscape(PUBLIC_BASE_URL + "/mcp") + "</code></p>",
-    "<p>KeepGoing uses OAuth. When ChatGPT opens the KeepGoing connection page, enter the private activation token for your existing KeepGoing account. Do not put the token in the MCP URL.</p>",
+    "<p>KeepGoing uses OAuth. Existing customers connect with their private activation token. Do not put the token in the MCP URL or paste it into a normal chat message.</p>",
     "<h2>Private beta / developer connection</h2>",
-    "<ol><li>In an eligible ChatGPT account, create or connect a custom MCP app.</li><li>Use the endpoint shown above.</li><li>Select OAuth when prompted.</li><li>Complete the KeepGoing connection page with your activation token.</li><li>Scan the tools and confirm <code>start_persistent_job</code>, <code>get_persistent_job</code>, <code>wait_for_persistent_job</code>, and <code>cancel_persistent_job</code>.</li></ol>",
+    "<ol><li>In an eligible ChatGPT account, create or connect a custom MCP app.</li><li>Use the endpoint shown above.</li><li>Select OAuth when prompted.</li><li>Complete the KeepGoing connection page with your activation token.</li><li>Scan the tools and confirm <code>continue_until_done</code>, <code>start_persistent_job</code>, <code>get_persistent_job</code>, <code>wait_for_persistent_job</code>, <code>list_persistent_jobs</code>, <code>resume_persistent_job</code> and <code>cancel_persistent_job</code>.</li><li>Try: <code>Use KeepGoing and finish this job until done.</code></li></ol>",
     "<p class=\"muted\">ChatGPT plan, workspace and plugin/app availability can affect whether custom MCP connections are available. The public Plugin Directory release will use the same hosted service after approval.</p>",
-    "<h2>What KeepGoing does</h2><p>It runs supported work as a durable KeepGoing job backed by OpenAI model sessions/turns, preserves a stable job ID, and can continue PARTIAL work server-side within configured limits. Optional approved tool profiles can give an owner job scoped access to GitHub, Project Relay or another configured MCP server. It does not control ChatGPT's private reasoning, bypass product limits, or inherit every connector installed in the foreground chat.</p>"
+    "<h2>What KeepGoing does</h2><p>It runs supported work as a durable OpenAI job/session, stores the KeepGoing job ID and lets ChatGPT check, recover or resume that same job. The server-side watchdog can continue partial work within hard limits. It does not control ChatGPT's private reasoning, bypass product limits, or force a new chat turn after ChatGPT has already ended one.</p>"
   ].join("")));
 });
 
 app.get("/privacy", (_req, res) => {
   res.type("html").send(infoPage("Privacy policy", [
-    "<p><strong>Last updated:</strong> 28 September 2026</p>",
-    "<p>KeepGoing processes the information needed to operate subscriptions, durable jobs and any background tools you deliberately select.</p>",
+    "<p><strong>Last updated:</strong> 30 September 2026</p>",
+    "<p>KeepGoing processes the minimum information needed to operate account access, durable jobs and any background tools you deliberately select.</p>",
     "<h2>Information processed</h2>",
-    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, optional host context and selected tool profile submitted for a durable job are sent to OpenAI's API to run that job.</li><li>Durable orchestration metadata such as a hashed owner identifier, provider session ID, job state, attempt/budget counters, tool-profile name/policy hash and safe error metadata.</li><li>When an approved MCP tool profile is used, the job may send the minimum tool arguments/data needed for that call to the configured tool provider, for example GitHub or Project Relay.</li><li>Tool audit records contain safe metadata such as tool type/name/server/status/turn; KeepGoing does not deliberately store tool arguments or tool outputs in its durable audit table.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
+    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, options and—only when needed—a brief task-specific checkpoint submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>KeepGoing does not independently retrieve your full ChatGPT history. The MCP context field is intentionally bounded and should never contain full chat transcripts, passwords, API keys, payment credentials or unrelated personal data.</li><li>When an approved tool profile is selected, the minimum arguments/data needed for that call may be sent to the configured tool provider, such as GitHub or Project Relay.</li><li>Tool-audit rows store bounded metadata such as tool type/name/server/status/turn. KeepGoing does not deliberately store tool arguments or tool outputs in that audit table.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
     "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. When you select a configured background-tool profile, relevant tool calls may also be sent to that profile's MCP provider, such as GitHub or Project Relay. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
-    "<h2>Retention</h2><p>Active subscription and usage records are retained while needed to operate the subscription. Revoked access-token hashes may be retained for support, fraud prevention and security. Subscription/payment metadata may be retained for accounting, tax, billing reconciliation and dispute handling as required. OAuth credentials have bounded lifetimes. KeepGoing durable terminal-job metadata and safe webhook/tool-audit metadata use bounded retention cleanup; active jobs are not removed by that cleanup. OpenAI and any selected MCP provider process/retain data according to the data controls, retention terms and account settings applicable to those services. Hosting providers may retain technical logs according to their own policies.</p>",
+    "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. KeepGoing terminal-job metadata and safe webhook/tool-audit metadata use bounded retention cleanup; active jobs are not removed by that cleanup. OpenAI and any selected MCP provider may retain provider-side state according to the applicable account/data controls. Hosting providers may retain technical logs according to their own policies.</p>",
     "<h2>Your choices</h2><p>Do not submit information you do not want processed by the service. You can cancel a subscription through the available billing provider. For account or privacy questions, contact <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>",
     "<p class=\"muted\">KeepGoing is in commercial beta. This policy will be updated if the data flow or providers materially change.</p>"
   ].join("")));
@@ -2234,15 +2520,25 @@ app.get("/privacy", (_req, res) => {
 
 app.get("/terms", (_req, res) => {
   res.type("html").send(infoPage("Terms of service", [
-    "<p><strong>Last updated:</strong> 28 September 2026</p>",
+    "<p><strong>Last updated:</strong> 30 September 2026</p>",
     "<p>KeepGoing is a subscription software service for persistent AI background jobs. By purchasing or using a paid plan you agree to these terms.</p>",
     "<h2>Plans and billing</h2><p>Paid plans renew monthly until cancelled. Current advertised limits are 100 jobs/month for Pro and 500 jobs/month for Business. A job is counted when a new persistent background job is started.</p>",
     "<h2>Cancellation</h2><p>You may cancel future renewal through the available billing provider. Any rights you have under applicable consumer law are not excluded. Where applicable law provides a cooling-off or cancellation right, that right continues to apply.</p>",
-    "<h2>Usage limits</h2><p>Plans include a monthly number of new background jobs and per-job limits on turns, model tokens, web/MCP tool calls and wall-clock duration. These limits protect service reliability and predictable subscription pricing. Current advertised limits are shown on the plan page and may be adjusted for future billing periods with appropriate notice.</p><h2>Connected tools</h2><p>Background tool profiles are optional and permission-scoped. A selected profile may read or modify data in an approved external system. Owner/write profiles are restricted to owner accounts and explicit server configuration. You remain responsible for choosing an appropriate profile and reviewing material changes. KeepGoing's built-in GitHub write profile is restricted to configured repositories and KeepGoing-safe branches and can open but not merge pull requests. Broader destructive Project Relay administration is disabled unless explicitly configured.</p>",
-    "<h2>Acceptable use</h2><p>You must not use KeepGoing for unlawful activity, to bypass platform safeguards, to attack or disrupt systems, or to access accounts or information without permission.</p>",
-    "<h2>Service limitations</h2><p>KeepGoing depends on third-party services including ChatGPT/OpenAI, hosting, payment providers and any selected MCP/tool provider. Availability and capabilities can therefore be affected by their outages, permissions, limits or product changes. The durable server can advance its own job after a foreground chat turn ends, but it cannot independently force a new ChatGPT message to appear; the result is retrieved later through the durable job.</p>",
+    "<h2>Usage limits</h2><p>Plans include a monthly number of new background jobs and reasonable per-job technical limits on generated tokens and hosted tool calls. These limits protect service reliability and predictable subscription pricing. Current limits are shown on the plan page and may be adjusted for future billing periods with appropriate notice.</p>",
+    "<h2>Connected tools</h2><p>Background tool profiles are optional and permission-scoped. A selected profile may read or modify data in an approved external system. Write-capable profiles are restricted to owner accounts and explicit server configuration. The built-in GitHub write profile is restricted to configured repositories and KeepGoing-safe branches and can open, but not merge, pull requests. Broader destructive Project Relay administration is disabled unless explicitly enabled.</p><h2>Acceptable use</h2><p>You must not use KeepGoing for unlawful activity, to bypass platform safeguards, to attack or disrupt systems, or to access accounts or information without permission.</p>",
+    "<h2>Service limitations</h2><p>KeepGoing depends on third-party services including ChatGPT/OpenAI, hosting and payment providers. Availability can therefore be affected by their outages, limits, plan rules or product changes. The durable KeepGoing server can advance supported work after a foreground chat turn ends, but it cannot independently force a new ChatGPT message to appear. Results are retrieved later through the durable job.</p>",
     "<h2>Liability</h2><p>KeepGoing is provided as a productivity tool. You remain responsible for reviewing important outputs and actions. Nothing in these terms excludes liability that cannot legally be excluded.</p>",
     "<h2>Contact</h2><p>Questions about these terms: <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>"
+  ].join("")));
+});
+
+app.get("/refunds", (_req, res) => {
+  res.type("html").send(infoPage("Refunds & cancellation", [
+    "<p><strong>Last updated:</strong> 29 September 2026</p>",
+    "<p>Paid KeepGoing plans renew monthly until cancelled. You can cancel future renewals through the payment provider used for your subscription.</p>",
+    "<h2>Refunds</h2><p>If KeepGoing is materially unavailable or does not provide the paid service described for reasons within our control, contact support and we will review a reasonable refund request. This does not limit any statutory rights you may have.</p>",
+    "<h2>Cooling-off and consumer rights</h2><p>Where applicable law gives you cancellation, cooling-off or refund rights, those rights continue to apply and are not excluded by this policy.</p>",
+    "<h2>How to request help</h2><p>Email <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a> with the payment-provider transaction or subscription reference. Never send passwords, card details or activation tokens.</p>"
   ].join("")));
 });
 
@@ -2257,13 +2553,13 @@ app.get("/support", (_req, res) => {
 app.get("/security", (_req, res) => {
   res.type("html").send(infoPage("Security", [
     "<p>KeepGoing uses HTTPS with HSTS, OAuth authorization-code flow with PKCE for ChatGPT connections, single-use authorization codes backed by a server-only ledger, short-lived access tokens, refresh tokens, subscription validation, rate limiting on sensitive authorization/claim routes, no-store caching on sensitive routes and signed payment webhooks where configured.</p>",
-    "<h2>Secrets</h2><p>Activation tokens, OAuth tokens, GitHub tokens, MCP authorization values and API keys are credentials. Keep them private. KeepGoing does not require your ChatGPT password. Background-tool credentials are configured in server secret storage or an OpenAI Agents Vault and are not returned by list_tool_profiles or deliberately written into durable job rows.</p><h2>Background-tool controls</h2><p>Every configured MCP server uses an explicit tool allowlist. Write-capable profiles are owner-only. The private GitHub worker additionally restricts repository access to an exact allowlist and restricts writes to a configured KeepGoing branch prefix; it exposes no PR-merge, repository-settings or repository-delete tool. Project Relay profiles continue to rely on Relay's own account/workstation/local Owner Full Control safeguards. Tool-call audit stores bounded metadata rather than tool arguments/results.</p>",
+    "<h2>Secrets</h2><p>Activation tokens, OAuth tokens, GitHub tokens, MCP authorization values and API keys are credentials. Keep them private. KeepGoing does not require your ChatGPT password. Background-tool credentials live in server secret storage or an approved provider vault and are not returned by tool-profile listings or deliberately written into durable job rows.</p><h2>Background-tool controls</h2><p>Every configured MCP server uses an explicit tool allowlist. Write-capable profiles are owner-only. The private GitHub worker restricts repository access to an exact allowlist and restricts writes to a KeepGoing branch prefix; it exposes no merge, repository-settings or repository-delete tool. Project Relay profiles continue to rely on Relay's own OAuth owner routing, approved roots and locally revocable Owner Full Control. Tool-call audit stores bounded metadata rather than tool arguments/results.</p>",
     "<h2>Reporting a security issue</h2><p>Please email <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a> with enough detail to reproduce the issue. Do not include live passwords, payment credentials or other people's personal information.</p>"
   ].join("")));
 });
 
 app.get("/billing/plans", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
   res.json({
@@ -2272,27 +2568,21 @@ app.get("/billing/plans", async (_req, res) => {
     business: { price_gbp: 29, jobs_per_month: 500, paypal_plan_id: paypalConfig.business_plan_id || null },
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
-    paypal_configured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    paypal_configured: Boolean(paypalClientId && paypalClientSecret),
     paypal_ready: paypalSetupComplete,
-    paypal_setup_error: paypalSetupError || null,
-    stripe_sandbox_available: Boolean(PRO_PRICE_ID && BUSINESS_PRICE_ID),
-    stripe_portal_url: PORTAL_URL || null
+    stripe_sandbox_available: Boolean(PRO_PRICE_ID && BUSINESS_PRICE_ID)
   });
 });
 
 app.get("/paypal/status", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
   res.json({
-    configured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    configured: Boolean(paypalClientId && paypalClientSecret),
     ready: paypalSetupComplete,
     mode: PAYPAL_MODE,
-    product_id: paypalConfig.product_id || null,
-    pro_plan_id: paypalConfig.pro_plan_id || null,
-    business_plan_id: paypalConfig.business_plan_id || null,
-    webhook_id: paypalConfig.webhook_id || null,
-    error: paypalSetupError || null
+    setup_error: Boolean(paypalSetupError && !paypalSetupComplete)
   });
 });
 
@@ -2314,7 +2604,7 @@ app.post("/worker-mcp", async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error("keepgoing_worker_mcp_error", safeLogError(error));
+    console.error("keepgoing_worker_mcp_error", safeLogError(error), req.keepgoingRequestId || "");
     if (!res.headersSent) res.status(500).json({ error: "worker_mcp_error" });
   }
 });
@@ -2329,7 +2619,7 @@ app.get("/worker-mcp", (req, res) => {
 });
 
 app.get("/readiness", async (_req, res) => {
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
+  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
   }
   const engineReady = Boolean(OPENAI_API_KEY);
@@ -2340,8 +2630,8 @@ app.get("/readiness", async (_req, res) => {
     BILLING_INGEST_TOKEN
   );
   const checkoutReady = Boolean(
-    PAYPAL_CLIENT_ID &&
-    PAYPAL_CLIENT_SECRET &&
+    paypalClientId &&
+    paypalClientSecret &&
     paypalSetupComplete
   );
   let durableStoreReady = !V12_ENABLED;
@@ -2383,12 +2673,42 @@ app.get("/readiness", async (_req, res) => {
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
-    toolProfilesReady &&
-    (V12_CANARY_ONLY || OPENAI_WEBHOOK_SECRET)
+    toolProfilesReady
   );
+  const oauthReady = Boolean(OAUTH_SECRET && OAUTH_CODE_URL);
+  const commercialDurableReady = !V12_ENABLED || Boolean(
+    v12Configured() &&
+    durableStoreReady &&
+    toolProfilesReady &&
+    !V12_CANARY_ONLY
+  );
+  const continuationMode = V12_ENABLED
+    ? (OPENAI_WEBHOOK_SECRET ? "watchdog+webhook" : "watchdog")
+    : "legacy";
+  const commercialBlockers = [];
+  if (!engineReady) commercialBlockers.push("openai_api");
+  if (!billingBackendReady) commercialBlockers.push("billing_backend");
+  if (!checkoutReady) commercialBlockers.push("live_checkout");
+  if (!oauthReady) commercialBlockers.push("oauth");
+  if (V12_ENABLED && !v12Configured()) commercialBlockers.push("durable_engine");
+  if (V12_ENABLED && !durableStoreReady) commercialBlockers.push("durable_store");
+  if (V12_ENABLED && !toolProfilesReady) commercialBlockers.push("tool_profiles");
+  if (V12_ENABLED && githubWorkerRequested && !githubWorkerReady) commercialBlockers.push("github_worker");
+  if (V12_ENABLED && relayProfilesRequested && !relayProfilesReady) commercialBlockers.push("relay_profiles");
+  if (V12_ENABLED && V12_CANARY_ONLY) commercialBlockers.push("v12_owner_canary_only");
+
+  const sellReady = Boolean(
+    engineReady &&
+    billingBackendReady &&
+    checkoutReady &&
+    commercialDurableReady &&
+    oauthReady
+  );
+
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
-    version: V12_ENABLED ? "1.2.0-beta.2" : "1.1.0",
+    version: V12_ENABLED ? APP_VERSION : "1.1.0",
+    release_commit: RELEASE_COMMIT,
     engine_ready: engineReady,
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
@@ -2404,8 +2724,13 @@ app.get("/readiness", async (_req, res) => {
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
-    oauth_ready: Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
-    sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady && Boolean(OAUTH_SECRET && OAUTH_CODE_URL),
+    oauth_ready: oauthReady,
+    owner_canary_only: Boolean(V12_ENABLED && V12_CANARY_ONLY),
+    commercial_durable_ready: commercialDurableReady,
+    continuation_mode: continuationMode,
+    watchdog_ready: Boolean(V12_ENABLED && v12Configured() && durableStoreReady),
+    commercial_blockers: commercialBlockers,
+    sell_ready: sellReady,
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
     protected: true
@@ -2416,14 +2741,15 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     name: "KeepGoing MCP",
-    version: V12_ENABLED ? "1.2.0-beta.2" : "1.1.0",
+    version: V12_ENABLED ? APP_VERSION : "1.1.0",
+    release_commit: RELEASE_COMMIT,
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),
     openaiWebhookConfigured: Boolean(OPENAI_WEBHOOK_SECRET),
     protected: true,
     model: MODEL,
-    paypalConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    paypalConfigured: Boolean(paypalClientId && paypalClientSecret),
     paypalReady: paypalSetupComplete,
     paypalMode: PAYPAL_MODE,
     oauthConfigured: Boolean(OAUTH_SECRET),
@@ -2447,7 +2773,7 @@ app.post("/mcp", async (req, res) => {
   if (isStart && V12_ENABLED && !v12ForAccess(access)) {
     const consumed = await validateCustomerToken(access._customer_token, true);
     if (!consumed.ok) {
-      oauthChallenge(res, "invalid_token", consumed.error || "Account quota unavailable");
+      oauthChallenge(res, "invalid_token", consumed.error || "Subscription quota unavailable");
       return res.status(consumed.status || 401).json({
         error: consumed.error || "unauthorized",
         tier: consumed.tier,
@@ -2485,13 +2811,16 @@ app.get("/mcp", async (req, res) => {
   res.status(405).json({ error: "Use POST for stateless MCP" });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP " + (V12_ENABLED ? "v1.2.0-beta.2" : "v1.1.0") + " listening on " + PORT);
+let watchdogTimer = null;
+let shuttingDown = false;
+
+const httpServer = app.listen(PORT, "0.0.0.0", () => {
+  console.log("KeepGoing MCP " + (V12_ENABLED ? "v" + APP_VERSION : "v1.1.0") + " listening on " + PORT);
 
   if (V12_ENABLED) {
     try {
       const runtime = getV12Runtime();
-      const watchdogTimer = setInterval(() => {
+      watchdogTimer = setInterval(() => {
         runtime.watchdog.runOnce().catch((error) => {
           console.error("keepgoing_v12_watchdog_error", safeLogError(error));
         });
@@ -2505,9 +2834,53 @@ app.listen(PORT, "0.0.0.0", () => {
     }
   }
 
-  if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
-    ensurePayPalSetup()
-      .then(() => console.log("PayPal " + PAYPAL_MODE + " subscriptions ready"))
-      .catch((error) => console.error("PayPal bootstrap failed:", String(error?.message || error)));
-  }
+  void (async () => {
+    try {
+      if (!paypalClientId || !paypalClientSecret) {
+        await loadStoredPayPalCredentials();
+      }
+      if (paypalClientId && paypalClientSecret) {
+        await ensurePayPalSetup();
+        console.log("PayPal " + PAYPAL_MODE + " subscriptions ready");
+      }
+    } catch (error) {
+      console.error("PayPal bootstrap failed:", safeLogError(error));
+    }
+  })();
 });
+
+httpServer.requestTimeout = 90_000;
+httpServer.headersTimeout = 15_000;
+httpServer.keepAliveTimeout = 5_000;
+httpServer.maxRequestsPerSocket = 1_000;
+
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log("keepgoing_shutdown_start", signal);
+
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+
+  const forceExit = setTimeout(() => {
+    console.error("keepgoing_shutdown_forced", signal);
+    process.exit(1);
+  }, 10_000);
+  forceExit.unref();
+
+  httpServer.close((error) => {
+    clearTimeout(forceExit);
+    if (error) {
+      console.error("keepgoing_shutdown_error", safeLogError(error));
+      process.exitCode = 1;
+      return;
+    }
+    console.log("keepgoing_shutdown_complete", signal);
+    process.exitCode = 0;
+  });
+}
+
+process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.once("SIGINT", () => gracefulShutdown("SIGINT"));

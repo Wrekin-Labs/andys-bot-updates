@@ -34,7 +34,8 @@ export function createAgentsEngine({
     allowWeb = true,
     mcpTools = [],
     reasoningEffort = "medium",
-    metadata = {}
+    metadata = {},
+    idempotencyKey = null
   }) {
     if (!String(prompt || "").trim()) throw new Error("prompt required");
     const agent = {
@@ -42,7 +43,6 @@ export function createAgentsEngine({
       instructions: String(instructions || "").trim() || undefined,
       reasoning: { effort: reasoningEffort }
     };
-
     const tools = [];
     if (allowWeb) {
       tools.push({ type: "web_search", mode: "live" });
@@ -61,8 +61,10 @@ export function createAgentsEngine({
       input: String(prompt),
       metadata
     };
+    const key = normaliseIdempotencyKey(idempotencyKey);
     return request("/agents/sessions", {
       method: "POST",
+      headers: key ? { "Idempotency-Key": key } : undefined,
       body: JSON.stringify(body)
     });
   }

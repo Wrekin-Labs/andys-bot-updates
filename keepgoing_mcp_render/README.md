@@ -1,10 +1,10 @@
 # KeepGoing v1.2 beta
 
-**Current beta:** `1.2.0-beta.2` — adds the `continue_until_done` primary entrypoint, host-context passthrough, and stricter only-when-genuinely-blocked user stops.
+**Current beta:** `1.2.0-beta.22` — watchdog-first production durability, idempotent/recoverable job startup, upload-ready directory metadata and review cases, owner auto-continue, secure external PayPal checkout/restart recovery, completion semantics and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
-v1.2 is developed behind `KEEPGOING_V12_ENABLED`. Keep the production v1.1 path available until the v1.2 database migration, webhook and live preflight are complete.
+v1.2 remains feature-flagged behind `KEEPGOING_V12_ENABLED`. Production now runs the durable engine beyond owner-canary mode with the durable store and watchdog live. The watchdog durability drills and live PayPal readiness checks have passed. OpenAI webhook delivery remains optional for the current Agents-session engine.
 
 ## What v1.2 changes
 
@@ -27,19 +27,18 @@ KeepGoing does not control ChatGPT's private reasoning, bypass ChatGPT/OpenAI li
 
 When the user says **continue**, **keep going**, **finish it**, **until done**, **don't stop**, or equivalent, the ChatGPT host should prefer `continue_until_done`.
 
-Before starting the durable job, the host may gather relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins, then pass a concise context bundle into the job. The KeepGoing service itself does not have blanket access to private ChatGPT history or every installed plugin; those capabilities remain controlled by the ChatGPT host and their normal permissions.
+Before starting a durable job, the host may pass a brief task-specific checkpoint when it is genuinely needed. The field is intentionally capped at 4,000 characters and must not contain full chat transcripts, credentials, API keys, payment secrets or unrelated personal data. KeepGoing does not independently retrieve private ChatGPT history or every installed plugin.
 
 Once the durable job starts, the server-side webhook/watchdog path advances `STATUS: PARTIAL` work automatically. The user should not need to type "continue" merely to move the same objective forward. A job stops only when it is completed, genuinely needs user input/approval, is cancelled, fails safely, or reaches its configured safety/cost budget.
 
 ## Customer flow
 
-1. Subscribe to KeepGoing.
-2. Receive a private activation token.
-3. Connect `/mcp` in ChatGPT using OAuth.
-4. Enter the activation token only on the KeepGoing OAuth page.
-5. Start a durable job once.
-6. KeepGoing reuses the same job ID while its server-side watchdog/webhook path advances the work.
-7. Use `list_persistent_jobs` in a later chat to recover active jobs if needed.
+1. Have an existing KeepGoing account and private activation token provisioned outside the ChatGPT plugin experience.
+2. Connect `/mcp` in ChatGPT using OAuth.
+3. Enter the activation token only on the KeepGoing OAuth page.
+4. Start a durable job once.
+5. KeepGoing reuses the same job ID while its server-side watchdog/webhook path advances the work.
+6. Use `list_persistent_jobs` in a later chat to recover active jobs if needed.
 
 Never share an activation token, OAuth token or other account credential.
 
@@ -55,30 +54,6 @@ v1.2 also applies aggregate per-job continuation budgets:
 
 These are safety/cost ceilings, not promised consumption targets. A job stops earlier when completed or when user input is genuinely required.
 
-## Plugin Directory package
-
-The current portable submission package lives in `plugin/`.
-
-It includes:
-- `plugin.json` using the Agent Plugins 1.0 schema;
-- one hosted streamable-HTTP MCP in `mcp.json`;
-- onboarding skill;
-- light/dark logo and composer icon;
-- exactly five positive and three negative reviewer cases;
-- UK initial availability;
-- commerce=false review declaration.
-
-Validate/build:
-
-```bash
-npm run plugin:validate
-npm run plugin:zip
-```
-
-CI builds the same ZIP and publishes it as the `keepgoing-plugin-submission` workflow artifact.
-
-The Plugin Directory surface is intentionally commerce-neutral. Current OpenAI plugin rules allow existing paid users to authenticate and use existing entitlements, but do not allow digital subscriptions/upgrades to be sold or promoted inside the plugin. The directory website URL therefore points to `/plugin`, while the independent commercial website remains a separate surface.
-
 ## MCP tools
 
 - `continue_until_done` — preferred natural-language autopilot entrypoint for "continue / keep going / finish it / until done".
@@ -88,7 +63,6 @@ The Plugin Directory surface is intentionally commerce-neutral. Current OpenAI p
 - `cancel_persistent_job` — cancel the durable job/provider turn.
 - `list_persistent_jobs` — list the authenticated customer's own recent/active jobs using safe metadata only.
 - `resume_persistent_job` — deliver required user input to the same durable job with race-safe/idempotent delivery.
-- `list_tool_profiles` — discover approved background capability profiles before starting code/file/workstation jobs.
 
 ## Durable states
 
@@ -110,16 +84,28 @@ The server validates that marker against provider turn state and tool failures; 
 
 ## Production endpoints
 
-- `/` — product and subscription page
+- `/` — public informational/plugin landing page (no subscription transaction UI)
 - `/health` — lightweight process/config health
 - `/readiness` — production readiness, including live durable-store reachability when v1.2 is enabled
 - `/mcp` — protected MCP endpoint
 - `/openai/webhook` — signed OpenAI Agents session webhook receiver (v1.2)
+- `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience
 - `/billing/claim` — Stripe claim endpoint
 - `/billing/success` — Stripe activation page
-- `/paypal/claim` — PayPal subscription claim
+- `/paypal/start-subscription` — server-side PayPal subscription creation and approval redirect
+- `/paypal/return` — validated PayPal approval return route
+- `/paypal/claim` — PayPal subscription activation claim
 - `/paypal/webhook` — PayPal webhook
 - `/stripe/webhook` — Stripe webhook
+- `/icon.svg` — hosted vector KeepGoing brand icon
+- `/icon.png` — hosted 256×256 PNG app/social icon
+- `/.well-known/security.txt` — standard security contact metadata
+- `/manifest.json` — app/web manifest
+- `/privacy` — privacy policy
+- `/terms` — terms of service
+- `/refunds` — refunds & cancellation policy
+- `/support` — support page
+- `/security` — security overview
 
 ## Required production environment
 
@@ -141,67 +127,11 @@ Core:
 v1.2 durable engine:
 - `KEEPGOING_V12_ENABLED=true`
 - `KEEPGOING_V12_CANARY_ONLY=true` during owner-only staged validation; set false/omit only after the live drills pass
-- `KEEPGOING_SUPABASE_URL` (or `SUPABASE_URL`)
-- `KEEPGOING_SUPABASE_SERVICE_KEY`
-- `OPENAI_WEBHOOK_SECRET`
+- either direct durable-store credentials (`KEEPGOING_SUPABASE_URL` / `SUPABASE_URL` plus `KEEPGOING_SUPABASE_SERVICE_KEY`) **or** the narrow durable-store proxy (`KEEPGOING_DURABLE_STORE_URL` plus `KEEPGOING_DURABLE_STORE_TOKEN`)
+- optional `OPENAI_WEBHOOK_SECRET` only when a compatible OpenAI webhook event stream is used; watchdog continuation does not require it
 - optional watchdog interval configuration
 
-Optional owner background tools:
-
-**Private GitHub worker**
-- `KEEPGOING_WORKER_MCP_SECRET` — random internal bearer secret used only between OpenAI Agents and the private `/worker-mcp` endpoint.
-- `KEEPGOING_GITHUB_TOKEN` — GitHub fine-grained token/PAT with only the required repository permissions.
-- `KEEPGOING_GITHUB_REPOS` — comma-separated exact `owner/repo` allowlist.
-- `KEEPGOING_GITHUB_BRANCH_PREFIX` — safe write prefix, default `keepgoing/`.
-- `KEEPGOING_WORKER_MCP_URL` — optional override; defaults to `<public-base>/worker-mcp`.
-
-When all required GitHub worker values are present, KeepGoing adds owner-only:
-- `github-read` — repository metadata, directories, files, code search and comparisons.
-- `github-write` — all read tools plus safe-branch creation, file create/update and pull-request opening. It cannot merge PRs, change repo settings or write directly to the default/protected branch.
-
-**Project Relay**
-- `KEEPGOING_RELAY_MCP_URL` — public HTTPS Project Relay MCP endpoint.
-- Prefer `KEEPGOING_RELAY_MCP_CREDENTIAL_ID` for an OpenAI Agents Vault credential.
-- Or use `KEEPGOING_RELAY_MCP_AUTHORIZATION` as a server-side authorization value when vault credentials are not used.
-- `KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE=true` — optional and off by default; exposes a broader destructive owner-only Relay admin profile.
-
-When Relay is configured, KeepGoing adds:
-- `relay-read` — diagnostics, approved-root reads/searches, processes/windows and supervised-app status.
-- `relay-developer` — read tools plus approved-root text/document edits, bounded commands, sandbox/terminal work and supervised-app start/restart.
-- `relay-admin` — only when explicitly enabled; includes filesystem delete, services, scheduled tasks, software administration, self-update and power actions.
-
-**Other MCP servers**
-- `KEEPGOING_TOOL_PROFILES_JSON` can define additional explicit HTTPS MCP profiles with per-server `allowed_tools` allowlists.
-- Write-capable profiles must be owner-only.
-- Secret headers are not accepted in JSON; use an OpenAI Vault `credential_id` or an environment authorization reference.
-
 Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
-
-### Private GitHub worker (optional)
-
-Owner-only durable jobs can use a built-in private GitHub MCP worker when configured:
-
-- `KEEPGOING_WORKER_MCP_SECRET`
-- `KEEPGOING_GITHUB_TOKEN`
-- `KEEPGOING_GITHUB_REPOS=owner/repo,...`
-- optional `KEEPGOING_GITHUB_BRANCH_PREFIX=keepgoing/`
-
-The worker restricts access to the exact repo allowlist. Writes are restricted to the configured KeepGoing branch prefix and can open, but not merge, pull requests.
-
-### Project Relay background profiles (optional)
-
-- `KEEPGOING_RELAY_MCP_URL`
-- one of:
-  - `KEEPGOING_RELAY_MCP_CREDENTIAL_ID`
-  - `KEEPGOING_RELAY_MCP_AUTHORIZATION`
-- `KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE=true` only when the explicitly destructive admin profile is wanted.
-
-Built-in profiles:
-- `relay-read`
-- `relay-developer`
-- optional `relay-admin`
-
-Project Relay continues to enforce its own OAuth owner routing, approved roots and locally revocable Owner Full Control.
 
 PayPal live checkout:
 - `PAYPAL_MODE=live`
@@ -213,7 +143,7 @@ PayPal live checkout:
 - OAuth 2.1 authorization-code flow with PKCE protects ChatGPT connections.
 - Durable job ownership is scoped to the authenticated customer hash.
 - Client request IDs are hashed before durable storage.
-- Start, continuation and resume paths use durable reservation/CAS plus provider idempotency keys.
+- Start, continuation and resume paths use durable reservation/CAS plus provider idempotency keys. Transient initial-session failures are retried with the same start key and accepted sessions can be recovered by durable job metadata.
 - Signed OpenAI webhooks are verified before processing.
 - Webhook event IDs are deduplicated.
 - The watchdog repairs missed webhook/poll progress without blindly creating a duplicate provider session.
@@ -221,7 +151,11 @@ PayPal live checkout:
 - Durable metadata retention is bounded; active jobs are not deleted by retention cleanup.
 - The durable database stores orchestration metadata/hashes rather than raw prompts/model output.
 - Sensitive HTTP responses use no-store caching where appropriate.
+- OAuth authorization pages use a restrictive Content Security Policy and noindex/no-store handling.
+- Upstream PayPal/billing/auth/claim requests have bounded timeouts so provider stalls fail promptly.
+- Customer-facing billing claim failures use generic errors while server logs use sanitized diagnostics.
 - Secrets are redacted from safe watchdog/service errors.
+- PayPal activation-token claims require a server-generated random claim binding that must match the subscription `custom_id` returned by PayPal.
 
 ## Release check
 
@@ -238,26 +172,30 @@ Recommended staged rollout: first enable `KEEPGOING_V12_ENABLED=true` together w
 Before enabling v1.2 for paid customers, verify:
 1. CI passes on the exact release commit.
 2. `sql/durable_jobs.sql` is applied to the intended Supabase project.
-3. `/readiness` reports `ok: true`, `durable_engine_ready: true`, `durable_store_ready: true`, and `openai_webhook_ready: true`.
+3. `/readiness` reports `ok: true`, `durable_engine_ready: true`, `durable_store_ready: true`, and `watchdog_ready: true`.
 4. Invalid OAuth/token access is rejected without consuming quota.
 5. A real durable test job progresses PARTIAL -> continuation -> COMPLETED.
 6. Duplicate starts return the original job and consume quota once.
 7. `NEEDS_USER` -> `resume_persistent_job` resumes the same job once.
 8. A missed webhook is repaired by the watchdog.
 9. PayPal/Stripe subscription claim and cancellation flows are tested in the selected live provider.
-10. Privacy, Terms, Support and Security pages match the deployed data flow.\n11. `npm run plugin:validate` passes and the CI-built Plugin Directory ZIP is used for submission.\n12. If GitHub/Relay profiles are enabled, `/readiness` reports them ready and the production preflight is run with the matching `--github-worker` / `--relay-profiles` requirements.
+10. Privacy, Terms, Support and Security pages match the deployed data flow.
 
+## Current commercial beta status
 
-## Background tool profiles
+As of the beta.22 candidate:
+- OAuth connection is live and verified with the owner account.
+- Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
+- Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
+- The public informational site, hosted icon/manifest, FAQ, status, changelog, Privacy, Terms, Refunds & cancellation, Support and Security pages are live.
+- Direct subscription checkout is isolated from the public plugin/listing experience and is live through PayPal in production mode. Beta.19 uses a server-side PayPal approval redirect so checkout does not depend on embedded PayPal button rendering.
+- PayPal credentials are recoverable after restart through protected encrypted storage, and production startup reports PayPal live subscriptions ready.
+- Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
+- The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
+- `/readiness` reports no commercial blockers and `sell_ready: true` when the production dependencies are healthy.
+- Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
+## Public-plugin commerce boundary
 
-The foreground ChatGPT connection and the durable OpenAI Agent session do not automatically share connector permissions. For a code/file/workstation objective, the host should call `list_tool_profiles`, select the least-powerful profile that can complete the job, and pass its name as `toolProfile` to `continue_until_done` or `start_persistent_job`.
+The public ChatGPT plugin/listing experience is authentication and existing-account functionality only. It does not show subscription plans, initiate a new digital-service subscription, link to transactional checkout, or promote upgrades inside ChatGPT.
 
-Security rules:
-- default profile is `web`;
-- owner/write profiles never become available to non-owner accounts;
-- every MCP server requires an explicit `allowed_tools` list;
-- tool credentials are kept in server secret storage or OpenAI Agents Vault, not durable job rows;
-- each durable job stores the profile name and policy hash used when it started;
-- MCP/tool calls are audit-recorded as safe metadata only: tool type/name/server/status/turn, never arguments or outputs;
-- tool calls count against the same hard per-job tool budget;
-- changing a profile later does not silently broaden an already-created Agent session.
+Direct paid-beta checkout is isolated at `/subscribe`, is not linked from the public plugin website/install/FAQ/status/sitemap or advertised in plugin metadata, and is marked noindex/no-store. This direct web route exists outside the ChatGPT plugin acquisition and upgrade experience.

@@ -11,12 +11,18 @@ import { latestRootTurn, latestSessionText, classifySession } from "./agents_eng
 const CONTINUATION_LEASE_MS = 60_000;
 
 export class KeepGoingOrchestrator {
-  constructor({ engine, store, now = () => Date.now() } = {}) {
+  constructor({
+    engine,
+    store,
+    now = () => Date.now(),
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  } = {}) {
     if (!engine) throw new Error("engine required");
     if (!store) throw new Error("store required");
     this.engine = engine;
     this.store = store;
     this.now = now;
+    this.sleep = sleep;
   }
 
   async start({
@@ -59,7 +65,20 @@ export class KeepGoingOrchestrator {
       clientRequestId
     });
     if (!reserved.created) {
-      return { created: false, job: reserved.job };
+      const retried = await this._retryDuplicateStart({
+        existing: reserved.job,
+        templateJob: job,
+        initialPrompt,
+        instructions,
+        allowWeb,
+        mcpTools,
+        toolProfileName,
+        toolPolicyHash,
+        toolWriteCapable,
+        reasoningEffort,
+        clientRequestId
+      });
+      return { created: false, job: retried };
     }
 
     if (beforeCreateSession) {
@@ -81,20 +100,17 @@ export class KeepGoingOrchestrator {
 
     let session;
     try {
-      session = await this.engine.createSession({
-        prompt: initialPrompt,
+      session = await this._createSessionWithRecovery({
+        jobId,
+        initialPrompt,
         instructions,
         allowWeb,
         mcpTools,
+        toolProfileName,
+        toolPolicyHash,
+        toolWriteCapable,
         reasoningEffort,
-        metadata: {
-          keepgoing: "v1.2",
-          keepgoing_job_id: jobId,
-          request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined,
-          tool_profile: String(toolProfileName || "web").slice(0, 64),
-          tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined,
-          write_tools: Boolean(toolWriteCapable) ? "true" : "false"
-        }
+        clientRequestId
       });
     } catch (error) {
       const status = Number(error?.status || 0);
@@ -148,6 +164,193 @@ export class KeepGoingOrchestrator {
       return { created: false, job: saved.job || reserved.job };
     }
     return { created: true, job: saved.job };
+  }
+
+  async _createSessionWithRecovery({
+    jobId,
+    initialPrompt,
+    instructions,
+    allowWeb,
+    mcpTools = [],
+    toolProfileName = "web",
+    toolPolicyHash = "",
+    toolWriteCapable = false,
+    reasoningEffort,
+    clientRequestId
+  }) {
+    const metadata = {
+      keepgoing: "v1.2",
+      keepgoing_job_id: jobId,
+      request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined,
+      tool_profile: String(toolProfileName || "web").slice(0, 64),
+      tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined,
+      write_tools: Boolean(toolWriteCapable) ? "true" : "false"
+    };
+    const idempotencyKey = startKey(jobId);
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this.engine.createSession({
+          prompt: initialPrompt,
+          instructions,
+          allowWeb,
+          mcpTools,
+          reasoningEffort,
+          metadata,
+          idempotencyKey
+        });
+      } catch (error) {
+        lastError = error;
+        const status = Number(error?.status || 0);
+        if (status >= 400 && status < 500) throw error;
+
+        if (typeof this.engine.findSessionByMetadata === "function") {
+          try {
+            const recovered = await this.engine.findSessionByMetadata(
+              "keepgoing_job_id",
+              jobId,
+              { maxPages: 5, pageSize: 100 }
+            );
+            if (recovered?.id) return recovered;
+          } catch {}
+        }
+
+        if (attempt < 2) {
+          await this.sleep(750 * (attempt + 1));
+        }
+      }
+    }
+
+    throw lastError || new Error("KeepGoing could not create the provider session");
+  }
+
+  async _retryDuplicateStart({
+    existing,
+    templateJob,
+    initialPrompt,
+    instructions,
+    allowWeb,
+    mcpTools = [],
+    toolProfileName = "web",
+    toolPolicyHash = "",
+    toolWriteCapable = false,
+    reasoningEffort,
+    clientRequestId
+  }) {
+    let current = existing;
+    if (!current || current.providerSessionId || Number(current.attempt || 0) > 0) {
+      return current;
+    }
+
+    const retryableFailed = current.status === JOB_STATES.FAILED &&
+      new Set(["start_not_recovered", "missing_provider_session"]).has(String(current.safeErrorCode || ""));
+    const retryableQueued = current.status === JOB_STATES.QUEUED;
+    if (!retryableQueued && !retryableFailed) return current;
+
+    if (typeof this.engine.findSessionByMetadata === "function") {
+      try {
+        const recovered = await this.engine.findSessionByMetadata(
+          "keepgoing_job_id",
+          current.id,
+          { maxPages: 5, pageSize: 100 }
+        );
+        if (recovered?.id) {
+          return await this._attachRecoveredSession(current, recovered.id);
+        }
+      } catch {}
+    }
+
+    const now = this.now();
+    if (
+      current.status === JOB_STATES.QUEUED &&
+      Number(current.startLeaseUntil || 0) > now
+    ) {
+      return current;
+    }
+
+    const retryClaim = {
+      ...current,
+      status: JOB_STATES.QUEUED,
+      startLeaseUntil: now + CONTINUATION_LEASE_MS,
+      safeErrorCode: "start_retrying",
+      safeErrorMessage: null,
+      wallDeadlineAt: templateJob.wallDeadlineAt,
+      updatedAt: now,
+      lastProgressAt: now
+    };
+    const claimed = await this.store.compareAndSet(current.id, current.version, retryClaim);
+    if (!claimed.ok) return claimed.job || current;
+    current = claimed.job;
+
+    let session;
+    try {
+      session = await this._createSessionWithRecovery({
+        jobId: current.id,
+        initialPrompt,
+        instructions,
+        allowWeb,
+        mcpTools,
+        toolProfileName,
+        toolPolicyHash,
+        toolWriteCapable,
+        reasoningEffort,
+        clientRequestId
+      });
+    } catch (error) {
+      const status = Number(error?.status || 0);
+      const definitelyRejected = status >= 400 && status < 500;
+      const next = definitelyRejected
+        ? {
+            ...current,
+            status: JOB_STATES.FAILED,
+            startLeaseUntil: null,
+            safeErrorCode: "start_rejected",
+            safeErrorMessage: "The model provider rejected the session start.",
+            updatedAt: this.now()
+          }
+        : {
+            ...current,
+            status: JOB_STATES.QUEUED,
+            startLeaseUntil: this.now() + CONTINUATION_LEASE_MS,
+            safeErrorCode: "start_outcome_unknown",
+            safeErrorMessage: "Session start acknowledgement was lost; KeepGoing will recover by durable job metadata.",
+            updatedAt: this.now()
+          };
+      await this.store.compareAndSet(current.id, current.version, next);
+      throw error;
+    }
+
+    if (!session?.id) {
+      const failed = {
+        ...current,
+        status: JOB_STATES.FAILED,
+        startLeaseUntil: null,
+        safeErrorCode: "missing_provider_session",
+        safeErrorMessage: "The model provider did not return a session id.",
+        updatedAt: this.now()
+      };
+      const saved = await this.store.compareAndSet(current.id, current.version, failed);
+      return saved.job || failed;
+    }
+
+    return this._attachRecoveredSession(current, session.id);
+  }
+
+  async _attachRecoveredSession(current, sessionId) {
+    const working = {
+      ...current,
+      status: JOB_STATES.WORKING,
+      providerSessionId: sessionId,
+      currentRunId: sessionId,
+      startLeaseUntil: null,
+      safeErrorCode: null,
+      safeErrorMessage: null,
+      updatedAt: this.now(),
+      lastProgressAt: this.now()
+    };
+    const saved = await this.store.compareAndSet(current.id, current.version, working);
+    return saved.job || working;
   }
 
   async get(jobId) {
@@ -381,12 +584,9 @@ export class KeepGoingOrchestrator {
 
     for (const item of items) {
       const type = String(item?.type || "").toLowerCase();
-      if (!(
-        type.includes("call") ||
-        type.includes("tool") ||
-        type.includes("execution") ||
-        type.includes("search")
-      )) continue;
+      if (!(type.includes("call") || type.includes("tool") || type.includes("execution") || type.includes("search"))) {
+        continue;
+      }
 
       const itemId = String(item?.id || "").trim();
       if (!itemId) continue;
@@ -407,9 +607,7 @@ export class KeepGoingOrchestrator {
           safeDetail
         });
       } catch {
-        // Audit logging is deliberately best-effort. It must never create a
-        // duplicate tool execution or turn a completed provider call into a
-        // failed KeepGoing job.
+        // Tool audit is best-effort and deliberately excludes arguments/results.
       }
     }
   }
@@ -479,6 +677,10 @@ export class KeepGoingOrchestrator {
     const saved = await this.store.compareAndSet(jobId, current.version, next);
     return saved.job || current;
   }
+}
+
+function startKey(jobId) {
+  return ("kg-start-" + String(jobId || "unknown")).slice(0, 256);
 }
 
 function continuationKey(jobId, turnId) {

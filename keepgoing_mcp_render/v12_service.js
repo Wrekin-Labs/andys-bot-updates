@@ -2,6 +2,20 @@ import crypto from "node:crypto";
 import { isTerminal } from "./durable_job.js";
 import { latestRootTurn, latestSessionText } from "./agents_engine.js";
 
+export const JOB_INSTRUCTIONS = [
+  "Finish the KeepGoing job.",
+  "Preserve completed work across turns and use any supplied brief task checkpoint only as supporting context.",
+  "The checkpoint is intentionally limited and is not full chat history; never infer missing credentials, private data, or unrelated facts from it.",
+  "Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable.",
+  "Use only tools actually attached to this session and obey their explicit allowlists and permission boundaries.",
+  "Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion.",
+  "You do not need a KeepGoing control tool, runner control, or job-state tool to finish the work.",
+  "The KeepGoing server converts your final STATUS marker into the durable job state.",
+  "If the requested work is complete, return STATUS: COMPLETED even when this session exposes no KeepGoing control tool.",
+  "Obey the required STATUS marker."
+].join(" ");
+
+
 export function createV12Service({
   engine,
   store,
@@ -46,7 +60,7 @@ export function createV12Service({
     }
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
-      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use supplied context as a checkpoint. Use only the tools actually attached to this session and obey their allowlists. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
+      instructions: JOB_INSTRUCTIONS,
       allowWeb: resolvedTools.allowWeb,
       mcpTools: resolvedTools.mcpTools,
       toolProfileName: resolvedTools.name,
@@ -329,7 +343,7 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     max: "Work as autonomously and comprehensively as possible within the available tools and information."
   }[mode] || "Work autonomously where reasonable.";
 
-  const contextText = String(context || "").trim().slice(0, 20_000);
+  const contextText = String(context || "").trim().slice(0, 4_000);
 
   return [
     "You are the execution engine for KeepGoing, a durable AI job runner.",
@@ -339,10 +353,10 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     "DEFINITION OF DONE:", String(done || ""),
     ...(contextText ? [
       "",
-      "RELEVANT CONTEXT FROM THE HOST CHAT / CONNECTED TOOLS:",
+      "BRIEF TASK-SPECIFIC CHECKPOINT:",
       contextText,
       "",
-      "Use this context as supporting evidence. The GOAL and latest user instruction remain authoritative."
+      "Use this checkpoint only as supporting evidence. It is intentionally limited and is not full chat history. The GOAL and latest user instruction remain authoritative."
     ] : []),
     "",
     "AUTONOMY:", autonomy,
@@ -352,6 +366,9 @@ export function buildJobPrompt(goal, done, mode, context = "") {
     "Do not stop merely because a normal chat response would have ended.",
     "Never claim actions outside the tools actually available to this session.",
     "If an essential credential, approval, payment, destructive action, private account action, or missing fact prevents completion, state exactly what is required.",
+    "You do not need a KeepGoing control tool, runner control, or job-state tool to finish the work.",
+    "The KeepGoing server converts your final STATUS marker into the durable job state.",
+    "If the requested work is complete, return STATUS: COMPLETED even when this session exposes no KeepGoing control tool.",
     "",
     "End every root turn with exactly one of:",
     "STATUS: COMPLETED",

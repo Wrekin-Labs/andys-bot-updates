@@ -133,7 +133,7 @@ const pr = await worker.openPullRequest({
 });
 assert.equal(pr.number, 9);
 
-assert.throws(
+await assert.rejects(
   () => worker.getFile({ repository: "someone/else", path: "x" }),
   /not allowlisted/
 );

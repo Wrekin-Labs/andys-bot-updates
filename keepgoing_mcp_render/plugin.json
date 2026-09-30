@@ -42,12 +42,12 @@
         ],
         "brandColor": "#5F50E6",
         "brandColorDark": "#A99FFF",
-        "composerIcon": "./assets/composer-icon.svg",
-        "composerIconDark": "./assets/composer-icon-dark.svg",
-        "logo": "./assets/logo.svg",
-        "logoDark": "./assets/logo-dark.svg"
+        "composerIcon": "./plugin/assets/composer-icon.svg",
+        "composerIconDark": "./plugin/assets/composer-icon-dark.svg",
+        "logo": "./plugin/assets/logo.svg",
+        "logoDark": "./plugin/assets/logo-dark.svg"
       },
-      "onboardingSkill": "./skills/get-started/SKILL.md",
+      "onboardingSkill": "./plugin/skills/get-started/SKILL.md",
       "review": {
         "commerce": false,
         "test_cases": {
@@ -107,7 +107,7 @@
         "countries": [
           "GB"
         ],
-        "release_notes": "KeepGoing 1.2 introduces durable multi-turn jobs, automatic PARTIAL continuation, recovery/listing across chats, safe resume after input_required, bounded tool profiles, server-side watchdog/webhook recovery, owner-scoped GitHub/Project Relay tooling, and stronger duplicate/usage safeguards."
+        "release_notes": "KeepGoing 1.2 beta.23 adds durable multi-turn jobs, automatic partial continuation, cross-chat recovery, safe resume, permission-scoped MCP tool profiles, owner-only GitHub and Project Relay tooling, and stronger duplicate/usage safeguards."
       }
     }
   }
