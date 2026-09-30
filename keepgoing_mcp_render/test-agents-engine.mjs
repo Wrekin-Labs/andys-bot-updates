@@ -190,7 +190,7 @@ assert.equal(dottedNameWorkspace.files.length, 1);
 assert.throws(
   () => buildAgentEnvironment({
     enabled: true,
-    files: [{ path: ".env", content: "x" }]
+    files: [{ path: "config/.env", content: "x" }]
   }),
   /not allowed for inline handoff/
 );
