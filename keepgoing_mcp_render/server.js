@@ -1097,6 +1097,7 @@ async function startPersistentJobCompat(args, access) {
     codingWorkspace: Boolean(args.codingWorkspace),
     repositoryUrl: args.repositoryUrl || null,
     repositoryRef: args.repositoryRef || null,
+    workspaceFiles: Array.isArray(args.workspaceFiles) ? args.workspaceFiles : [],
     beforeCreateSession: async () => reserveJobQuota(access)
   });
 }
@@ -1186,10 +1187,10 @@ function createMcpServer(access = {}) {
   const publicV12Instructions = "Use KeepGoing when the user explicitly asks to use KeepGoing for a substantial objective or explicitly asks KeepGoing to continue or finish an existing objective. Prefer continue_until_done for that explicit KeepGoing intent. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
   const ownerV12Instructions = "OWNER MODE: Treat plain continuation phrases such as continue, keep going, finish it, until done, don't stop, carry on, or equivalent as KeepGoing intent when they refer to the current substantial objective. Prefer continue_until_done for those phrases even when the user does not repeat the word KeepGoing. Preserve and reuse the same durable job where possible; never create duplicates just to continue. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
   const startToolDescription = ownerAutoContinue
-    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. For coding work, when a public GitHub repository is known, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the durable Agent can actually inspect/edit/test the code; do not start a no-files coding job. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
+    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. For coding work, when a public GitHub repository is known, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the durable Agent can actually inspect/edit/test the code. If the task depends on a small set of local/uncommitted text files already intentionally available in the current task context, pass only those selected files via workspaceFiles; do not start a no-files coding job. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
     : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. For coding work, set codingWorkspace=true and optionally supply a public GitHub repository/ref. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
   const continueToolDescription = ownerAutoContinue
-    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. For coding objectives with a known public GitHub repo, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the background job has real code access. Reuse the same job where possible."
+    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. For coding objectives with a known public GitHub repo, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the background job has real code access. If a small set of task-relevant local/uncommitted text files are intentionally available, pass only those selected files via workspaceFiles. Reuse the same job where possible."
     : "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data.";
 
   const server = new McpServer(
@@ -1240,7 +1241,11 @@ function createMcpServer(access = {}) {
       context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
       codingWorkspace: z.boolean().default(false).describe("Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support."),
       repositoryUrl: z.string().url().max(500).describe("Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials.").optional(),
-      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional()
+      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional(),
+      workspaceFiles: z.array(z.object({
+        path: z.string().min(1).max(180),
+        content: z.string().max(32000)
+      })).max(8).describe("Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1273,7 +1278,11 @@ function createMcpServer(access = {}) {
       context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
       codingWorkspace: z.boolean().default(false).describe("Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support."),
       repositoryUrl: z.string().url().max(500).describe("Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials.").optional(),
-      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional()
+      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional(),
+      workspaceFiles: z.array(z.object({
+        path: z.string().min(1).max(180),
+        content: z.string().max(32000)
+      })).max(8).describe("Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1499,7 +1508,21 @@ function createMcpServer(access = {}) {
             context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
             codingWorkspace: { type: "boolean", default: false, description: "Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support." },
             repositoryUrl: { type: "string", format: "uri", maxLength: 500, description: "Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials." },
-            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." }
+            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." },
+            workspaceFiles: {
+              type: "array",
+              maxItems: 8,
+              description: "Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 180 },
+                  content: { type: "string", maxLength: 32000 }
+                },
+                required: ["path", "content"],
+                additionalProperties: false
+              }
+            }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1534,7 +1557,21 @@ function createMcpServer(access = {}) {
             context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
             codingWorkspace: { type: "boolean", default: false, description: "Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support." },
             repositoryUrl: { type: "string", format: "uri", maxLength: 500, description: "Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials." },
-            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." }
+            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." },
+            workspaceFiles: {
+              type: "array",
+              maxItems: 8,
+              description: "Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 180 },
+                  content: { type: "string", maxLength: 32000 }
+                },
+                required: ["path", "content"],
+                additionalProperties: false
+              }
+            }
           },
           required: ["goal"],
           additionalProperties: false
