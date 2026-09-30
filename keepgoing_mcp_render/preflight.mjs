@@ -9,6 +9,9 @@ const result = await runDeploymentPreflight({
   baseUrl,
   requireSellReady: args.has("--sell-ready"),
   requireV12: args.has("--v12"),
+  requireToolProfiles: args.has("--tool-profiles"),
+  requireGithubWorker: args.has("--github-worker"),
+  requireRelayProfiles: args.has("--relay-profiles"),
   requireChallenge: args.has("--challenge")
 });
 
