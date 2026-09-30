@@ -1167,6 +1167,7 @@ function createMcpServer(access = {}) {
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
+      tool_profile: z.string().optional(),
       output: z.string(),
       error: z.string().nullable(),
       progress: z.object({
@@ -1196,6 +1197,7 @@ function createMcpServer(access = {}) {
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
+      tool_profile: z.string().optional(),
       output: z.string(),
       error: z.string().nullable(),
       progress: z.object({
@@ -1251,6 +1253,7 @@ function createMcpServer(access = {}) {
           status: z.string(),
           attempt: z.number(),
           max_attempts: z.number(),
+          tool_profile: z.string(),
           error: z.string().nullable()
         }))
       },
@@ -1380,6 +1383,7 @@ function createMcpServer(access = {}) {
           properties: {
             job_id: { type: "string" },
             status: { type: "string" },
+            tool_profile: { type: "string" },
             output: { type: "string" },
             error: { type: ["string", "null"] },
             progress: {
@@ -1417,6 +1421,7 @@ function createMcpServer(access = {}) {
           properties: {
             job_id: { type: "string" },
             status: { type: "string" },
+            tool_profile: { type: "string" },
             output: { type: "string" },
             error: { type: ["string", "null"] },
             progress: {
@@ -1570,10 +1575,11 @@ function createMcpServer(access = {}) {
                   status: { type: "string" },
                   attempt: { type: "number" },
                   max_attempts: { type: "number" },
+                  tool_profile: { type: "string" },
                   error: { type: ["string", "null"] }
                 },
                 required: [
-                  "job_id","status","attempt","max_attempts","error"
+                  "job_id","status","attempt","max_attempts","tool_profile","error"
                 ],
                 additionalProperties: false
               }
