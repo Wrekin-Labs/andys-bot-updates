@@ -20,9 +20,9 @@ assert.equal(plugin.extensions?.["com.openai"]?.review?.test_cases?.positive?.le
 assert.equal(plugin.extensions?.["com.openai"]?.review?.test_cases?.negative?.length, 3);
 assert.equal(plugin.extensions?.["com.openai"]?.review?.commerce, false);
 assert.deepEqual(plugin.extensions?.["com.openai"]?.publication?.countries, ["GB"]);
-assert.equal(plugin.extensions?.["com.openai"]?.interface?.composerIcon, "./assets/keepgoing-icon.png");
-assert.equal(plugin.extensions?.["com.openai"]?.interface?.logo, "./assets/keepgoing-icon.png");
-assert.ok(existsSync(resolve(here, "assets/keepgoing-icon.png")));
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.composerIcon, "./plugin/assets/composer-icon.svg");
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.logo, "./plugin/assets/logo.svg");
+assert.ok(existsSync(resolve(here, "plugin/assets/composer-icon.svg")));\nassert.ok(existsSync(resolve(here, "plugin/assets/logo.svg")));
 assert.equal(mcp.$schema, "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json");
 assert.equal(mcp.mcpServers?.keepgoing?.type, "streamable-http");
 assert.equal(mcp.mcpServers?.keepgoing?.url, "https://keepgoing-mcp.onrender.com/mcp");
