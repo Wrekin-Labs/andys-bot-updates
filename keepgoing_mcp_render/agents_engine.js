@@ -421,7 +421,24 @@ export function buildAgentEnvironment(workspace = null) {
   return {
     type: "openai_hosted",
     container_size: "small",
-    network: { access: "enabled" },
+    network: {
+      access: "restricted",
+      allowed_domains: [
+        "github.com",
+        "raw.githubusercontent.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "deb.debian.org",
+        "security.debian.org",
+        "crates.io",
+        "static.crates.io",
+        "repo.maven.apache.org",
+        "plugins.gradle.org"
+      ]
+    },
     setup_commands: setupCommands
   };
 }
