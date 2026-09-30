@@ -602,14 +602,26 @@ function normaliseWorkspaceFilePath(value) {
     !path ||
     path.length > 180 ||
     path.startsWith("/") ||
-    path.includes("..") ||
     path.includes("//") ||
     !/^[A-Za-z0-9][A-Za-z0-9._/ -]*$/.test(path) ||
     path.endsWith("/")
   ) {
     throw new Error("workspace file path must be a safe relative project path");
   }
-  return path;
+
+  const parts = path.split("/");
+  if (
+    parts.some((part) =>
+      !part ||
+      part === "." ||
+      part === ".." ||
+      part.toLowerCase() === ".git"
+    )
+  ) {
+    throw new Error("workspace file path must be a safe relative project path");
+  }
+
+  return parts.join("/");
 }
 
 function looksSensitiveWorkspacePath(path) {
