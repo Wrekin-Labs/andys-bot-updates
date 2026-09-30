@@ -440,11 +440,17 @@ function isBudgetedExternalToolItem(item) {
 
 export function normaliseCodingWorkspace(workspace = null) {
   if (!workspace || workspace.enabled !== true) {
-    return { enabled: false, repositoryUrl: null, repositoryRef: null };
+    return {
+      enabled: false,
+      repositoryUrl: null,
+      repositoryRef: null,
+      files: []
+    };
   }
 
   const repositoryUrl = normaliseGitHubRepositoryUrl(workspace.repositoryUrl);
   const repositoryRef = normaliseGitRef(workspace.repositoryRef);
+  const files = normaliseWorkspaceFiles(workspace.files);
 
   if (repositoryRef && !repositoryUrl) {
     throw new Error("repositoryRef requires repositoryUrl");
@@ -453,7 +459,8 @@ export function normaliseCodingWorkspace(workspace = null) {
   return {
     enabled: true,
     repositoryUrl,
-    repositoryRef
+    repositoryRef,
+    files
   };
 }
 
@@ -461,11 +468,11 @@ export function buildAgentEnvironment(workspace = null) {
   const spec = normaliseCodingWorkspace(workspace);
   if (!spec.enabled) return { type: "none" };
 
-  const setupCommands = [{ command: "mkdir -p /workspace/outputs" }];
+  const setupCommands = [];
 
   if (spec.repositoryUrl) {
     if (spec.repositoryRef) {
-      setupCommands.unshift(
+      setupCommands.push(
         {
           command:
             "git clone --filter=blob:none --no-checkout " +
@@ -482,7 +489,7 @@ export function buildAgentEnvironment(workspace = null) {
         }
       );
     } else {
-      setupCommands.unshift(
+      setupCommands.push(
         {
           command:
             "git clone --depth 1 " +
@@ -496,12 +503,26 @@ export function buildAgentEnvironment(workspace = null) {
       );
     }
   } else {
-    setupCommands.unshift({ command: "mkdir -p /workspace/project" });
+    setupCommands.push({ command: "mkdir -p /workspace/project" });
   }
+
+  if (spec.files.length) {
+    setupCommands.push({
+      command: "cp -R /workspace/input/. /workspace/project/"
+    });
+  }
+  setupCommands.push({ command: "mkdir -p /workspace/outputs" });
+
+  const files = spec.files.map((file) => ({
+    type: "inline",
+    path: "/workspace/input/" + file.path,
+    data: Buffer.from(file.content, "utf8").toString("base64")
+  }));
 
   return {
     type: "openai_hosted",
     container_size: "small",
+    files,
     network: {
       access: "restricted",
       allowed_domains: [
@@ -522,6 +543,75 @@ export function buildAgentEnvironment(workspace = null) {
     },
     setup_commands: setupCommands
   };
+}
+
+function normaliseWorkspaceFiles(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error("workspaceFiles must be an array");
+  if (value.length > 8) throw new Error("workspaceFiles supports at most 8 files");
+
+  let totalBytes = 0;
+  const seen = new Set();
+
+  return value.map((item) => {
+    if (!item || typeof item !== "object") {
+      throw new Error("each workspace file must contain path and content");
+    }
+
+    const path = normaliseWorkspaceFilePath(item.path);
+    const content = String(item.content ?? "");
+    const bytes = Buffer.byteLength(content, "utf8");
+
+    if (bytes > 32_000) {
+      throw new Error("workspace file exceeds the 32 KB per-file limit");
+    }
+    totalBytes += bytes;
+    if (totalBytes > 128_000) {
+      throw new Error("workspace files exceed the 128 KB total limit");
+    }
+    if (seen.has(path)) throw new Error("workspace file paths must be unique");
+    seen.add(path);
+
+    if (looksSensitiveWorkspacePath(path)) {
+      throw new Error("workspace file path is not allowed for inline handoff");
+    }
+
+    return { path, content };
+  });
+}
+
+function normaliseWorkspaceFilePath(value) {
+  const path = String(value || "").trim().replace(/\\/g, "/");
+
+  if (
+    !path ||
+    path.length > 180 ||
+    path.startsWith("/") ||
+    path.includes("..") ||
+    path.includes("//") ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/ -]*$/.test(path) ||
+    path.endsWith("/")
+  ) {
+    throw new Error("workspace file path must be a safe relative project path");
+  }
+  return path;
+}
+
+function looksSensitiveWorkspacePath(path) {
+  const lower = String(path).toLowerCase();
+  const base = lower.split("/").at(-1) || lower;
+  return (
+    base === ".env" ||
+    base.startsWith(".env.") ||
+    base === ".npmrc" ||
+    base === ".pypirc" ||
+    base === "id_rsa" ||
+    base === "id_ed25519" ||
+    lower.endsWith(".pem") ||
+    lower.endsWith(".key") ||
+    lower.endsWith(".p12") ||
+    lower.endsWith(".pfx")
+  );
 }
 
 function normaliseGitHubRepositoryUrl(value) {
