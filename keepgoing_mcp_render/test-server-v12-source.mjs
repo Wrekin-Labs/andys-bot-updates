@@ -4,6 +4,16 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 
 assert.match(source, /KEEPGOING_V12_ENABLED/);
+assert.match(source, /KEEPGOING_WORKER_MCP_SECRET/);
+assert.match(source, /KEEPGOING_GITHUB_TOKEN/);
+assert.match(source, /KEEPGOING_GITHUB_REPOS/);
+assert.match(source, /createGithubWorkerMcpServer/);
+assert.match(source, /app\.post\("\/worker-mcp"/);
+assert.match(source, /if \(!workerAuthorised\(req\)\)/);
+assert.match(source, /github_worker_ready: githubWorkerReady/);
+assert.match(source, /github_worker_repo_count: githubWorkerRepoCount/);
+assert.match(source, /"github-read"/);
+assert.match(source, /"github-write"/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /KEEPGOING_DURABLE_STORE_URL/);
 assert.match(source, /proxyUrl: V12_DURABLE_STORE_URL/);
