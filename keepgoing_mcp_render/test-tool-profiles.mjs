@@ -42,6 +42,34 @@ const registry = createToolProfileRegistry({
   env: { RELAY_MCP_AUTH: "Bearer secret-value" }
 });
 
+const extraRegistry = createToolProfileRegistry({
+  rawJson: "",
+  extraProfiles: {
+    "github-read": {
+      ownerOnly: true,
+      writeCapable: false,
+      allowWeb: true,
+      servers: [{
+        label: "github_worker",
+        url: "https://keepgoing.example/worker-mcp",
+        authorization_env: "WORKER_AUTH",
+        allowed_tools: ["github_get_file"]
+      }]
+    }
+  },
+  env: { WORKER_AUTH: "Bearer worker-secret" }
+});
+assert.ok(extraRegistry.list({ admin: true }).some((p) => p.name === "github-read"));
+assert.ok(!extraRegistry.list({ admin: false }).some((p) => p.name === "github-read"));
+assert.equal(extraRegistry.resolve("github-read", { admin: true }).mcpTools[0].transport.authorization, "Bearer worker-secret");
+assert.throws(
+  () => createToolProfileRegistry({
+    rawJson: JSON.stringify({ "github-read": { ownerOnly: true } }),
+    extraProfiles: { "github-read": { ownerOnly: true } }
+  }),
+  /Duplicate KeepGoing tool profile/
+);
+
 const publicList = registry.list({ admin: false });
 assert.ok(publicList.some((p) => p.name === "web"));
 assert.ok(publicList.some((p) => p.name === "github-read"));
