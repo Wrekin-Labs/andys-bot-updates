@@ -6,6 +6,7 @@ export function createV12Service({
   engine,
   store,
   orchestrator,
+  toolProfiles = null,
   model = "gpt-6-astra",
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now = () => Date.now()
@@ -18,16 +19,25 @@ export function createV12Service({
     mode = "balanced",
     allowWeb = true,
     tier = "pro",
+    admin = false,
     ownerSubjectHash,
     clientRequestId = null,
     context = "",
+    toolProfile = "web",
     beforeCreateSession = null
   }) {
-    const limits = planLimits(tier, allowWeb);
+    const resolvedTools = resolveToolProfile(toolProfiles, toolProfile, { admin, allowWeb });
+    const limits = planLimits(tier, resolvedTools.allowWeb, resolvedTools.mcpTools.length > 0);
+    if (resolvedTools.maxToolCalls != null) {
+      limits.max_total_tool_calls = Math.min(limits.max_total_tool_calls, resolvedTools.maxToolCalls);
+    }
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
-      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use supplied context as a checkpoint. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
-      allowWeb,
+      instructions: "Finish the KeepGoing job. Preserve completed work across turns and use supplied context as a checkpoint. Use only the tools actually attached to this session and obey their allowlists. Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable. Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion. Obey the required STATUS marker.",
+      allowWeb: resolvedTools.allowWeb,
+      mcpTools: resolvedTools.mcpTools,
+      toolProfileName: resolvedTools.name,
+      toolPolicyHash: resolvedTools.policyHash,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
       clientRequestId,
@@ -44,10 +54,27 @@ export function createV12Service({
       job_id: result.job.id,
       status: result.job.status,
       duplicate: !result.created,
+      tool_profile: resolvedTools.name,
       message: result.created
         ? "KeepGoing durable job started. Server-side recovery can continue it without repeated continue prompts."
         : "This start request already exists. Reusing the existing KeepGoing job."
     };
+  }
+
+  function listToolProfiles(admin = false) {
+    if (!toolProfiles?.list) {
+      return { profiles: [{
+        name: "web",
+        description: "Public web research only.",
+        owner_only: false,
+        write_capable: false,
+        web: true,
+        mcp_servers: [],
+        max_tool_calls: null,
+        policy_hash: null
+      }] };
+    }
+    return { profiles: toolProfiles.list({ admin }) };
   }
 
   async function list(ownerSubjectHash, { limit = 20, activeOnly = true } = {}) {
@@ -234,18 +261,48 @@ export function createV12Service({
     };
   }
 
-  return { start, list, get, wait, cancel, resume, ownedJob };
+  return { start, listToolProfiles, list, get, wait, cancel, resume, ownedJob };
 }
 
-export function planLimits(tier, allowWeb = true) {
-  const business = tier === "business" || tier === "owner";
+export function planLimits(tier, allowWeb = true, hasExternalTools = false) {
+  const owner = tier === "owner";
+  const business = tier === "business";
+  const toolsEnabled = Boolean(allowWeb || hasExternalTools);
+
+  if (owner) {
+    return {
+      max_attempts: 12,
+      max_total_tokens: 60_000,
+      max_total_tool_calls: toolsEnabled ? 40 : 0,
+      max_wall_seconds: 8 * 60 * 60
+    };
+  }
+
   return {
-    // Continuations remain multi-turn, but aggregate budgets are deliberately
-    // bounded to keep subscription economics predictable at maximum usage.
+    // Paying plans deliberately keep low aggregate tool-call ceilings so
+    // subscription economics remain predictable even at maximum usage.
     max_attempts: business ? 8 : 6,
     max_total_tokens: business ? 30_000 : 20_000,
-    max_total_tool_calls: allowWeb ? (business ? 5 : 3) : 0,
+    max_total_tool_calls: toolsEnabled ? (business ? 5 : 3) : 0,
     max_wall_seconds: business ? 4 * 60 * 60 : 2 * 60 * 60
+  };
+}
+
+function resolveToolProfile(registry, name, { admin, allowWeb }) {
+  const profileName = String(name || "web").trim() || "web";
+  if (registry?.resolve) {
+    return registry.resolve(profileName, { admin, allowWeb });
+  }
+  if (profileName !== "web") throw new Error("KeepGoing MCP tool profiles are not configured");
+  return {
+    name: "web",
+    description: "Public web research only.",
+    ownerOnly: false,
+    writeCapable: false,
+    allowWeb: Boolean(allowWeb),
+    maxToolCalls: null,
+    mcpTools: [],
+    policyHash: ""
   };
 }
 
