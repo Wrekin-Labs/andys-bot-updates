@@ -10,6 +10,7 @@ import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { createOpenAIWebhookVerifier, createWebhookProcessor } from "./webhook_processor.js";
 import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
+import { createToolProfileRegistry } from "./tool_profiles.js";
 
 const app = express();
 
@@ -40,6 +41,7 @@ const V12_DURABLE_STORE_URL = process.env.KEEPGOING_DURABLE_STORE_URL || (
 const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BILLING_INGEST_TOKEN;
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
+const TOOL_PROFILES_JSON = process.env.KEEPGOING_TOOL_PROFILES_JSON || "";
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
@@ -324,8 +326,18 @@ function getV12Runtime() {
     proxyUrl: V12_DURABLE_STORE_URL,
     proxyToken: V12_DURABLE_STORE_TOKEN
   });
+  const toolProfiles = createToolProfileRegistry({
+    rawJson: TOOL_PROFILES_JSON,
+    env: process.env
+  });
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
-  const service = createV12Service({ engine, store, orchestrator, model: MODEL });
+  const service = createV12Service({
+    engine,
+    store,
+    orchestrator,
+    toolProfiles,
+    model: MODEL
+  });
   const watchdog = createWatchdog({ store, orchestrator });
   const webhookProcessor = OPENAI_WEBHOOK_SECRET
     ? createWebhookProcessor({
@@ -338,7 +350,7 @@ function getV12Runtime() {
       })
     : null;
 
-  v12RuntimeCache = { engine, store, orchestrator, service, watchdog, webhookProcessor };
+  v12RuntimeCache = { engine, store, orchestrator, service, toolProfiles, watchdog, webhookProcessor };
   return v12RuntimeCache;
 }
 
