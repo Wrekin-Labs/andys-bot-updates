@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "keepgoing",
-  "version": "1.2.0-beta.2",
+  "version": "1.2.0-beta.23",
   "description": "Run substantial supported AI work as one durable KeepGoing job that can continue across model turns and be recovered later.",
   "author": {
     "name": "KeepGoing",
@@ -103,8 +103,10 @@
         }
       },
       "publication": {
-        "countries": ["GB"],
-        "release_notes": "KeepGoing 1.2 introduces durable multi-turn jobs, automatic PARTIAL continuation, recovery/listing across chats, safe resume after input_required, bounded tool profiles, server-side watchdog/webhook recovery, owner-scoped GitHub/Project Relay tooling, and stronger duplicate/usage safeguards."
+        "countries": [
+          "GB"
+        ],
+        "release_notes": "KeepGoing 1.2 beta.23 adds durable multi-turn jobs, automatic partial continuation, cross-chat recovery, safe resume, permission-scoped MCP tool profiles, owner-only GitHub and Project Relay tooling, and stronger duplicate/usage safeguards."
       }
     }
   }
