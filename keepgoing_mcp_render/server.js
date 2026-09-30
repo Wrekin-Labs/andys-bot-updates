@@ -1706,7 +1706,8 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." }
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
+            toolProfile: { type: "string", minLength: 1, maxLength: 64 }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1717,6 +1718,7 @@ function createMcpServer(access = {}) {
             job_id: { type: "string" },
             status: { type: "string" },
             duplicate: { type: "boolean" },
+            tool_profile: { type: "string" },
             message: { type: "string" }
           },
           required: ["job_id", "status", "message"],
@@ -1738,7 +1740,8 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." }
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
+            toolProfile: { type: "string", minLength: 1, maxLength: 64 }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1749,6 +1752,7 @@ function createMcpServer(access = {}) {
             job_id: { type: "string" },
             status: { type: "string" },
             duplicate: { type: "boolean" },
+            tool_profile: { type: "string" },
             message: { type: "string" }
           },
           required: ["job_id", "status", "message"],
@@ -1773,6 +1777,7 @@ function createMcpServer(access = {}) {
           properties: {
             job_id: { type: "string" },
             status: { type: "string" },
+            tool_profile: { type: "string" },
             output: { type: "string" },
             error: { type: ["string", "null"] },
             progress: {
@@ -1810,6 +1815,7 @@ function createMcpServer(access = {}) {
           properties: {
             job_id: { type: "string" },
             status: { type: "string" },
+            tool_profile: { type: "string" },
             output: { type: "string" },
             error: { type: ["string", "null"] },
             progress: {
@@ -1886,6 +1892,57 @@ function createMcpServer(access = {}) {
       });
 
       tools.push({
+        name: "list_tool_profiles",
+        title: "List KeepGoing tool profiles",
+        description: "List background tool profiles available to the authenticated KeepGoing account. Returns safe capability metadata only and never returns credentials.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            profiles: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  description: { type: "string" },
+                  owner_only: { type: "boolean" },
+                  write_capable: { type: "boolean" },
+                  web: { type: "boolean" },
+                  mcp_servers: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        label: { type: "string" },
+                        tool_count: { type: "number" },
+                        required: { type: "boolean" }
+                      },
+                      required: ["label","tool_count","required"],
+                      additionalProperties: false
+                    }
+                  },
+                  max_tool_calls: { type: ["number","null"] },
+                  policy_hash: { type: ["string","null"] }
+                },
+                required: ["name","description","owner_only","write_capable","web","mcp_servers","max_tool_calls","policy_hash"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["profiles"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
         name: "list_persistent_jobs",
         title: "List persistent jobs",
         description: "Use when the user wants to find or recover their own recent KeepGoing jobs, including from a new chat. Returns minimal job metadata and never returns raw prompts.",
@@ -1909,10 +1966,11 @@ function createMcpServer(access = {}) {
                   status: { type: "string" },
                   attempt: { type: "number" },
                   max_attempts: { type: "number" },
+                  tool_profile: { type: "string" },
                   error: { type: ["string", "null"] }
                 },
                 required: [
-                  "job_id","status","attempt","max_attempts","error"
+                  "job_id","status","attempt","max_attempts","tool_profile","error"
                 ],
                 additionalProperties: false
               }
