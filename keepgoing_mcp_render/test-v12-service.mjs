@@ -325,7 +325,8 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   assert.deepEqual(createdOptions.workspace, {
     enabled: true,
     repositoryUrl: "https://github.com/chipblock2/project-relay.git",
-    repositoryRef: "main"
+    repositoryRef: "main",
+    files: []
   });
   assert.match(createdOptions.instructions, /\/workspace\/project/);
   assert.match(createdOptions.instructions, /Do not attempt to push to GitHub/);
