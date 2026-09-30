@@ -118,6 +118,18 @@ Reviewer expectations:
 - destructiveHint: false — no state-changing action is performed.
 - idempotentHint: true — repeated listing is safe.
 
+### list_job_artifacts
+- readOnlyHint: true — lists immutable metadata for published output files belonging to the authenticated job.
+- openWorldHint: false — reads only bounded provider state for that owned KeepGoing job.
+- destructiveHint: false — does not modify or delete artifacts.
+- idempotentHint: true — repeated listings have no additional effect.
+
+### read_job_artifact
+- readOnlyHint: true — retrieves a bounded text artifact already published by the authenticated job.
+- openWorldHint: false — reads only bounded provider state for that owned KeepGoing job.
+- destructiveHint: false — does not modify or delete the artifact.
+- idempotentHint: true — repeated reads have no additional effect.
+
 ### resume_persistent_job
 - readOnlyHint: false — sends user-supplied missing information into the same provider session and resumes work.
 - openWorldHint: true — resumed work may access the public web if that job was allowed to do so.
