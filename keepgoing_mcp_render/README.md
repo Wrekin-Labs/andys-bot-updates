@@ -55,6 +55,30 @@ v1.2 also applies aggregate per-job continuation budgets:
 
 These are safety/cost ceilings, not promised consumption targets. A job stops earlier when completed or when user input is genuinely required.
 
+## Plugin Directory package
+
+The current portable submission package lives in `plugin/`.
+
+It includes:
+- `plugin.json` using the Agent Plugins 1.0 schema;
+- one hosted streamable-HTTP MCP in `mcp.json`;
+- onboarding skill;
+- light/dark logo and composer icon;
+- exactly five positive and three negative reviewer cases;
+- UK initial availability;
+- commerce=false review declaration.
+
+Validate/build:
+
+```bash
+npm run plugin:validate
+npm run plugin:zip
+```
+
+CI builds the same ZIP and publishes it as the `keepgoing-plugin-submission` workflow artifact.
+
+The Plugin Directory surface is intentionally commerce-neutral. Current OpenAI plugin rules allow existing paid users to authenticate and use existing entitlements, but do not allow digital subscriptions/upgrades to be sold or promoted inside the plugin. The directory website URL therefore points to `/plugin`, while the independent commercial website remains a separate surface.
+
 ## MCP tools
 
 - `continue_until_done` — preferred natural-language autopilot entrypoint for "continue / keep going / finish it / until done".
@@ -153,6 +177,32 @@ When Relay is configured, KeepGoing adds:
 
 Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
 
+### Private GitHub worker (optional)
+
+Owner-only durable jobs can use a built-in private GitHub MCP worker when configured:
+
+- `KEEPGOING_WORKER_MCP_SECRET`
+- `KEEPGOING_GITHUB_TOKEN`
+- `KEEPGOING_GITHUB_REPOS=owner/repo,...`
+- optional `KEEPGOING_GITHUB_BRANCH_PREFIX=keepgoing/`
+
+The worker restricts access to the exact repo allowlist. Writes are restricted to the configured KeepGoing branch prefix and can open, but not merge, pull requests.
+
+### Project Relay background profiles (optional)
+
+- `KEEPGOING_RELAY_MCP_URL`
+- one of:
+  - `KEEPGOING_RELAY_MCP_CREDENTIAL_ID`
+  - `KEEPGOING_RELAY_MCP_AUTHORIZATION`
+- `KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE=true` only when the explicitly destructive admin profile is wanted.
+
+Built-in profiles:
+- `relay-read`
+- `relay-developer`
+- optional `relay-admin`
+
+Project Relay continues to enforce its own OAuth owner routing, approved roots and locally revocable Owner Full Control.
+
 PayPal live checkout:
 - `PAYPAL_MODE=live`
 - `PAYPAL_CLIENT_ID`
@@ -195,7 +245,7 @@ Before enabling v1.2 for paid customers, verify:
 7. `NEEDS_USER` -> `resume_persistent_job` resumes the same job once.
 8. A missed webhook is repaired by the watchdog.
 9. PayPal/Stripe subscription claim and cancellation flows are tested in the selected live provider.
-10. Privacy, Terms, Support and Security pages match the deployed data flow.
+10. Privacy, Terms, Support and Security pages match the deployed data flow.\n11. `npm run plugin:validate` passes and the CI-built Plugin Directory ZIP is used for submission.\n12. If GitHub/Relay profiles are enabled, `/readiness` reports them ready and the production preflight is run with the matching `--github-worker` / `--relay-profiles` requirements.
 
 
 ## Background tool profiles
