@@ -49,6 +49,12 @@ assert.ok(!publicList.some((p) => p.name === "developer-owner"));
 
 const ownerList = registry.list({ admin: true });
 assert.ok(ownerList.some((p) => p.name === "developer-owner"));
+assert.deepEqual(registry.healthCheck(), {
+  ok: true,
+  profiles: 3,
+  servers: 2,
+  secret_refs: 1
+});
 
 const gh = registry.resolve("github-read", { admin: false, allowWeb: true });
 assert.equal(gh.allowWeb, true);
@@ -88,6 +94,10 @@ assert.throws(
   /authorization secret/
 );
 
+const missingSecretRegistry = createToolProfileRegistry({ rawJson: raw, env: {} });
+assert.equal(missingSecretRegistry.healthCheck().ok, false);
+assert.equal(missingSecretRegistry.healthCheck().error, "missing_mcp_authorization_secret");
+
 assert.throws(
   () => normaliseProfile("bad write", {}),
   /profile name/
@@ -102,6 +112,18 @@ assert.throws(
   }),
   /allowed_tools/
 );
+assert.throws(
+  () => normaliseProfile("environment-origin", {
+    servers: [{
+      label: "x",
+      url: "https://example.com/mcp",
+      connection_origin: "environment",
+      allowed_tools: ["read"]
+    }]
+  }),
+  /service connection_origin/
+);
+
 assert.throws(
   () => normaliseProfile("bad-http", {
     servers: [{
