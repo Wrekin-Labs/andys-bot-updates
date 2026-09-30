@@ -1,46 +1,49 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "keepgoing",
-  "version": "1.2.0-beta.22",
-  "description": "Durable AI jobs that continue substantial work without repeated continue prompts.",
+  "version": "1.2.0-beta.23",
+  "description": "Run substantial supported AI work as one durable KeepGoing job that can continue across model turns and be recovered later.",
   "author": {
     "name": "KeepGoing",
     "email": "info@thesmashroom.co.uk",
-    "url": "https://keepgoing-mcp.onrender.com/"
+    "url": "https://keepgoing-mcp.onrender.com/plugin"
   },
-  "homepage": "https://keepgoing-mcp.onrender.com/",
+  "homepage": "https://keepgoing-mcp.onrender.com/plugin",
   "repository": "https://github.com/chipblock2/andys-bot-updates",
   "keywords": [
     "productivity",
-    "ai",
-    "background-jobs",
-    "continuation",
+    "durable-jobs",
+    "background-work",
+    "research",
     "mcp"
   ],
   "extensions": {
     "com.openai": {
       "interface": {
         "displayName": "KeepGoing",
-        "shortDescription": "Durable AI jobs that continue",
-        "longDescription": "KeepGoing turns substantial AI work into one durable job with a stable job ID. ChatGPT can start, check, wait for, recover, resume, and cancel that same objective instead of repeatedly restarting completed work. It is designed for longer research, comparisons, debugging, and multi-step tasks where continuity matters. Jobs use bounded continuation limits, duplicate protection, OAuth authentication, owner-scoped access, and recovery after transient provider failures. KeepGoing does not bypass ChatGPT or OpenAI safeguards and does not gain access to other accounts or apps unless those capabilities are explicitly available to the job.",
+        "shortDescription": "Finish long AI work",
+        "longDescription": "KeepGoing turns substantial supported work into one durable job that can continue across model turns instead of repeatedly starting over. It preserves a stable job ID, safely continues partial work within hard limits, recovers missed progress with server-side watchdog logic, and lets you list, inspect, resume or cancel the same job later. Jobs can use explicitly approved public-web or MCP tool profiles when configured. KeepGoing does not inherit every connector from the foreground chat, bypass ChatGPT or OpenAI safeguards, or force a new ChatGPT message after the chat turn has ended. If a job genuinely needs authorization, approval, a private-account action or a missing fact, it stops and waits for you.",
         "developerName": "KeepGoing",
         "category": "Productivity",
         "capabilities": [
-          "Durable AI jobs",
-          "Cross-chat job recovery"
+          "Continue substantial work across model turns",
+          "Recover and resume durable AI jobs",
+          "Use permission-scoped web and MCP tools",
+          "Stop safely when user input is genuinely required"
         ],
-        "websiteURL": "https://keepgoing-mcp.onrender.com/",
+        "websiteURL": "https://keepgoing-mcp.onrender.com/plugin",
         "privacyPolicyURL": "https://keepgoing-mcp.onrender.com/privacy",
         "termsOfServiceURL": "https://keepgoing-mcp.onrender.com/terms",
         "defaultPrompt": [
-          "Use KeepGoing to finish this substantial job until it is complete.",
-          "Use KeepGoing to continue this objective without restarting completed work."
+          "Keep working on this until it is complete. Use one durable job and stop only if you genuinely need me.",
+          "List my active KeepGoing jobs and show me the latest status of the newest one.",
+          "Resume my KeepGoing job with the missing information I just provided."
         ],
-        "brandColor": "#008C82",
+        "brandColor": "#5F50E6",
         "composerIcon": "./assets/keepgoing-icon.png",
         "logo": "./assets/keepgoing-icon.png",
         "supportURL": "https://keepgoing-mcp.onrender.com/support",
-        "brandColorDark": "#27F3DF"
+        "brandColorDark": "#A99FFF"
       },
       "review": {
         "test_cases": {
@@ -98,7 +101,7 @@
         "countries": [
           "GB"
         ],
-        "release_notes": "Initial public-directory submission candidate. KeepGoing provides durable multi-turn AI jobs with stable job IDs, cross-chat recovery, bounded continuation, duplicate protection, safe input-required resume, OAuth/PKCE, owner-scoped job access, watchdog recovery, and idempotent recovery from transient provider-session startup failures."
+        "release_notes": "KeepGoing 1.2 beta.23 adds permission-scoped MCP tool profiles, owner-only GitHub and Project Relay background tooling, stronger commercial packaging, and preserves durable multi-turn continuation, recovery and duplicate protection."
       }
     }
   }
