@@ -629,7 +629,7 @@ await renderSession();
         if path == "/oauth/userinfo":
             self._oauth_userinfo()
             return
-        if path in {"/", "/support", "/privacy", "/terms"}:
+        if path in {"/", "/plans", "/support", "/privacy", "/terms"}:
             suffix = "" if path == "/" else path
             self._proxy_html(SITE_PAGE + suffix)
             return
