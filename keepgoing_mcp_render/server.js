@@ -1871,7 +1871,7 @@ app.get("/.well-known/oauth-protected-resource", (_req, res) => {
     authorization_servers: [PUBLIC_BASE_URL],
     scopes_supported: [OAUTH_SCOPE],
     bearer_methods_supported: ["header"],
-    resource_documentation: PUBLIC_BASE_URL + "/install",
+    resource_documentation: PUBLIC_BASE_URL + "/plugin",
     resource_policy_uri: PUBLIC_BASE_URL + "/privacy",
     resource_tos_uri: PUBLIC_BASE_URL + "/terms"
   });
@@ -1930,7 +1930,7 @@ app.get("/oauth/authorize", async (req, res) => {
     .map(([k, v]) => '<input type="hidden" name="' + htmlEscape(k) + '" value="' + htmlEscape(v) + '">')
     .join("");
 
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:560px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px;box-sizing:border-box}input{width:100%;padding:13px;border-radius:10px;border:1px solid #444;background:#0d1117;color:#fff;box-sizing:border-box;margin:10px 0 14px}button{width:100%;padding:12px;border:0;border-radius:10px;font-weight:700}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect KeepGoing</h1><p>Enter the private activation token issued with your KeepGoing subscription.</p><form method="post" action="/oauth/authorize">' + fields + '<label>Activation token</label><input name="activation_token" type="password" autocomplete="off" required><button type="submit">Connect to ChatGPT</button></form><p class="muted">KeepGoing never asks for your ChatGPT password. This page only verifies your KeepGoing subscription.</p></div></body></html>';
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:560px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px;box-sizing:border-box}input{width:100%;padding:13px;border-radius:10px;border:1px solid #444;background:#0d1117;color:#fff;box-sizing:border-box;margin:10px 0 14px}button{width:100%;padding:12px;border:0;border-radius:10px;font-weight:700}.muted{color:#8b949e;font-size:14px}</style></head><body><div class="card"><h1>Connect KeepGoing</h1><p>Enter the private activation token for your existing KeepGoing account.</p><form method="post" action="/oauth/authorize">' + fields + '<label>Activation token</label><input name="activation_token" type="password" autocomplete="off" required><button type="submit">Connect to ChatGPT</button></form><p class="muted">KeepGoing never asks for your ChatGPT password. This page only verifies your existing KeepGoing account access.</p></div></body></html>';
   res.type("html").send(html);
 });
 
@@ -1959,7 +1959,7 @@ app.post("/oauth/authorize", async (req, res) => {
 
   const access = await validateCustomerToken(activationToken, false);
   if (!access.ok) {
-    return res.status(401).type("html").send('<!doctype html><html><body style="font-family:system-ui;padding:32px"><h1>KeepGoing could not be connected</h1><p>The activation token is invalid or the subscription is not active.</p><p>Return to ChatGPT and try again.</p></body></html>');
+    return res.status(401).type("html").send('<!doctype html><html><body style="font-family:system-ui;padding:32px"><h1>KeepGoing could not be connected</h1><p>The activation token is invalid or the KeepGoing account is not active.</p><p>Return to ChatGPT and try again.</p></body></html>');
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -2196,13 +2196,13 @@ app.get("/plugin", (_req, res) => {
 
 
 function infoPage(title, body) {
-  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#58a6ff}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/">← KeepGoing</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + htmlEscape(title) + ' — KeepGoing</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:28px;line-height:1.55}.wrap{max-width:780px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:28px}a{color:#A99FFF}code{background:#0d1117;padding:2px 6px;border-radius:6px}.muted{color:#8b949e}h1,h2{line-height:1.2}</style></head><body><div class="wrap"><p><a href="/plugin">← KeepGoing plugin</a></p><div class="card"><h1>' + htmlEscape(title) + '</h1>' + body + '</div></div></body></html>';
 }
 
 app.get("/install", (_req, res) => {
   res.type("html").send(infoPage("Install KeepGoing", [
     "<p><strong>Connection endpoint:</strong> <code>" + htmlEscape(PUBLIC_BASE_URL + "/mcp") + "</code></p>",
-    "<p>KeepGoing uses OAuth. When ChatGPT opens the KeepGoing connection page, enter the private activation token issued after subscription. Do not put the token in the MCP URL.</p>",
+    "<p>KeepGoing uses OAuth. When ChatGPT opens the KeepGoing connection page, enter the private activation token for your existing KeepGoing account. Do not put the token in the MCP URL.</p>",
     "<h2>Private beta / developer connection</h2>",
     "<ol><li>In an eligible ChatGPT account, create or connect a custom MCP app.</li><li>Use the endpoint shown above.</li><li>Select OAuth when prompted.</li><li>Complete the KeepGoing connection page with your activation token.</li><li>Scan the tools and confirm <code>start_persistent_job</code>, <code>get_persistent_job</code>, <code>wait_for_persistent_job</code>, and <code>cancel_persistent_job</code>.</li></ol>",
     "<p class=\"muted\">ChatGPT plan, workspace and plugin/app availability can affect whether custom MCP connections are available. The public Plugin Directory release will use the same hosted service after approval.</p>",
@@ -2241,7 +2241,7 @@ app.get("/terms", (_req, res) => {
 app.get("/support", (_req, res) => {
   res.type("html").send(infoPage("Support", [
     "<p>Email: <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a></p>",
-    "<h2>Before contacting support</h2><ol><li>Check that your subscription is active.</li><li>Reconnect KeepGoing if ChatGPT reports an expired connection.</li><li>Use the same job ID when checking a running job; do not start a duplicate.</li><li>Never email your activation token, ChatGPT password, payment password or API keys.</li></ol>",
+    "<h2>Before contacting support</h2><ol><li>Check that your KeepGoing account access is active.</li><li>Reconnect KeepGoing if ChatGPT reports an expired connection.</li><li>Use the same job ID when checking a running job; do not start a duplicate.</li><li>Never email your activation token, ChatGPT password, payment password or API keys.</li></ol>",
     "<p class=\"muted\">For payment-account security, KeepGoing support will never ask for a PayPal, bank or ChatGPT password.</p>"
   ].join("")));
 });
@@ -2439,7 +2439,7 @@ app.post("/mcp", async (req, res) => {
   if (isStart && V12_ENABLED && !v12ForAccess(access)) {
     const consumed = await validateCustomerToken(access._customer_token, true);
     if (!consumed.ok) {
-      oauthChallenge(res, "invalid_token", consumed.error || "Subscription quota unavailable");
+      oauthChallenge(res, "invalid_token", consumed.error || "Account quota unavailable");
       return res.status(consumed.status || 401).json({
         error: consumed.error || "unauthorized",
         tier: consumed.tier,
