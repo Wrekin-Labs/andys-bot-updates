@@ -87,6 +87,7 @@ export function createV12Service({
         status: job.status,
         attempt: Number(job.attempt || 0),
         max_attempts: Number(job.maxAttempts || 0),
+        tool_profile: job.toolProfileName || "web",
         error: job.safeErrorMessage || null
       }))
     };
@@ -253,6 +254,7 @@ export function createV12Service({
     return {
       job_id: job.id,
       status: job.status,
+      tool_profile: job.toolProfileName || "web",
       output,
       error: job.safeErrorMessage || null,
       progress: {
