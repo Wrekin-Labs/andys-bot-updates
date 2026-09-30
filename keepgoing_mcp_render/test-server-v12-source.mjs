@@ -194,11 +194,11 @@ for (const title of [
 ]) {
   assert.ok(source.includes('title: "' + title + '"'), "missing tool title: " + title);
 }
-assert.match(source, /name: "get_persistent_job"[\s\S]{0,1300}openWorldHint: false/);
-assert.match(source, /name: "wait_for_persistent_job"[\s\S]{0,1500}openWorldHint: false/);
-assert.match(source, /name: "cancel_persistent_job"[\s\S]{0,1200}destructiveHint: true[\s\S]{0,120}openWorldHint: false/);
-assert.match(source, /name: "list_persistent_jobs"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,160}openWorldHint: false/);
-assert.match(source, /name: "resume_persistent_job"[\s\S]{0,1500}readOnlyHint: false[\s\S]{0,200}openWorldHint: true/);
+assert.match(source, /server\.registerTool\("get_persistent_job"[\s\S]{0,2200}openWorldHint: false/);
+assert.match(source, /server\.registerTool\("wait_for_persistent_job"[\s\S]{0,2400}openWorldHint: false/);
+assert.match(source, /server\.registerTool\("cancel_persistent_job"[\s\S]{0,1800}destructiveHint: true[\s\S]{0,240}openWorldHint: false/);
+assert.match(source, /server\.registerTool\("list_persistent_jobs"[\s\S]{0,2600}readOnlyHint: true[\s\S]{0,240}openWorldHint: false/);
+assert.match(source, /server\.registerTool\("resume_persistent_job"[\s\S]{0,2200}readOnlyHint: false[\s\S]{0,320}openWorldHint: true/);
 
 console.log("server v1.2 source guards passed");
 
