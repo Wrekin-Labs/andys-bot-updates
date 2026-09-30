@@ -40,10 +40,12 @@
           "Resume my KeepGoing job with the missing information I just provided."
         ],
         "brandColor": "#5F50E6",
-        "composerIcon": "./assets/keepgoing-icon.png",
-        "logo": "./assets/keepgoing-icon.png",
+        "composerIcon": "./plugin/assets/composer-icon.svg",
+        "logo": "./plugin/assets/logo.svg",
         "supportURL": "https://keepgoing-mcp.onrender.com/support",
-        "brandColorDark": "#A99FFF"
+        "brandColorDark": "#A99FFF",
+        "composerIconDark": "./plugin/assets/composer-icon-dark.svg",
+        "logoDark": "./plugin/assets/logo-dark.svg"
       },
       "review": {
         "test_cases": {
