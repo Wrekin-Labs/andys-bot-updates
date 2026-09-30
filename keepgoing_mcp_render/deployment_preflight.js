@@ -3,6 +3,9 @@ export async function runDeploymentPreflight({
   fetchImpl = globalThis.fetch,
   requireSellReady = false,
   requireV12 = false,
+  requireToolProfiles = false,
+  requireGithubWorker = false,
+  requireRelayProfiles = false,
   requireChallenge = false
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
@@ -48,10 +51,27 @@ export async function runDeploymentPreflight({
       if (!readiness.durable_store_ready) throw new Error("durable store is not reachable");
       if (!readiness.openai_webhook_ready) throw new Error("OpenAI webhook is not ready");
     }
+    if (requireToolProfiles && !readiness.tool_profiles_ready) {
+      throw new Error("tool profiles are not ready");
+    }
+    if (requireGithubWorker) {
+      if (!readiness.github_worker_requested) throw new Error("GitHub worker is not configured");
+      if (!readiness.github_worker_ready) throw new Error("GitHub worker is not ready");
+      if (Number(readiness.github_worker_repo_count || 0) < 1) {
+        throw new Error("GitHub worker has no allowlisted repositories");
+      }
+    }
+    if (requireRelayProfiles) {
+      if (!readiness.relay_profiles_requested) throw new Error("Project Relay profiles are not configured");
+      if (!readiness.relay_profiles_ready) throw new Error("Project Relay profiles are not ready");
+    }
     return {
       sell_ready: Boolean(readiness.sell_ready),
       durable_engine_enabled: Boolean(readiness.durable_engine_enabled),
-      durable_store_ready: Boolean(readiness.durable_store_ready)
+      durable_store_ready: Boolean(readiness.durable_store_ready),
+      tool_profiles_ready: Boolean(readiness.tool_profiles_ready),
+      github_worker_ready: Boolean(readiness.github_worker_ready),
+      relay_profiles_ready: Boolean(readiness.relay_profiles_ready)
     };
   });
 
@@ -104,6 +124,36 @@ export async function runDeploymentPreflight({
     return { status: response.status };
   });
 
+  if (requireGithubWorker || readiness?.github_worker_ready) {
+    await check("private_worker_mcp_protected", async () => {
+      const response = await fetchImpl(base + "/worker-mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-11-25"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "worker-preflight",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "KeepGoing worker preflight", version: "1" }
+          }
+        })
+      });
+      if (response.status !== 401) {
+        throw new Error("private worker MCP was not rejected with 401");
+      }
+      const challenge = response.headers?.get?.("www-authenticate") || "";
+      if (!/Bearer/i.test(challenge)) {
+        throw new Error("private worker MCP is missing Bearer challenge");
+      }
+      return { status: response.status };
+    });
+  }
+
   for (const path of ["/privacy", "/terms", "/support", "/security"]) {
     await check("page:" + path.slice(1), async () => {
       const response = await fetchImpl(base + path, { method: "GET" });
@@ -136,7 +186,10 @@ export async function runDeploymentPreflight({
           ok: Boolean(readiness.ok),
           sell_ready: Boolean(readiness.sell_ready),
           durable_engine_enabled: Boolean(readiness.durable_engine_enabled),
-          durable_store_ready: Boolean(readiness.durable_store_ready)
+          durable_store_ready: Boolean(readiness.durable_store_ready),
+          tool_profiles_ready: Boolean(readiness.tool_profiles_ready),
+          github_worker_ready: Boolean(readiness.github_worker_ready),
+          relay_profiles_ready: Boolean(readiness.relay_profiles_ready)
         }
       : null,
     checks,
