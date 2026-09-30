@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { isTerminal } from "./durable_job.js";
-import { latestRootTurn, latestSessionText } from "./agents_engine.js";
+import { latestRootTurn, latestSessionText, normaliseCodingWorkspace } from "./agents_engine.js";
 
 export const JOB_INSTRUCTIONS = [
   "Finish the KeepGoing job.",
@@ -43,6 +43,15 @@ export function createV12Service({
       throw new Error("repositoryUrl/repositoryRef require codingWorkspace=true");
     }
 
+    // Validate workspace configuration before durable reservation/quota use.
+    const workspace = codingWorkspace
+      ? normaliseCodingWorkspace({
+          enabled: true,
+          repositoryUrl,
+          repositoryRef
+        })
+      : null;
+
     const limits = planLimits(tier, allowWeb, codingWorkspace);
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
@@ -53,13 +62,7 @@ export function createV12Service({
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
       clientRequestId,
-      workspace: codingWorkspace
-        ? {
-            enabled: true,
-            repositoryUrl,
-            repositoryRef
-          }
-        : null,
+      workspace,
       limits: {
         maxAttempts: limits.max_attempts,
         maxWallMs: limits.max_wall_seconds * 1000,
