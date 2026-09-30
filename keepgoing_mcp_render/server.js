@@ -1257,7 +1257,7 @@ function createMcpServer(access = {}) {
   const server = new McpServer(
     { name: "KeepGoing", version: v12Access ? "1.2.0-beta.2" : "1.1.0" },
     { instructions: v12Access
-      ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Before starting, gather any relevant context already available in the conversation and, when useful and permitted, from connected ChatGPT tools/plugins; pass that context with the job. Prefer continue_until_done for these natural-language requests. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
+      ? "Use KeepGoing whenever the user says or clearly means: keep going, continue until done, finish this, don't stop, complete the objective, or work autonomously to completion. Before starting, gather relevant context already available in the conversation. If the objective requires repository code, files, Project Relay/workstation access, or another external capability, call list_tool_profiles first and choose the least-powerful approved profile that can complete the job; pass its name as toolProfile. Prefer read-only profiles unless writes are required. Never select an owner/write/admin profile for a non-owner account. Prefer continue_until_done for these natural-language requests. Start one durable job and preserve its job_id. The server watchdog continues PARTIAL work without asking the user to type continue. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion."
       : "Use KeepGoing for substantial model-only work or research that should continue as a background response instead of stopping at a normal chat-turn boundary. Start one job, preserve its job_id, then call wait_for_persistent_job. If should_continue_polling is true, call wait_for_persistent_job again with the same job_id without asking the user to type continue. Reuse the same job_id and never create duplicate jobs just to keep working. KeepGoing does not automatically control other ChatGPT plugins, desktops, payments, or private accounts." }
   );
 
@@ -1329,7 +1329,7 @@ function createMcpServer(access = {}) {
 
   server.registerTool("start_persistent_job", {
     title: "Start persistent job",
-    description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. If relevant prior-chat or connected-tool context is available, the host should gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
+    description: "Use for substantial work that should keep progressing until it completes or genuinely needs user input. For code, repository, file or workstation tasks, call list_tool_profiles first and pass the least-powerful suitable toolProfile. If relevant prior-chat or connected-tool context is available, gather it first and pass it in context. Do not ask the user to type continue merely to advance this job.",
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
@@ -1361,7 +1361,7 @@ function createMcpServer(access = {}) {
 
   server.registerTool("continue_until_done", {
     title: "Continue until done",
-    description: "PRIMARY KeepGoing entrypoint when the user says continue, keep going, finish it, until done, don't stop, complete the objective, or equivalent. The host should first collect relevant context already available in the current conversation and, when useful and permitted, from connected ChatGPT tools/plugins, then pass it in context. Starts or idempotently recovers one durable job that keeps advancing server-side until completed or genuinely blocked by required user input/approval or a configured safety/cost limit. Never ask the user to type continue just to advance the same objective.",
+    description: "PRIMARY KeepGoing entrypoint when the user says continue, keep going, finish it, until done, don't stop, complete the objective, or equivalent. For code, repository, file or workstation tasks, call list_tool_profiles first and pass the least-powerful suitable toolProfile so the background job has the tools it actually needs. Collect relevant current-chat context and pass it in context. Starts or idempotently recovers one durable job that keeps advancing server-side until completed or genuinely blocked by required user input/approval or a configured safety/cost limit. Never ask the user to type continue just to advance the same objective.",
     inputSchema: {
       goal: z.string().min(1).max(12000),
       definitionOfDone: z.string().min(1).max(4000).default("All requested work completed and verified"),
