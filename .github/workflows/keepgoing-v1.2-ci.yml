@@ -1,0 +1,41 @@
+name: KeepGoing v1.2 CI
+
+on:
+  push:
+    branches:
+      - keepgoing-v1.2-durable-agent
+      - keepgoing-v1.2-commercial-beta23
+      - keepgoing-v1.2-release-beta23
+    paths:
+      - "keepgoing_mcp_render/**"
+      - ".github/workflows/keepgoing-v1.2-ci.yml"
+  pull_request:
+    paths:
+      - "keepgoing_mcp_render/**"
+      - ".github/workflows/keepgoing-v1.2-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: keepgoing_mcp_render
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: keepgoing_mcp_render/package.json
+      - run: npm install --ignore-scripts
+      - run: npm run verify
+      - run: python3 -m py_compile build_plugin_zip.py
+      - run: npm run plugin:zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepgoing-plugin-submission
+          path: keepgoing_mcp_render/dist/keepgoing-plugin-*.zip
+          if-no-files-found: error
