@@ -38,6 +38,7 @@ export function createV12Service({
       mcpTools: resolvedTools.mcpTools,
       toolProfileName: resolvedTools.name,
       toolPolicyHash: resolvedTools.policyHash,
+      toolWriteCapable: resolvedTools.writeCapable,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
       clientRequestId,
