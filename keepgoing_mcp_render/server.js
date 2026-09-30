@@ -2325,6 +2325,10 @@ app.get("/readiness", async (_req, res) => {
   const githubWorkerRepoCount = githubWorkerReady
     ? normaliseRepoList(GITHUB_WORKER_REPOS).length
     : 0;
+  const relayProfilesRequested = Boolean(
+    RELAY_MCP_URL || RELAY_MCP_CREDENTIAL_ID || RELAY_MCP_AUTHORIZATION
+  );
+  const relayProfilesReady = relayProfileConfigured();
   if (V12_ENABLED && v12Configured()) {
     try {
       const runtime = getV12Runtime();
@@ -2337,7 +2341,8 @@ app.get("/readiness", async (_req, res) => {
         : { ok: true, profiles: 1 };
       toolProfilesReady = Boolean(
         toolHealth.ok &&
-        (!githubWorkerRequested || githubWorkerReady)
+        (!githubWorkerRequested || githubWorkerReady) &&
+        (!relayProfilesRequested || relayProfilesReady)
       );
       toolProfileCount = Number(toolHealth.profiles || 0);
     } catch {
@@ -2364,6 +2369,9 @@ app.get("/readiness", async (_req, res) => {
     github_worker_requested: githubWorkerRequested,
     github_worker_ready: githubWorkerReady,
     github_worker_repo_count: githubWorkerRepoCount,
+    relay_profiles_requested: relayProfilesRequested,
+    relay_profiles_ready: relayProfilesReady,
+    relay_admin_profile_enabled: Boolean(RELAY_ADMIN_PROFILE_ENABLED && relayProfilesReady),
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
