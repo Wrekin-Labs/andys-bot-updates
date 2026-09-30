@@ -1,6 +1,6 @@
-# KeepGoing v1.2 beta
+# KeepGoing v1.3 beta
 
-**Current beta:** `1.2.0-beta.22` — watchdog-first production durability, idempotent/recoverable job startup, upload-ready directory metadata and review cases, owner auto-continue, secure external PayPal checkout/restart recovery, completion semantics and runtime hardening.
+**Current beta:** `1.3.0-beta.23` — durable multi-turn jobs plus an opt-in coding workspace for public GitHub repositories, alongside watchdog-first recovery, idempotent startup/continuation, owner auto-continue, secure external PayPal checkout and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -42,15 +42,40 @@ Once the durable job starts, the server-side webhook/watchdog path advances `STA
 
 Never share an activation token, OAuth token or other account credential.
 
+## Coding workspace (beta.23)
+
+Coding jobs no longer have to rely only on prompt context.
+
+Set `codingWorkspace=true` on `start_persistent_job` or `continue_until_done`. Optionally provide:
+
+- `repositoryUrl` — a **public** `https://github.com/owner/repo` URL.
+- `repositoryRef` — an optional safe branch, tag or commit-like Git ref.
+
+KeepGoing creates the smallest OpenAI-hosted sandbox, clones the repo into `/workspace/project`, and keeps that workspace across turns in the durable Agent session. The Agent can inspect files, edit locally, run tests and write useful patch/report outputs under `/workspace/outputs`.
+
+Safety boundary for this first release:
+
+- public GitHub repositories only;
+- embedded GitHub usernames/passwords/tokens in URLs are rejected;
+- no private-repository credential flow;
+- no GitHub push credentials are supplied;
+- the Agent is explicitly told not to push;
+- sandbox outbound networking is restricted to common source/package hosts;
+- local Bash/apply-patch work does not consume the 3/5 external web/MCP/function-call allowance;
+- failed shell commands still prevent a false `COMPLETED` result.
+
+Hosted coding workspaces have shorter wall-clock ceilings to bound container cost: Pro 30 minutes; Business/owner 60 minutes.
+
+
 ## Plans and technical limits
 
 - Free: 3 jobs/month (rollout after paid beta).
 - Pro: £7.99/month, 100 jobs/month, up to 3 web/tool calls per durable job.
 - Business: £29/month, 500 jobs/month, up to 5 web/tool calls per durable job.
 
-v1.2 also applies aggregate per-job continuation budgets:
-- Pro: up to 6 turns/attempts, 20,000 aggregate model tokens, 2-hour wall-clock window.
-- Business: up to 8 turns/attempts, 30,000 aggregate model tokens, 4-hour wall-clock window.
+The durable engine also applies aggregate per-job continuation budgets:
+- Pro: up to 6 turns/attempts, 20,000 aggregate model tokens, 2-hour wall-clock window for normal jobs; 30 minutes when a coding workspace is enabled.
+- Business: up to 8 turns/attempts, 30,000 aggregate model tokens, 4-hour wall-clock window for normal jobs; 60 minutes when a coding workspace is enabled.
 
 These are safety/cost ceilings, not promised consumption targets. A job stops earlier when completed or when user input is genuinely required.
 
@@ -147,7 +172,9 @@ PayPal live checkout:
 - Signed OpenAI webhooks are verified before processing.
 - Webhook event IDs are deduplicated.
 - The watchdog repairs missed webhook/poll progress without blindly creating a duplicate provider session.
-- Active jobs have hard attempt, token, tool-call and wall-clock limits.
+- Active jobs have hard attempt, token, external-tool-call and wall-clock limits.
+- Coding workspaces use a restricted outbound network and reject repository URLs containing credentials.
+- Coding workspace shell/apply-patch operations are local sandbox work, not counted as paid web/MCP/function calls.
 - Durable metadata retention is bounded; active jobs are not deleted by retention cleanup.
 - The durable database stores orchestration metadata/hashes rather than raw prompts/model output.
 - Sensitive HTTP responses use no-store caching where appropriate.
@@ -183,7 +210,7 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.22 candidate:
+As of the beta.23 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
@@ -193,6 +220,7 @@ As of the beta.22 candidate:
 - Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
 - The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
 - `/readiness` reports no commercial blockers and `sell_ready: true` when the production dependencies are healthy.
+- Beta.23 adds the opt-in public-GitHub coding workspace so durable coding jobs can inspect/edit/test real files instead of failing with a no-files tooling limit.
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 ## Public-plugin commerce boundary
 
