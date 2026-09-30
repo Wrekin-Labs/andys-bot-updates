@@ -7,6 +7,7 @@ export const JOB_INSTRUCTIONS = [
   "Preserve completed work across turns and use any supplied brief task checkpoint only as supporting context.",
   "The checkpoint is intentionally limited and is not full chat history; never infer missing credentials, private data, or unrelated facts from it.",
   "Do not stop for non-essential clarification: make safe, reversible assumptions where reasonable.",
+  "Use only tools actually attached to this session and obey their explicit allowlists and permission boundaries.",
   "Use NEEDS_USER only when an essential approval, credential, private-account action, irreversible/destructive choice, or genuinely missing fact blocks completion.",
   "You do not need a KeepGoing control tool, runner control, or job-state tool to finish the work.",
   "The KeepGoing server converts your final STATUS marker into the durable job state.",
@@ -19,6 +20,7 @@ export function createV12Service({
   engine,
   store,
   orchestrator,
+  toolProfiles = null,
   model = "gpt-6-astra",
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now = () => Date.now()
@@ -31,16 +33,39 @@ export function createV12Service({
     mode = "balanced",
     allowWeb = true,
     tier = "pro",
+    admin = false,
     ownerSubjectHash,
     clientRequestId = null,
     context = "",
+    toolProfile = "web",
     beforeCreateSession = null
   }) {
-    const limits = planLimits(tier, allowWeb);
+    if (clientRequestId && typeof store.findByRequest === "function") {
+      const existing = await store.findByRequest(ownerSubjectHash, clientRequestId);
+      if (existing) {
+        return {
+          job_id: existing.id,
+          status: existing.status,
+          duplicate: true,
+          tool_profile: existing.toolProfileName || "web",
+          message: "This start request already exists. Reusing the existing KeepGoing job and its original tool profile."
+        };
+      }
+    }
+
+    const resolvedTools = resolveToolProfile(toolProfiles, toolProfile, { admin, allowWeb });
+    const limits = planLimits(tier, resolvedTools.allowWeb, resolvedTools.mcpTools.length > 0);
+    if (resolvedTools.maxToolCalls != null) {
+      limits.max_total_tool_calls = Math.min(limits.max_total_tool_calls, resolvedTools.maxToolCalls);
+    }
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
       instructions: JOB_INSTRUCTIONS,
-      allowWeb,
+      allowWeb: resolvedTools.allowWeb,
+      mcpTools: resolvedTools.mcpTools,
+      toolProfileName: resolvedTools.name,
+      toolPolicyHash: resolvedTools.policyHash,
+      toolWriteCapable: resolvedTools.writeCapable,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
       clientRequestId,
@@ -57,10 +82,27 @@ export function createV12Service({
       job_id: result.job.id,
       status: result.job.status,
       duplicate: !result.created,
+      tool_profile: result.job.toolProfileName || resolvedTools.name,
       message: result.created
         ? "KeepGoing durable job started. Server-side recovery can continue it without repeated continue prompts."
         : "This start request already exists. Reusing the existing KeepGoing job."
     };
+  }
+
+  function listToolProfiles(admin = false) {
+    if (!toolProfiles?.list) {
+      return { profiles: [{
+        name: "web",
+        description: "Public web research only.",
+        owner_only: false,
+        write_capable: false,
+        web: true,
+        mcp_servers: [],
+        max_tool_calls: null,
+        policy_hash: null
+      }] };
+    }
+    return { profiles: toolProfiles.list({ admin }) };
   }
 
   async function list(ownerSubjectHash, { limit = 20, activeOnly = true } = {}) {
@@ -72,6 +114,7 @@ export function createV12Service({
         status: job.status,
         attempt: Number(job.attempt || 0),
         max_attempts: Number(job.maxAttempts || 0),
+        tool_profile: job.toolProfileName || "web",
         error: job.safeErrorMessage || null
       }))
     };
@@ -238,6 +281,7 @@ export function createV12Service({
     return {
       job_id: job.id,
       status: job.status,
+      tool_profile: job.toolProfileName || "web",
       output,
       error: job.safeErrorMessage || null,
       progress: {
@@ -247,18 +291,48 @@ export function createV12Service({
     };
   }
 
-  return { start, list, get, wait, cancel, resume, ownedJob };
+  return { start, listToolProfiles, list, get, wait, cancel, resume, ownedJob };
 }
 
-export function planLimits(tier, allowWeb = true) {
-  const business = tier === "business" || tier === "owner";
+export function planLimits(tier, allowWeb = true, hasExternalTools = false) {
+  const owner = tier === "owner";
+  const business = tier === "business";
+  const toolsEnabled = Boolean(allowWeb || hasExternalTools);
+
+  if (owner) {
+    return {
+      max_attempts: 12,
+      max_total_tokens: 60_000,
+      max_total_tool_calls: toolsEnabled ? 40 : 0,
+      max_wall_seconds: 8 * 60 * 60
+    };
+  }
+
   return {
-    // Continuations remain multi-turn, but aggregate budgets are deliberately
-    // bounded to keep subscription economics predictable at maximum usage.
+    // Paying plans deliberately keep low aggregate tool-call ceilings so
+    // subscription economics remain predictable even at maximum usage.
     max_attempts: business ? 8 : 6,
     max_total_tokens: business ? 30_000 : 20_000,
-    max_total_tool_calls: allowWeb ? (business ? 5 : 3) : 0,
+    max_total_tool_calls: toolsEnabled ? (business ? 5 : 3) : 0,
     max_wall_seconds: business ? 4 * 60 * 60 : 2 * 60 * 60
+  };
+}
+
+function resolveToolProfile(registry, name, { admin, allowWeb }) {
+  const profileName = String(name || "web").trim() || "web";
+  if (registry?.resolve) {
+    return registry.resolve(profileName, { admin, allowWeb });
+  }
+  if (profileName !== "web") throw new Error("KeepGoing MCP tool profiles are not configured");
+  return {
+    name: "web",
+    description: "Public web research only.",
+    ownerOnly: false,
+    writeCapable: false,
+    allowWeb: Boolean(allowWeb),
+    maxToolCalls: null,
+    mcpTools: [],
+    policyHash: ""
   };
 }
 

@@ -32,6 +32,7 @@ export function createAgentsEngine({
     prompt,
     instructions,
     allowWeb = true,
+    mcpTools = [],
     reasoningEffort = "medium",
     metadata = {},
     idempotencyKey = null
@@ -42,9 +43,18 @@ export function createAgentsEngine({
       instructions: String(instructions || "").trim() || undefined,
       reasoning: { effort: reasoningEffort }
     };
+    const tools = [];
     if (allowWeb) {
-      agent.tools = [{ type: "web_search", mode: "live" }];
+      tools.push({ type: "web_search", mode: "live" });
     }
+    if (!Array.isArray(mcpTools)) throw new Error("mcpTools must be an array");
+    for (const tool of mcpTools) {
+      if (!tool || typeof tool !== "object" || tool.type !== "mcp") {
+        throw new Error("Invalid KeepGoing MCP tool configuration");
+      }
+      tools.push(structuredClone(tool));
+    }
+    if (tools.length) agent.tools = tools;
     const body = {
       agent,
       environment: { type: "none" },

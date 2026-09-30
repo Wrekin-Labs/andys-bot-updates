@@ -1,23 +1,17 @@
 # KeepGoing — Final Plugin Listing Copy
 
-Release candidate: `1.2.0-beta.21`
+Release candidate: `1.2.0-beta.231`
 
 ## Logo
 
-Use the bundled KeepGoing PNG:
+Use the bundled KeepGoing package assets:
 
-`assets/keepgoing-icon.png`
+- `plugin/assets/logo.svg`
+- `plugin/assets/logo-dark.svg`
+- `plugin/assets/composer-icon.svg`
+- `plugin/assets/composer-icon-dark.svg`
 
-The same asset is already referenced in `plugin.json` as both:
-
-- `composerIcon`
-- `logo`
-
-Hosted copy for review/listing preview:
-
-https://keepgoing-mcp.onrender.com/icon.png
-
-Image size: 256 × 256 PNG.
+The public product page uses the same continuous-loop / forward-motion identity. The package validator checks square dimensions and required assets before CI produces the submission ZIP.
 
 ## Plugin name
 
@@ -29,7 +23,7 @@ Productivity
 
 ## Short description
 
-Durable AI jobs that continue
+Finish long AI work
 
 ## Main listing write-up
 
@@ -67,7 +61,7 @@ KeepGoing gives substantial AI work a persistent job ID so ChatGPT can continue,
 
 ## Support and policy links
 
-Website: https://keepgoing-mcp.onrender.com/
+Website: https://keepgoing-mcp.onrender.com/pluginplugin
 Support: https://keepgoing-mcp.onrender.com/support
 Privacy: https://keepgoing-mcp.onrender.com/privacy
 Terms: https://keepgoing-mcp.onrender.com/terms

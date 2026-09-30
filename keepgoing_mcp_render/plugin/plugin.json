@@ -42,12 +42,12 @@
         ],
         "brandColor": "#5F50E6",
         "brandColorDark": "#A99FFF",
-        "composerIcon": "./plugin/assets/composer-icon.svg",
-        "composerIconDark": "./plugin/assets/composer-icon-dark.svg",
-        "logo": "./plugin/assets/logo.svg",
-        "logoDark": "./plugin/assets/logo-dark.svg"
+        "composerIcon": "./assets/composer-icon.svg",
+        "composerIconDark": "./assets/composer-icon-dark.svg",
+        "logo": "./assets/logo.svg",
+        "logoDark": "./assets/logo-dark.svg"
       },
-      "onboardingSkill": "./plugin/skills/get-started/SKILL.md",
+      "onboardingSkill": "./skills/get-started/SKILL.md",
       "review": {
         "commerce": false,
         "test_cases": {

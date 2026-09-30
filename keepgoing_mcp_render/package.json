@@ -1,14 +1,16 @@
 {
   "name": "keepgoing-render-mcp",
-  "version": "1.2.0-beta.22",
+  "version": "1.2.0-beta.23",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js && node --check durable_store.js && node --check job_orchestrator.js && node --check supabase_job_store.js && node --check webhook_processor.js && node --check watchdog.js && node --check v12_service.js && node --check deployment_preflight.js && node --check preflight.mjs",
-    "test": "node test-durable-job.mjs && node test-agents-engine.mjs && node test-orchestrator.mjs && node test-supabase-store.mjs && node test-webhook-processor.mjs && node test-watchdog.mjs && node test-background-continuation.mjs && node test-v12-service.mjs && node test-server-v12-source.mjs && node test-sql-v12-source.mjs && node test-durable-sql-source.mjs && node test-preflight.mjs && node test-paypal-domain-source.mjs && node test-plugin-package.mjs",
-    "verify": "npm run check && npm test",
+    "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js && node --check durable_store.js && node --check job_orchestrator.js && node --check supabase_job_store.js && node --check webhook_processor.js && node --check watchdog.js && node --check v12_service.js && node --check tool_profiles.js && node --check github_worker.js && node --check deployment_preflight.js && node --check preflight.mjs && node --check validate_plugin_package.mjs",
+    "test": "node test-durable-job.mjs && node test-tool-profiles.mjs && node test-github-worker.mjs && node test-agents-engine.mjs && node test-orchestrator.mjs && node test-tool-audit.mjs && node test-supabase-store.mjs && node test-webhook-processor.mjs && node test-watchdog.mjs && node test-background-continuation.mjs && node test-v12-service.mjs && node test-server-v12-source.mjs && node test-sql-v12-source.mjs && node test-durable-sql-source.mjs && node test-preflight.mjs && node test-paypal-domain-source.mjs && node test-plugin-package.mjs",
+    "verify": "npm run check && npm test && npm run plugin:validate",
     "start": "npm run verify && node server.js",
-    "preflight": "node preflight.mjs"
+    "preflight": "node preflight.mjs",
+    "plugin:validate": "node validate_plugin_package.mjs",
+    "plugin:zip": "python3 build_plugin_zip.py"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.1",

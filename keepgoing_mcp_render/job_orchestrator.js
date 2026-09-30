@@ -29,6 +29,10 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb = true,
+    mcpTools = [],
+    toolProfileName = "web",
+    toolPolicyHash = "",
+    toolWriteCapable = false,
     reasoningEffort = "medium",
     ownerSubjectHash,
     clientRequestId = null,
@@ -45,6 +49,9 @@ export class KeepGoingOrchestrator {
       definitionHash: sha256(instructions || ""),
       ownerSubjectHash,
       engine: "agents",
+      toolProfileName,
+      toolPolicyHash,
+      toolWriteCapable,
       now,
       limits
     });
@@ -64,6 +71,10 @@ export class KeepGoingOrchestrator {
         initialPrompt,
         instructions,
         allowWeb,
+        mcpTools,
+        toolProfileName,
+        toolPolicyHash,
+        toolWriteCapable,
         reasoningEffort,
         clientRequestId
       });
@@ -94,6 +105,10 @@ export class KeepGoingOrchestrator {
         initialPrompt,
         instructions,
         allowWeb,
+        mcpTools,
+        toolProfileName,
+        toolPolicyHash,
+        toolWriteCapable,
         reasoningEffort,
         clientRequestId
       });
@@ -156,13 +171,20 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb,
+    mcpTools = [],
+    toolProfileName = "web",
+    toolPolicyHash = "",
+    toolWriteCapable = false,
     reasoningEffort,
     clientRequestId
   }) {
     const metadata = {
       keepgoing: "v1.2",
       keepgoing_job_id: jobId,
-      request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined
+      request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined,
+      tool_profile: String(toolProfileName || "web").slice(0, 64),
+      tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined,
+      write_tools: Boolean(toolWriteCapable) ? "true" : "false"
     };
     const idempotencyKey = startKey(jobId);
     let lastError = null;
@@ -173,6 +195,7 @@ export class KeepGoingOrchestrator {
           prompt: initialPrompt,
           instructions,
           allowWeb,
+          mcpTools,
           reasoningEffort,
           metadata,
           idempotencyKey
@@ -208,6 +231,10 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb,
+    mcpTools = [],
+    toolProfileName = "web",
+    toolPolicyHash = "",
+    toolWriteCapable = false,
     reasoningEffort,
     clientRequestId
   }) {
@@ -263,6 +290,10 @@ export class KeepGoingOrchestrator {
         initialPrompt,
         instructions,
         allowWeb,
+        mcpTools,
+        toolProfileName,
+        toolPolicyHash,
+        toolWriteCapable,
         reasoningEffort,
         clientRequestId
       });
@@ -396,6 +427,7 @@ export class KeepGoingOrchestrator {
           ? this.engine.listAllItems(providerId, { order: "desc", pageSize: 100, maxPages: 5 })
           : this.engine.listItems(providerId, { order: "desc", limit: 100 });
     const items = await itemRead;
+    await this._recordToolAudit(jobId, items);
     const output = latestSessionText(items);
     const provider = classifySession(session, output, turns, items);
     const now = this.now();
@@ -537,6 +569,47 @@ export class KeepGoingOrchestrator {
     }
 
     return this._sendClaimedContinuation(claimed.job, provider.output);
+  }
+
+  async _recordToolAudit(jobId, itemsResponse) {
+    if (typeof this.store.recordEvent !== "function") return;
+
+    const items = Array.isArray(itemsResponse)
+      ? itemsResponse
+      : Array.isArray(itemsResponse?.data)
+        ? itemsResponse.data
+        : Array.isArray(itemsResponse?.items)
+          ? itemsResponse.items
+          : [];
+
+    for (const item of items) {
+      const type = String(item?.type || "").toLowerCase();
+      if (!(type.includes("call") || type.includes("tool") || type.includes("execution") || type.includes("search"))) {
+        continue;
+      }
+
+      const itemId = String(item?.id || "").trim();
+      if (!itemId) continue;
+
+      const safeDetail = {
+        type: type.slice(0, 80),
+        status: String(item?.status || "").slice(0, 40) || null,
+        tool_name: typeof item?.name === "string" ? item.name.slice(0, 160) : null,
+        server_label: typeof item?.server_label === "string" ? item.server_label.slice(0, 80) : null,
+        turn_id: typeof item?.turn_id === "string" ? item.turn_id.slice(0, 160) : null
+      };
+
+      try {
+        await this.store.recordEvent({
+          jobId,
+          providerEventId: ("tool:" + jobId + ":" + itemId).slice(0, 500),
+          eventType: "agent.tool." + type,
+          safeDetail
+        });
+      } catch {
+        // Tool audit is best-effort and deliberately excludes arguments/results.
+      }
+    }
   }
 
   async _sendClaimedContinuation(claimedJob, previousOutput) {

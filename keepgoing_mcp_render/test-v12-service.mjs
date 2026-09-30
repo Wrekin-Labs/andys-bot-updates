@@ -3,6 +3,7 @@ import { createV12Service, planLimits, buildJobPrompt, JOB_INSTRUCTIONS } from "
 import { MemoryJobStore } from "./durable_store.js";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { JOB_STATES, newJobRecord } from "./durable_job.js";
+import { createToolProfileRegistry } from "./tool_profiles.js";
 
 assert.match(JOB_INSTRUCTIONS, /do not need a KeepGoing control tool/i);
 assert.match(JOB_INSTRUCTIONS, /server converts your final STATUS marker/i);
@@ -73,6 +74,7 @@ assert.equal("limits" in started, false);
 const ownedActive = await service.list("ownerhash", { activeOnly: true });
 assert.equal(ownedActive.jobs.length, 1);
 assert.equal(ownedActive.jobs[0].job_id, started.job_id);
+assert.equal(ownedActive.jobs[0].tool_profile, "web");
 const otherOwner = await service.list("different-owner", { activeOnly: false });
 assert.equal(otherOwner.jobs.length, 0);
 
@@ -94,6 +96,7 @@ await orchestrator.reconcile(started.job_id);
 viewedTurns.length = 0;
 const finished = await service.get(started.job_id, "ownerhash");
 assert.equal(finished.status, JOB_STATES.COMPLETED);
+assert.equal(finished.tool_profile, "web");
 assert.match(finished.output, /COMPLETED/);
 assert.deepEqual(viewedTurns, ["turn_2"]);
 assert.deepEqual(Object.keys(finished.progress).sort(), ["attempt", "max_attempts"]);
@@ -270,6 +273,93 @@ assert.match(sent.at(-1).key, /^kg-user-/);
   assert.ok(!active.jobs.some((job) => job.job_id === started.job_id));
 }
 
+// Tool profiles reach the durable Agents session with owner-only writes gated.
+{
+  const toolRegistry = createToolProfileRegistry({
+    rawJson: JSON.stringify({
+      profiles: {
+        "developer-owner": {
+          ownerOnly: true,
+          writeCapable: true,
+          allowWeb: false,
+          maxToolCalls: 20,
+          servers: [{
+            label: "github",
+            url: "https://mcp.example.com/github",
+            authorization_env: "TEST_GITHUB_MCP_AUTH",
+            allowed_tools: ["search", "fetch_file", "update_file"]
+          }]
+        }
+      }
+    }),
+    env: { TEST_GITHUB_MCP_AUTH: "Bearer test-secret" }
+  });
+
+  const captured = [];
+  const profileEngine = {
+    async createSession(args) {
+      captured.push(args);
+      return { id: "sess_tools" };
+    },
+    async cancelTurn() {}
+  };
+  const profileStore = new MemoryJobStore();
+  let profileClock = 40_000;
+  const profileOrchestrator = new KeepGoingOrchestrator({
+    engine: profileEngine,
+    store: profileStore,
+    now: () => ++profileClock
+  });
+  const profileService = createV12Service({
+    engine: profileEngine,
+    store: profileStore,
+    orchestrator: profileOrchestrator,
+    toolProfiles: toolRegistry,
+    now: () => ++profileClock
+  });
+
+  const publicProfiles = profileService.listToolProfiles(false);
+  assert.ok(publicProfiles.profiles.some((p) => p.name === "web"));
+  assert.ok(!publicProfiles.profiles.some((p) => p.name === "developer-owner"));
+
+  const ownerProfiles = profileService.listToolProfiles(true);
+  assert.ok(ownerProfiles.profiles.some((p) => p.name === "developer-owner"));
+
+  await assert.rejects(
+    () => profileService.start({
+      goal: "edit code",
+      ownerSubjectHash: "customer-owner",
+      tier: "business",
+      admin: false,
+      toolProfile: "developer-owner"
+    }),
+    /owner-only/
+  );
+  assert.equal(captured.length, 0);
+
+  const toolJob = await profileService.start({
+    goal: "edit code",
+    ownerSubjectHash: "real-owner",
+    tier: "owner",
+    admin: true,
+    allowWeb: false,
+    toolProfile: "developer-owner",
+    clientRequestId: "tool-job-1"
+  });
+  assert.equal(toolJob.tool_profile, "developer-owner");
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].allowWeb, false);
+  assert.equal(captured[0].mcpTools.length, 1);
+  assert.deepEqual(captured[0].mcpTools[0].allowed_tools, ["search", "fetch_file", "update_file"]);
+  assert.equal(captured[0].mcpTools[0].transport.authorization, "Bearer test-secret");
+
+  const storedToolJob = await profileStore.get(toolJob.job_id);
+  assert.equal(storedToolJob.toolCallBudgetTotal, 20);
+  assert.equal(storedToolJob.toolProfileName, "developer-owner");
+  assert.equal(storedToolJob.toolWriteCapable, true);
+  assert.ok(/^[0-9a-f]{64}$/.test(storedToolJob.toolPolicyHash));
+}
+
 const limits = planLimits("business", true);
 assert.equal(limits.max_attempts, 8);
 assert.equal(limits.max_total_tokens, 30_000);
@@ -282,6 +372,14 @@ assert.equal(proLimits.max_total_tool_calls, 3);
 
 const offlineLimits = planLimits("pro", false);
 assert.equal(offlineLimits.max_total_tool_calls, 0);
+
+const externalOnly = planLimits("pro", false, true);
+assert.equal(externalOnly.max_total_tool_calls, 3);
+
+const ownerToolLimits = planLimits("owner", false, true);
+assert.equal(ownerToolLimits.max_attempts, 12);
+assert.equal(ownerToolLimits.max_total_tokens, 60_000);
+assert.equal(ownerToolLimits.max_total_tool_calls, 40);
 
 console.log("v1.2 service tests passed");
 
