@@ -71,6 +71,13 @@ KeepGoing may explain that a requested feature is unavailable under the user's e
 - destructiveHint: false — does not create, update, delete, send, or cancel anything.
 - idempotentHint: true — repeated reads have no additional effect.
 
+### list_tool_profiles
+- readOnlyHint: true — returns only the tool-profile metadata visible to the authenticated account.
+- openWorldHint: false — reads KeepGoing's bounded server-side profile catalogue and does not itself contact the external tool providers.
+- destructiveHint: false — no external tool is executed and no data is changed.
+- idempotentHint: true — repeated listing has no additional effect.
+- Privacy/security note: secret authorization values, vault credentials and raw tool arguments are not returned.
+
 ### start_persistent_job
 - readOnlyHint: false — creates/reserves a durable job and starts provider work.
 - openWorldHint: true — the job may access the public web when `allowWeb=true`.
