@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.21
+Version: 1.2.0-beta.231
 Updated: 29 September 2026
 
 This is a submission/reviewer worksheet. It contains no passwords, activation tokens, API keys, PayPal credentials, or reviewer secrets.
@@ -13,18 +13,17 @@ This is a submission/reviewer worksheet. It contains no passwords, activation to
 
 **Category:** Productivity
 
-**Short description:** Durable AI jobs that continue
+**Short description:** Finish long AI work
 
 **Long description:** KeepGoing preserves substantial AI work as a durable job so ChatGPT can continue, check, resume, and recover the same objective without repeatedly restarting it.
 
 **Developer name:** Use the exact verified individual/business identity selected in the OpenAI Platform submission portal. The manifest currently uses `KeepGoing`; change it before submission if the verified publisher identity differs.
 
-**Website:** https://keepgoing-mcp.onrender.com/  
+**Website:** https://keepgoing-mcp.onrender.com/plugin  
 **Support:** https://keepgoing-mcp.onrender.com/support  
 **Privacy:** https://keepgoing-mcp.onrender.com/privacy  
 **Terms:** https://keepgoing-mcp.onrender.com/terms  
 **Security:** https://keepgoing-mcp.onrender.com/security  
-**Icon:** https://keepgoing-mcp.onrender.com/icon.png  
 **MCP server:** https://keepgoing-mcp.onrender.com/mcp
 
 **MCP URL type:** Universal
@@ -211,7 +210,7 @@ Initial public-directory submission candidate.
 
 KeepGoing provides durable AI jobs that can continue bounded multi-turn work, survive chat changes, recover by job ID, pause for genuine user input, and resume the same job without repeatedly restarting completed work.
 
-Beta.21 includes:
+Beta.23 includes:
 
 - watchdog recovery;
 - deterministic/idempotent initial-session startup;
@@ -274,7 +273,7 @@ The following require the OpenAI submission portal or a user-controlled identity
 3. Complete individual or business verification for the exact publisher identity.
 4. Create a `With MCP` plugin draft and select the Universal MCP URL type.
 5. Supply dedicated reviewer credentials that work without MFA/SMS/email confirmation/additional setup.
-6. Select Scan Tools against the production MCP endpoint and verify the beta.21 metadata.
+6. Select Scan Tools against the production MCP endpoint and verify the beta.23 metadata.
 7. Paste the annotation justifications above into the submission form.
 8. Complete the generated domain-verification challenge.
 9. Provide the required demo-recording URL.
@@ -283,15 +282,16 @@ The following require the OpenAI submission portal or a user-controlled identity
 12. Complete policy attestations only after the scanned production build and review materials match.
 13. Submit for review. Submission begins review; public publication is a separate post-approval action.
 
-## Production evidence at beta.20 checkpoint
+## Production release evidence required for beta.23
 
-Immediately before beta.21 policy hardening:
-- production `/health` and `/readiness` were healthy;
-- durable engine/store/watchdog and OAuth were ready;
-- owner-canary mode was disabled;
-- `commercial_blockers` was empty and `sell_ready` was true;
-- PayPal Live was configured and recovered across restart;
-- the entire regression suite passed during production startup;
-- the previously failed durable reservation was successfully revived in-place by reusing its original client request ID after the beta.20 start-recovery fix.
+Before submission, capture fresh evidence from the exact beta.23 production commit:
 
-Re-run these checks on beta.21 before using this kit for submission.
+- CI completed successfully and produced the submission ZIP artifact.
+- Production `/health` and `/readiness` are healthy.
+- Durable engine/store/watchdog/OAuth are ready.
+- Tool profiles report ready; optional GitHub/Relay profiles report ready only when deliberately configured.
+- `commercial_blockers` is empty and `sell_ready` reflects the independent website state.
+- The complete production preflight passes.
+- Five positive and three negative reviewer cases pass against the dedicated review account.
+
+Do not reuse an older beta checkpoint as release evidence.
