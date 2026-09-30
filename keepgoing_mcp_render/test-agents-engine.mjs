@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText, turnHasFailedWork, turnToolCallCount } from "./agents_engine.js";
+import { buildAgentEnvironment, classifySession, createAgentsEngine, latestRootTurn, latestSessionText, normaliseCodingWorkspace, turnHasFailedWork, turnToolCallCount } from "./agents_engine.js";
 
 const calls = [];
 const fakeFetch = async (url, init) => {
@@ -49,6 +49,82 @@ assert.equal(createBody.agent.tools[0].type, "web_search");
 assert.equal(createBody.agent.tools[0].mode, "live");
 assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
 assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
+
+assert.deepEqual(normaliseCodingWorkspace(null), {
+  enabled: false,
+  repositoryUrl: null,
+  repositoryRef: null
+});
+
+const hosted = buildAgentEnvironment({
+  enabled: true,
+  repositoryUrl: "https://github.com/chipblock2/project-relay",
+  repositoryRef: "v0.4.5"
+});
+assert.equal(hosted.type, "openai_hosted");
+assert.equal(hosted.container_size, "small");
+assert.equal(hosted.network.access, "restricted");
+assert.ok(hosted.network.allowed_domains.includes("github.com"));
+assert.ok(hosted.network.allowed_domains.includes("registry.npmjs.org"));
+assert.match(hosted.setup_commands[0].command, /git clone/);
+assert.match(hosted.setup_commands[0].command, /https:\/\/github\.com\/chipblock2\/project-relay\.git/);
+assert.equal(hosted.setup_commands[1].cwd, "/workspace/project");
+assert.match(hosted.setup_commands[1].command, /v0\.4\.5/);
+assert.equal(hosted.setup_commands[2].cwd, "/workspace/project");
+assert.match(hosted.setup_commands.at(-1).command, /workspace\/outputs/);
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryUrl: "https://user:secret@github.com/chipblock2/project-relay"
+  }),
+  /without credentials/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryUrl: "https://example.com/chipblock2/project-relay"
+  }),
+  /github\.com/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main; rm -rf /"
+  }),
+  /safe Git ref/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryRef: "main"
+  }),
+  /requires repositoryUrl/
+);
+
+const workspaceCalls = [];
+const workspaceEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (_url, init) => {
+    workspaceCalls.push(init);
+    return { ok: true, status: 200, async json() { return { id: "sess_workspace" }; } };
+  }
+});
+await workspaceEngine.createSession({
+  prompt: "fix the code",
+  instructions: "work in the repo",
+  workspace: {
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  }
+});
+const workspaceBody = JSON.parse(workspaceCalls[0].body);
+assert.equal(workspaceBody.environment.type, "openai_hosted");
+assert.equal(workspaceBody.environment.network.access, "restricted");
+assert.match(workspaceBody.environment.setup_commands[0].command, /git clone/);
+
 
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
 const sentCall = calls.at(-1);
@@ -168,6 +244,27 @@ const failedItems = {
 };
 assert.equal(turnHasFailedWork(failedItems, "turn_root"), true);
 assert.equal(turnToolCallCount(failedItems, "turn_root"), 1);
+
+const sandboxItems = {
+  data: [
+    { type: "command_execution", turn_id: "turn_root", status: "completed" },
+    { type: "web_search_call", turn_id: "turn_root", status: "completed" },
+    { type: "mcp_call", turn_id: "turn_root", status: "completed" },
+    { type: "function_call", turn_id: "turn_root", status: "completed" }
+  ]
+};
+assert.equal(
+  turnToolCallCount(sandboxItems, "turn_root"),
+  3,
+  "local command execution must not consume external-tool allowance"
+);
+assert.equal(
+  turnHasFailedWork({
+    data: [{ type: "command_execution", turn_id: "turn_root", status: "failed" }]
+  }, "turn_root"),
+  true,
+  "failed sandbox commands must still prevent false completion"
+);
 assert.equal(
   classifySession(session, "done\nSTATUS: COMPLETED", turns, failedItems).providerStatus,
   "incomplete"
