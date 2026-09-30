@@ -11,7 +11,13 @@ assert.match(sql, /alter table public\.keepgoing_job_events enable row level sec
 assert.match(sql, /revoke all on table public\.keepgoing_job_events from public, anon, authenticated;/i);
 assert.match(sql, /grant select, insert, update, delete on table public\.keepgoing_job_events to service_role;/i);
 
+assert.match(sql, /tool_profile text not null default 'web'/i);
+assert.match(sql, /tool_policy_hash text/i);
+assert.match(sql, /tool_write_capable boolean not null default false/i);
 assert.match(sql, /create or replace function public\.reserve_keepgoing_job/i);
+assert.match(sql, /p_tool_profile text/i);
+assert.match(sql, /p_tool_policy_hash text/i);
+assert.match(sql, /p_tool_write_capable boolean/i);
 assert.match(sql, /on conflict \(owner_subject_hash, client_request_hash\) do nothing;/i);
 assert.match(sql, /security invoker\s+set search_path = public, pg_temp/i);
 assert.match(sql, /grant execute on function public\.reserve_keepgoing_job[\s\S]*to service_role;/i);
