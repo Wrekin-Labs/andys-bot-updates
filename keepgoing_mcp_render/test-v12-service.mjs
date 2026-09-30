@@ -283,6 +283,72 @@ assert.equal(proLimits.max_total_tool_calls, 3);
 const offlineLimits = planLimits("pro", false);
 assert.equal(offlineLimits.max_total_tool_calls, 0);
 
+
+
+// Coding workspace is explicit, forwarded to the provider, and has a shorter
+// wall-clock budget to bound hosted-container cost.
+{
+  const codeStore = new MemoryJobStore();
+  let createdOptions = null;
+  const codeEngine = {
+    async createSession(options) {
+      createdOptions = options;
+      return { id: "sess_code_workspace" };
+    },
+    async cancelTurn() {}
+  };
+  let codeClock = 300_000;
+  const codeOrchestrator = new KeepGoingOrchestrator({
+    engine: codeEngine,
+    store: codeStore,
+    now: () => ++codeClock,
+    sleep: async () => {}
+  });
+  const codeService = createV12Service({
+    engine: codeEngine,
+    store: codeStore,
+    orchestrator: codeOrchestrator,
+    now: () => ++codeClock,
+    sleep: async () => {}
+  });
+
+  const codeJob = await codeService.start({
+    goal: "inspect and improve the project",
+    definitionOfDone: "tests pass and changes are explained",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code",
+    codingWorkspace: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  });
+  assert.equal(codeJob.status, JOB_STATES.WORKING);
+  assert.deepEqual(createdOptions.workspace, {
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  });
+  assert.match(createdOptions.instructions, /\/workspace\/project/);
+  assert.match(createdOptions.instructions, /Do not attempt to push to GitHub/);
+
+  await assert.rejects(
+    () => codeService.start({
+      goal: "bad repo configuration",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-bad",
+      repositoryUrl: "https://github.com/chipblock2/project-relay"
+    }),
+    /require codingWorkspace=true/
+  );
+}
+
+const proCodingLimits = planLimits("pro", true, true);
+assert.equal(proCodingLimits.max_wall_seconds, 30 * 60);
+assert.equal(proCodingLimits.max_total_tool_calls, 3);
+
+const businessCodingLimits = planLimits("business", true, true);
+assert.equal(businessCodingLimits.max_wall_seconds, 60 * 60);
+assert.equal(businessCodingLimits.max_total_tool_calls, 5);
+
 console.log("v1.2 service tests passed");
 
 const briefCheckpointPrompt = buildJobPrompt("goal", "done", "balanced", "x".repeat(4000) + "SHOULD_NOT_APPEAR");
