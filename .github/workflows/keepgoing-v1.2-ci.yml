@@ -30,3 +30,10 @@ jobs:
           cache-dependency-path: keepgoing_mcp_render/package.json
       - run: npm install --ignore-scripts
       - run: npm run verify
+      - run: python3 -m py_compile build_plugin_zip.py
+      - run: npm run plugin:zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepgoing-plugin-submission
+          path: keepgoing_mcp_render/dist/keepgoing-plugin-*.zip
+          if-no-files-found: error
