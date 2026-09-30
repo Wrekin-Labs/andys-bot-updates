@@ -296,6 +296,7 @@ app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/start-subscription", rateLimit("paypal-start", 20, 15 * 60 * 1000));
 app.use("/owner/paypal-setup", rateLimit("paypal-bootstrap", 20, 15 * 60 * 1000));
+app.use("/worker-mcp", rateLimit("worker-mcp", 600, 60 * 1000));
 
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -306,6 +307,7 @@ app.use((req, res, next) => {
   res.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   const sensitivePath =
     req.path === "/mcp" ||
+    req.path === "/worker-mcp" ||
     req.path === "/subscribe" ||
     req.path.startsWith("/oauth/") ||
     req.path.startsWith("/billing/") ||
@@ -2582,6 +2584,38 @@ app.get("/paypal/status", async (_req, res) => {
   });
 });
 
+app.post("/worker-mcp", async (req, res) => {
+  if (!githubWorkerConfigured()) return res.status(404).json({ error: "not_configured" });
+  if (!workerAuthorised(req)) {
+    res.set("WWW-Authenticate", 'Bearer realm="KeepGoing private worker"');
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const server = createGithubWorkerMcpServer(getGithubWorker());
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on("close", async () => {
+    try { await transport.close(); } catch {}
+    try { await server.close(); } catch {}
+  });
+
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error("keepgoing_worker_mcp_error", safeLogError(error), req.keepgoingRequestId || "");
+    if (!res.headersSent) res.status(500).json({ error: "worker_mcp_error" });
+  }
+});
+
+app.get("/worker-mcp", (req, res) => {
+  if (!githubWorkerConfigured()) return res.status(404).json({ error: "not_configured" });
+  if (!workerAuthorised(req)) {
+    res.set("WWW-Authenticate", 'Bearer realm="KeepGoing private worker"');
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  return res.status(405).json({ error: "Use POST for stateless MCP" });
+});
+
 app.get("/readiness", async (_req, res) => {
   if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
@@ -2599,6 +2633,19 @@ app.get("/readiness", async (_req, res) => {
     paypalSetupComplete
   );
   let durableStoreReady = !V12_ENABLED;
+  let toolProfilesReady = !V12_ENABLED;
+  let toolProfileCount = V12_ENABLED ? 0 : 1;
+  const githubWorkerRequested = Boolean(
+    WORKER_MCP_SECRET || GITHUB_WORKER_TOKEN || GITHUB_WORKER_REPOS
+  );
+  const githubWorkerReady = githubWorkerConfigured();
+  const githubWorkerRepoCount = githubWorkerReady
+    ? normaliseRepoList(GITHUB_WORKER_REPOS).length
+    : 0;
+  const relayProfilesRequested = Boolean(
+    RELAY_MCP_URL || RELAY_MCP_CREDENTIAL_ID || RELAY_MCP_AUTHORIZATION
+  );
+  const relayProfilesReady = relayProfileConfigured();
   if (V12_ENABLED && v12Configured()) {
     try {
       const runtime = getV12Runtime();
@@ -2606,18 +2653,31 @@ app.get("/readiness", async (_req, res) => {
         runtime.store?.healthCheck &&
         (await runtime.store.healthCheck()).ok
       );
+      const toolHealth = runtime.toolProfiles?.healthCheck
+        ? runtime.toolProfiles.healthCheck()
+        : { ok: true, profiles: 1 };
+      toolProfilesReady = Boolean(
+        toolHealth.ok &&
+        (!githubWorkerRequested || githubWorkerReady) &&
+        (!relayProfilesRequested || relayProfilesReady)
+      );
+      toolProfileCount = Number(toolHealth.profiles || 0);
     } catch {
       durableStoreReady = false;
+      toolProfilesReady = false;
+      toolProfileCount = 0;
     }
   }
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
-    durableStoreReady
+    durableStoreReady &&
+    toolProfilesReady
   );
   const oauthReady = Boolean(OAUTH_SECRET && OAUTH_CODE_URL);
   const commercialDurableReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
+    toolProfilesReady &&
     !V12_CANARY_ONLY
   );
   const continuationMode = V12_ENABLED
@@ -2630,6 +2690,9 @@ app.get("/readiness", async (_req, res) => {
   if (!oauthReady) commercialBlockers.push("oauth");
   if (V12_ENABLED && !v12Configured()) commercialBlockers.push("durable_engine");
   if (V12_ENABLED && !durableStoreReady) commercialBlockers.push("durable_store");
+  if (V12_ENABLED && !toolProfilesReady) commercialBlockers.push("tool_profiles");
+  if (V12_ENABLED && githubWorkerRequested && !githubWorkerReady) commercialBlockers.push("github_worker");
+  if (V12_ENABLED && relayProfilesRequested && !relayProfilesReady) commercialBlockers.push("relay_profiles");
   if (V12_ENABLED && V12_CANARY_ONLY) commercialBlockers.push("v12_owner_canary_only");
 
   const sellReady = Boolean(
@@ -2647,6 +2710,14 @@ app.get("/readiness", async (_req, res) => {
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
     durable_store_ready: durableStoreReady,
+    tool_profiles_ready: toolProfilesReady,
+    tool_profile_count: toolProfileCount,
+    github_worker_requested: githubWorkerRequested,
+    github_worker_ready: githubWorkerReady,
+    github_worker_repo_count: githubWorkerRepoCount,
+    relay_profiles_requested: relayProfilesRequested,
+    relay_profiles_ready: relayProfilesReady,
+    relay_admin_profile_enabled: Boolean(RELAY_ADMIN_PROFILE_ENABLED && relayProfilesReady),
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
