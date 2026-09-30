@@ -167,6 +167,26 @@ assert.throws(
   }),
   /safe relative project path/
 );
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/./file.txt", content: "x" }]
+  }),
+  /safe relative project path/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/.git/config", content: "x" }]
+  }),
+  /safe relative project path/
+);
+const dottedNameWorkspace = buildAgentEnvironment({
+  enabled: true,
+  files: [{ path: "src/version..txt", content: "ok" }]
+});
+assert.equal(dottedNameWorkspace.files.length, 1);
 assert.throws(
   () => buildAgentEnvironment({
     enabled: true,
