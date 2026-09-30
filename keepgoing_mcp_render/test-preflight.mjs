@@ -30,6 +30,12 @@ const fetchOk = async (url, init = {}) => {
       durable_engine_enabled: true,
       durable_engine_ready: true,
       durable_store_ready: true,
+      tool_profiles_ready: true,
+      github_worker_requested: false,
+      github_worker_ready: false,
+      github_worker_repo_count: 0,
+      relay_profiles_requested: false,
+      relay_profiles_ready: false,
       openai_webhook_ready: true
     });
   }
@@ -51,6 +57,12 @@ const fetchOk = async (url, init = {}) => {
       "www-authenticate": 'Bearer resource_metadata="' + base + '/.well-known/oauth-protected-resource"'
     });
   }
+  if (path === "/worker-mcp") {
+    assert.equal(init.method, "POST");
+    return response(401, { error: "unauthorized" }, {
+      "www-authenticate": 'Bearer realm="KeepGoing private worker"'
+    });
+  }
   if (["/privacy","/terms","/support","/security"].includes(path)) {
     return response(200, "<html>" + "x".repeat(200) + "</html>");
   }
@@ -70,6 +82,90 @@ const ok = await runDeploymentPreflight({
 assert.equal(ok.ok, true);
 assert.deepEqual(ok.failed, []);
 assert.equal(ok.checks.length, 10);
+
+const toolReady = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    if (path === "/readiness") {
+      return response(200, {
+        ok: true,
+        sell_ready: true,
+        durable_engine_enabled: true,
+        durable_engine_ready: true,
+        durable_store_ready: true,
+        tool_profiles_ready: true,
+        github_worker_requested: true,
+        github_worker_ready: true,
+        github_worker_repo_count: 2,
+        relay_profiles_requested: true,
+        relay_profiles_ready: true,
+        openai_webhook_ready: true
+      });
+    }
+    if (path === "/worker-mcp") {
+      return response(401, { error: "unauthorized" }, {
+        "www-authenticate": 'Bearer realm="KeepGoing private worker"'
+      });
+    }
+    return fetchOk(url, init);
+  },
+  requireV12: true,
+  requireToolProfiles: true,
+  requireGithubWorker: true,
+  requireRelayProfiles: true
+});
+assert.equal(toolReady.ok, true);
+assert.ok(toolReady.checks.some((item) => item.name === "private_worker_mcp_protected"));
+
+const missingGithub = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: fetchOk,
+  requireGithubWorker: true
+});
+assert.equal(missingGithub.ok, false);
+assert.ok(missingGithub.failed.includes("readiness"));
+
+const toolsReady = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: fetchOk,
+  requireV12: true,
+  requireToolProfiles: true,
+  requireGithubWorker: true,
+  requireRelayProfiles: true
+});
+assert.equal(toolsReady.ok, true);
+assert.ok(toolsReady.checks.some((item) => item.name === "private_worker_mcp_protected"));
+
+const toolsBroken = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path === "/readiness") {
+      return response(200, {
+        ok: true,
+        sell_ready: true,
+        durable_engine_enabled: true,
+        durable_engine_ready: true,
+        durable_store_ready: true,
+        tool_profiles_ready: false,
+        github_worker_requested: true,
+        github_worker_ready: false,
+        github_worker_repo_count: 0,
+        relay_profiles_requested: true,
+        relay_profiles_ready: false,
+        openai_webhook_ready: true
+      });
+    }
+    return fetchOk(url, init);
+  },
+  requireV12: true,
+  requireToolProfiles: true,
+  requireGithubWorker: true,
+  requireRelayProfiles: true
+});
+assert.equal(toolsBroken.ok, false);
+assert.ok(toolsBroken.failed.includes("readiness"));
 
 const broken = await runDeploymentPreflight({
   baseUrl: base,
