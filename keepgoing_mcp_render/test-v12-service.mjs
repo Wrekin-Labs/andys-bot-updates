@@ -324,7 +324,7 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   assert.equal(codeJob.status, JOB_STATES.WORKING);
   assert.deepEqual(createdOptions.workspace, {
     enabled: true,
-    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryUrl: "https://github.com/chipblock2/project-relay.git",
     repositoryRef: "main"
   });
   assert.match(createdOptions.instructions, /\/workspace\/project/);
@@ -338,6 +338,24 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
       repositoryUrl: "https://github.com/chipblock2/project-relay"
     }),
     /require codingWorkspace=true/
+  );
+
+  let invalidQuotaReservations = 0;
+  await assert.rejects(
+    () => codeService.start({
+      goal: "invalid workspace should fail before quota",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-invalid",
+      codingWorkspace: true,
+      repositoryUrl: "https://example.com/not/github",
+      beforeCreateSession: async () => { invalidQuotaReservations++; }
+    }),
+    /github\.com/
+  );
+  assert.equal(invalidQuotaReservations, 0);
+  assert.equal(
+    await codeStore.findByRequest("owner-code", "req-code-invalid"),
+    null
   );
 }
 
