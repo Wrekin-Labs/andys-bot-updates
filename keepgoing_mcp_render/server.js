@@ -1318,11 +1318,31 @@ async function startPersistentJobCompat(args, access) {
     mode: args.mode,
     allowWeb: args.allowWeb,
     tier: access.tier || "pro",
+    admin: Boolean(access.admin),
     ownerSubjectHash: durableOwnerHash(access),
     clientRequestId: args.clientRequestId || access._mcp_request_id || null,
     context: args.context || "",
+    toolProfile: args.toolProfile || "web",
     beforeCreateSession: async () => reserveJobQuota(access)
   });
+}
+
+function listToolProfilesCompat(access) {
+  if (!v12ForAccess(access)) {
+    return {
+      profiles: [{
+        name: "web",
+        description: "Public web research only.",
+        owner_only: false,
+        write_capable: false,
+        web: true,
+        mcp_servers: [],
+        max_tool_calls: null,
+        policy_hash: null
+      }]
+    };
+  }
+  return getV12Runtime().service.listToolProfiles(Boolean(access.admin));
 }
 
 async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
@@ -1432,6 +1452,45 @@ function createMcpServer(access = {}) {
     });
   }
 
+  if (v12Access) {
+    server.registerTool("list_tool_profiles", {
+      title: "List KeepGoing tool profiles",
+      description: "List background tool profiles available to the authenticated KeepGoing account. Returns safe capability metadata only and never returns credentials.",
+      inputSchema: {},
+      outputSchema: {
+        profiles: z.array(z.object({
+          name: z.string(),
+          description: z.string(),
+          owner_only: z.boolean(),
+          write_capable: z.boolean(),
+          web: z.boolean(),
+          mcp_servers: z.array(z.object({
+            label: z.string(),
+            tool_count: z.number(),
+            required: z.boolean()
+          })),
+          max_tool_calls: z.number().nullable(),
+          policy_hash: z.string().nullable()
+        }))
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: { ...oauthMeta },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    }, async () => {
+      try {
+        const result = listToolProfilesCompat(access);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+  }
+
   server.registerTool("start_persistent_job", {
     title: "Start persistent job",
     description: startToolDescription,
@@ -1441,12 +1500,14 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional()
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
+      toolProfile: z.string().min(1).max(64).optional()
     },
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
       duplicate: z.boolean().optional(),
+      tool_profile: z.string().optional(),
       message: z.string()
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
@@ -1471,12 +1532,14 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("max"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional()
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
+      toolProfile: z.string().min(1).max(64).optional()
     },
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
       duplicate: z.boolean().optional(),
+      tool_profile: z.string().optional(),
       message: z.string()
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
@@ -1498,6 +1561,7 @@ function createMcpServer(access = {}) {
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
+      tool_profile: z.string().optional(),
       output: z.string(),
       error: z.string().nullable(),
       progress: z.object({
@@ -1527,6 +1591,7 @@ function createMcpServer(access = {}) {
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
+      tool_profile: z.string().optional(),
       output: z.string(),
       error: z.string().nullable(),
       progress: z.object({
@@ -1582,6 +1647,7 @@ function createMcpServer(access = {}) {
           status: z.string(),
           attempt: z.number(),
           max_attempts: z.number(),
+          tool_profile: z.string(),
           error: z.string().nullable()
         }))
       },
