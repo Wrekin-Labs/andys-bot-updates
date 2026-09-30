@@ -384,7 +384,7 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
       workspaceFiles: [{ path: ".env", content: "example" }],
       beforeCreateSession: async () => { secretFileQuota++; }
     }),
-    /not allowed for inline handoff/
+    /(not allowed for inline handoff|safe relative project path)/
   );
   assert.equal(secretFileQuota, 0);
   assert.equal(
