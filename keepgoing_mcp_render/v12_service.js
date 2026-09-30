@@ -26,6 +26,19 @@ export function createV12Service({
     toolProfile = "web",
     beforeCreateSession = null
   }) {
+    if (clientRequestId && typeof store.findByRequest === "function") {
+      const existing = await store.findByRequest(ownerSubjectHash, clientRequestId);
+      if (existing) {
+        return {
+          job_id: existing.id,
+          status: existing.status,
+          duplicate: true,
+          tool_profile: existing.toolProfileName || "web",
+          message: "This start request already exists. Reusing the existing KeepGoing job and its original tool profile."
+        };
+      }
+    }
+
     const resolvedTools = resolveToolProfile(toolProfiles, toolProfile, { admin, allowWeb });
     const limits = planLimits(tier, resolvedTools.allowWeb, resolvedTools.mcpTools.length > 0);
     if (resolvedTools.maxToolCalls != null) {
@@ -55,7 +68,7 @@ export function createV12Service({
       job_id: result.job.id,
       status: result.job.status,
       duplicate: !result.created,
-      tool_profile: resolvedTools.name,
+      tool_profile: result.job.toolProfileName || resolvedTools.name,
       message: result.created
         ? "KeepGoing durable job started. Server-side recovery can continue it without repeated continue prompts."
         : "This start request already exists. Reusing the existing KeepGoing job."
