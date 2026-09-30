@@ -163,6 +163,15 @@ assert.throws(
   }),
   /not allowed for inline handoff/
 );
+
+const binaryLike = "a" + String.fromCharCode(0) + "b";
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/binary.txt", content: binaryLike }]
+  }),
+  /UTF-8 text/
+);
 assert.throws(
   () => buildAgentEnvironment({
     enabled: true,
