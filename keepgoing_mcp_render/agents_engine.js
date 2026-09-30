@@ -254,7 +254,7 @@ export function createAgentsEngine({
   } = {}) {
     requireSessionId(sessionId);
     const id = String(artifactId || "").trim();
-    if (!/^artifact_[A-Za-z0-9_-]+$/.test(id)) {
+    if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) {
       throw new Error("valid artifact id required");
     }
 
