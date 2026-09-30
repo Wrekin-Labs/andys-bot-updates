@@ -80,4 +80,22 @@ assert.match(source, /name: "list_tool_profiles"[\s\S]{0,2400}readOnlyHint: true
 assert.match(source, /name: "list_persistent_jobs"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,160}openWorldHint: false/);
 assert.match(source, /name: "resume_persistent_job"[\s\S]{0,1500}readOnlyHint: false[\s\S]{0,200}openWorldHint: true/);
 
+
+
+const pluginRouteStart = source.indexOf('app.get("/plugin"');
+const pluginRouteEnd = source.indexOf('function infoPage', pluginRouteStart);
+assert.ok(pluginRouteStart >= 0 && pluginRouteEnd > pluginRouteStart, "commerce-neutral /plugin route must exist");
+const pluginRoute = source.slice(pluginRouteStart, pluginRouteEnd);
+assert.doesNotMatch(pluginRoute, /£\s*\d|paypal|checkout|subscribe now|upgrade now/i);
+assert.match(pluginRoute, /Existing accounts:/);
+assert.match(pluginRoute, /does not sell plans or initiate checkout/i);
+
+const oauthStart = source.indexOf('app.get("/oauth/authorize"');
+const oauthEnd = source.indexOf('function issueOAuthTokens', oauthStart);
+assert.ok(oauthStart >= 0 && oauthEnd > oauthStart, "OAuth connection flow must exist");
+const oauthSource = source.slice(oauthStart, oauthEnd);
+assert.doesNotMatch(oauthSource, /£\s*\d|paypal|checkout|subscribe now|upgrade now/i);
+assert.match(oauthSource, /KeepGoing account/);
+assert.match(oauthSource, /KeepGoing access/);
+
 console.log("server v1.2 source guards passed");
