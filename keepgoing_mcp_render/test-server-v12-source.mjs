@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
-assert.match(source, /APP_VERSION = "1\.2\.0-beta\.22"/);
+assert.match(source, /APP_VERSION = "1\.2\.0-beta\.23"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
@@ -117,6 +117,23 @@ assert.match(source, /href="\/faq"/);
 assert.match(source, /href="\/changelog"/);
 assert.match(source, /Refunds & cancellation/);
 assert.match(source, /KEEPGOING_DURABLE_STORE_URL/);
+assert.match(source, /KEEPGOING_TOOL_PROFILES_JSON/);
+assert.match(source, /KEEPGOING_WORKER_MCP_SECRET/);
+assert.match(source, /KEEPGOING_GITHUB_TOKEN/);
+assert.match(source, /KEEPGOING_GITHUB_REPOS/);
+assert.match(source, /KEEPGOING_RELAY_MCP_URL/);
+assert.match(source, /KEEPGOING_RELAY_MCP_CREDENTIAL_ID/);
+assert.match(source, /KEEPGOING_RELAY_MCP_AUTHORIZATION/);
+assert.match(source, /KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE/);
+assert.match(source, /createToolProfileRegistry/);
+assert.match(source, /createGithubWorkerMcpServer/);
+assert.match(source, /app\.post\("\/worker-mcp"/);
+assert.match(source, /if \(!workerAuthorised\(req\)\)/);
+assert.match(source, /"github-read"/);
+assert.match(source, /"github-write"/);
+assert.match(source, /"relay-read"/);
+assert.match(source, /"relay-developer"/);
+assert.match(source, /"relay-admin"/);
 assert.match(source, /proxyUrl: V12_DURABLE_STORE_URL/);
 assert.match(source, /const durableOpsReady = !V12_ENABLED \|\| Boolean/);
 assert.match(source, /function v12ForAccess\(access\)/);
@@ -137,11 +154,13 @@ assert.match(source, /authorise\(req, isStart && !V12_ENABLED\)/);
 assert.match(source, /toolName === "start_persistent_job" \|\| toolName === "continue_until_done"/);
 assert.match(source, /access\._mcp_request_id = "mcp-" \+ digest/);
 assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_request_id \|\| null/);
+assert.match(source, /server\.registerTool\("list_tool_profiles"/);
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /server\.registerTool\("continue_until_done"/);
 assert.match(source, /Prefer continue_until_done/);
 assert.match(source, /context: z\.string\(\)\.max\(4000\)/);
+assert.match(source, /toolProfile: z\.string\(\)\.min\(1\)\.max\(64\)/);
 assert.match(source, /context: \{ type: "string", maxLength: 4000/);
 assert.doesNotMatch(source, /context: z\.string\(\)\.max\(20000\)|context: \{ type: "string", maxLength: 20000/);
 assert.match(source, /Brief task-specific checkpoint only/);
@@ -149,8 +168,11 @@ assert.match(source, /full conversation history, raw transcripts, credentials/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
 assert.match(source, /runtime\.store\?\.healthCheck/);
 assert.match(source, /durable_store_ready: durableStoreReady/);
+assert.match(source, /tool_profiles_ready: toolProfilesReady/);
+assert.match(source, /github_worker_ready: githubWorkerReady/);
+assert.match(source, /relay_profiles_ready: relayProfilesReady/);
 assert.match(source, /const commercialDurableReady = !V12_ENABLED \|\| Boolean/);
-assert.match(source, /durableStoreReady &&[\s\S]{0,120}!V12_CANARY_ONLY/);
+assert.match(source, /durableStoreReady &&[\s\S]{0,180}toolProfilesReady &&[\s\S]{0,180}!V12_CANARY_ONLY/);
 assert.match(source, /commercialBlockers\.push\("live_checkout"\)/);
 assert.match(source, /commercialBlockers\.push\("v12_owner_canary_only"\)/);
 assert.match(source, /const continuationMode = V12_ENABLED/);
@@ -166,6 +188,7 @@ for (const title of [
   "Get persistent job",
   "Wait for persistent job",
   "Cancel persistent job",
+  "List KeepGoing tool profiles",
   "List persistent jobs",
   "Resume persistent job"
 ]) {
