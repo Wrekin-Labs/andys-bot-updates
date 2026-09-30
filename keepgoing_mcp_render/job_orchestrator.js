@@ -26,6 +26,7 @@ export class KeepGoingOrchestrator {
     mcpTools = [],
     toolProfileName = "web",
     toolPolicyHash = "",
+    toolWriteCapable = false,
     reasoningEffort = "medium",
     ownerSubjectHash,
     clientRequestId = null,
@@ -42,6 +43,9 @@ export class KeepGoingOrchestrator {
       definitionHash: sha256(instructions || ""),
       ownerSubjectHash,
       engine: "agents",
+      toolProfileName,
+      toolPolicyHash,
+      toolWriteCapable,
       now,
       limits
     });
@@ -88,7 +92,8 @@ export class KeepGoingOrchestrator {
           keepgoing_job_id: jobId,
           request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined,
           tool_profile: String(toolProfileName || "web").slice(0, 64),
-          tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined
+          tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined,
+          write_tools: Boolean(toolWriteCapable) ? "true" : "false"
         }
       });
     } catch (error) {
