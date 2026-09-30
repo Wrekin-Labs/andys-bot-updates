@@ -11,10 +11,12 @@ import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { createOpenAIWebhookVerifier, createWebhookProcessor } from "./webhook_processor.js";
 import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
+import { createToolProfileRegistry } from "./tool_profiles.js";
+import { createGithubWorker, createGithubWorkerMcpServer, normaliseRepoList } from "./github_worker.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.22";
+const APP_VERSION = "1.2.0-beta.23";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -44,6 +46,16 @@ const V12_DURABLE_STORE_URL = process.env.KEEPGOING_DURABLE_STORE_URL || (
 const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BILLING_INGEST_TOKEN;
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
 const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
+const TOOL_PROFILES_JSON = process.env.KEEPGOING_TOOL_PROFILES_JSON || "";
+const WORKER_MCP_SECRET = process.env.KEEPGOING_WORKER_MCP_SECRET || "";
+const WORKER_MCP_URL = (process.env.KEEPGOING_WORKER_MCP_URL || (PUBLIC_BASE_URL + "/worker-mcp")).replace(/\/$/, "");
+const GITHUB_WORKER_TOKEN = process.env.KEEPGOING_GITHUB_TOKEN || "";
+const GITHUB_WORKER_REPOS = process.env.KEEPGOING_GITHUB_REPOS || "";
+const GITHUB_WORKER_BRANCH_PREFIX = process.env.KEEPGOING_GITHUB_BRANCH_PREFIX || "keepgoing/";
+const RELAY_MCP_URL = String(process.env.KEEPGOING_RELAY_MCP_URL || "").replace(/\/$/, "");
+const RELAY_MCP_CREDENTIAL_ID = process.env.KEEPGOING_RELAY_MCP_CREDENTIAL_ID || "";
+const RELAY_MCP_AUTHORIZATION = process.env.KEEPGOING_RELAY_MCP_AUTHORIZATION || "";
+const RELAY_ADMIN_PROFILE_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE || "");
 
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || "live").toLowerCase() === "sandbox" ? "sandbox" : "live";
 let paypalClientId = process.env.PAYPAL_CLIENT_ID || "";
@@ -326,6 +338,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "";
 
 let v12RuntimeCache = null;
+let githubWorkerCache = null;
 
 function v12Configured() {
   const directStoreReady = Boolean(V12_SUPABASE_URL && V12_SUPABASE_SERVICE_KEY);
@@ -343,6 +356,218 @@ function v12ForAccess(access) {
   return Boolean(access?.admin || access?.tier === "owner");
 }
 
+function githubWorkerConfigured() {
+  if (!WORKER_MCP_SECRET || !GITHUB_WORKER_TOKEN) return false;
+  try {
+    return normaliseRepoList(GITHUB_WORKER_REPOS).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function getGithubWorker() {
+  if (githubWorkerCache) return githubWorkerCache;
+  if (!githubWorkerConfigured()) throw new Error("KeepGoing GitHub worker is not configured");
+  githubWorkerCache = createGithubWorker({
+    token: GITHUB_WORKER_TOKEN,
+    repositories: GITHUB_WORKER_REPOS,
+    branchPrefix: GITHUB_WORKER_BRANCH_PREFIX
+  });
+  return githubWorkerCache;
+}
+
+function relayProfileConfigured() {
+  return Boolean(
+    RELAY_MCP_URL &&
+    (RELAY_MCP_CREDENTIAL_ID || RELAY_MCP_AUTHORIZATION)
+  );
+}
+
+function relayServerConfig(allowedTools) {
+  const server = {
+    server_label: "project_relay",
+    server_url: RELAY_MCP_URL,
+    allowed_tools: allowedTools,
+    required: true
+  };
+  if (RELAY_MCP_CREDENTIAL_ID) {
+    server.credential_id = RELAY_MCP_CREDENTIAL_ID;
+  } else {
+    server.authorization_env = "KEEPGOING_INTERNAL_RELAY_AUTHORIZATION";
+  }
+  return server;
+}
+
+function builtInToolProfiles() {
+  const profiles = {};
+
+  if (githubWorkerConfigured()) {
+    const readTools = [
+      "github_list_repositories",
+      "github_get_repository",
+      "github_list_path",
+      "github_get_file",
+      "github_search_code",
+      "github_compare"
+    ];
+    const writeTools = [
+      ...readTools,
+      "github_create_branch",
+      "github_put_file",
+      "github_open_pull_request"
+    ];
+
+    profiles["github-read"] = {
+      description: "Owner-only GitHub read/search access for allowlisted repositories.",
+      ownerOnly: true,
+      writeCapable: false,
+      allowWeb: true,
+      maxToolCalls: 20,
+      servers: [{
+        server_label: "github_worker",
+        server_url: WORKER_MCP_URL,
+        authorization_env: "KEEPGOING_INTERNAL_WORKER_AUTHORIZATION",
+        allowed_tools: readTools,
+        required: true
+      }]
+    };
+    profiles["github-write"] = {
+      description: "Owner-only GitHub development access. Writes are restricted to KeepGoing-safe branches and pull requests.",
+      ownerOnly: true,
+      writeCapable: true,
+      allowWeb: true,
+      maxToolCalls: 40,
+      servers: [{
+        server_label: "github_worker",
+        server_url: WORKER_MCP_URL,
+        authorization_env: "KEEPGOING_INTERNAL_WORKER_AUTHORIZATION",
+        allowed_tools: writeTools,
+        required: true
+      }]
+    };
+  }
+
+  if (relayProfileConfigured()) {
+    const relayReadTools = [
+      "list_workstations",
+      "get_workstation_capabilities",
+      "commandport_health_report",
+      "commandport_capability_report",
+      "commandport_get_runtime_config",
+      "commandport_get_file_info",
+      "commandport_hash_file",
+      "commandport_list_directory",
+      "commandport_read_text_file",
+      "commandport_search_files",
+      "commandport_search_text",
+      "commandport_list_processes",
+      "commandport_list_windows",
+      "commandport_owner_read_file_lines",
+      "commandport_owner_read_multiple_files",
+      "commandport_owner_search_content",
+      "commandport_owner_read_document",
+      "commandport_owner_system_snapshot",
+      "commandport_owner_network_summary",
+      "commandport_owner_recent_tool_calls",
+      "commandport_owner_usage_stats",
+      "supervised_list_apps",
+      "supervised_app_status"
+    ];
+    const relayDeveloperTools = [
+      ...relayReadTools,
+      "commandport_owner_preview_text_replace",
+      "commandport_owner_apply_text_replace",
+      "commandport_owner_preview_text_transaction",
+      "commandport_owner_apply_text_transaction",
+      "commandport_owner_write_text_file",
+      "commandport_owner_write_json",
+      "commandport_owner_write_csv",
+      "commandport_owner_write_xlsx",
+      "commandport_owner_write_docx",
+      "commandport_owner_write_pdf",
+      "commandport_owner_replace_docx_text",
+      "commandport_owner_update_xlsx_cells",
+      "commandport_owner_update_xlsx_range",
+      "commandport_owner_rollback_text_edit",
+      "commandport_owner_rollback_text_transaction",
+      "commandport_owner_rollback_document",
+      "commandport_owner_sandbox_status",
+      "commandport_owner_sandbox_run",
+      "commandport_owner_run_command",
+      "commandport_owner_process_start",
+      "commandport_owner_process_terminate",
+      "commandport_owner_terminal_start",
+      "commandport_owner_terminal_read",
+      "commandport_owner_terminal_write",
+      "commandport_owner_terminal_stop",
+      "supervised_owner_start",
+      "supervised_owner_restart"
+    ];
+    profiles["relay-read"] = {
+      description: "Owner-only read/diagnostic access to Project Relay linked workstations and approved roots.",
+      ownerOnly: true,
+      writeCapable: false,
+      allowWeb: true,
+      maxToolCalls: 30,
+      servers: [relayServerConfig(relayReadTools)]
+    };
+    profiles["relay-developer"] = {
+      description: "Owner-only Project Relay developer access for approved-root edits, bounded commands, sandbox work and supervised apps.",
+      ownerOnly: true,
+      writeCapable: true,
+      allowWeb: true,
+      maxToolCalls: 60,
+      servers: [relayServerConfig(relayDeveloperTools)]
+    };
+
+    if (RELAY_ADMIN_PROFILE_ENABLED) {
+      profiles["relay-admin"] = {
+        description: "Explicitly enabled owner-only Project Relay administration profile. Includes destructive system actions.",
+        ownerOnly: true,
+        writeCapable: true,
+        allowWeb: true,
+        maxToolCalls: 80,
+        servers: [relayServerConfig([
+          ...relayDeveloperTools,
+          "commandport_owner_fs_copy",
+          "commandport_owner_fs_mkdir",
+          "commandport_owner_fs_move",
+          "commandport_owner_fs_delete",
+          "commandport_owner_service_action",
+          "commandport_owner_scheduled_task_action",
+          "commandport_owner_software_install",
+          "commandport_owner_software_upgrade",
+          "commandport_owner_software_uninstall",
+          "commandport_owner_self_update",
+          "commandport_owner_power_action"
+        ])]
+      };
+    }
+  }
+
+  return profiles;
+}
+
+function workerProfileEnv() {
+  return {
+    ...process.env,
+    KEEPGOING_INTERNAL_WORKER_AUTHORIZATION: WORKER_MCP_SECRET
+      ? "Bearer " + WORKER_MCP_SECRET
+      : "",
+    KEEPGOING_INTERNAL_RELAY_AUTHORIZATION: RELAY_MCP_AUTHORIZATION
+  };
+}
+
+function workerAuthorised(req) {
+  if (!WORKER_MCP_SECRET) return false;
+  const auth = String(req.get("authorization") || "");
+  const expected = "Bearer " + WORKER_MCP_SECRET;
+  const a = Buffer.from(auth);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+
 function getV12Runtime() {
   if (v12RuntimeCache) return v12RuntimeCache;
   if (!v12Configured()) throw new Error("KeepGoing v1.2 durable engine is not configured");
@@ -357,8 +582,13 @@ function getV12Runtime() {
     proxyUrl: V12_DURABLE_STORE_URL,
     proxyToken: V12_DURABLE_STORE_TOKEN
   });
+  const toolProfiles = createToolProfileRegistry({
+    rawJson: TOOL_PROFILES_JSON,
+    extraProfiles: builtInToolProfiles(),
+    env: workerProfileEnv()
+  });
   const orchestrator = new KeepGoingOrchestrator({ engine, store });
-  const service = createV12Service({ engine, store, orchestrator, model: MODEL });
+  const service = createV12Service({ engine, store, orchestrator, toolProfiles, model: MODEL });
   const watchdog = createWatchdog({ store, orchestrator });
   const webhookProcessor = OPENAI_WEBHOOK_SECRET
     ? createWebhookProcessor({
@@ -371,7 +601,7 @@ function getV12Runtime() {
       })
     : null;
 
-  v12RuntimeCache = { engine, store, orchestrator, service, watchdog, webhookProcessor };
+  v12RuntimeCache = { engine, store, orchestrator, service, toolProfiles, watchdog, webhookProcessor };
   return v12RuntimeCache;
 }
 
