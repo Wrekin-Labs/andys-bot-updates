@@ -50,6 +50,42 @@ assert.equal(createBody.agent.tools[0].mode, "live");
 assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
 assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
 
+const mcpCreated = await engine.createSession({
+  prompt: "edit the repo",
+  instructions: "use approved tools",
+  allowWeb: false,
+  mcpTools: [{
+    type: "mcp",
+    server_label: "github",
+    transport: {
+      type: "http",
+      server_url: "https://mcp.example.com/github"
+    },
+    allowed_tools: ["search", "fetch_file"],
+    connection_origin: "service",
+    required: true,
+    credential_id: "cred_123"
+  }],
+  idempotencyKey: "kg-mcp-start"
+});
+assert.equal(mcpCreated.id, "sess_abc");
+const mcpCall = calls.at(-1);
+const mcpBody = JSON.parse(mcpCall.init.body);
+assert.equal(mcpBody.agent.tools.length, 1);
+assert.equal(mcpBody.agent.tools[0].type, "mcp");
+assert.equal(mcpBody.agent.tools[0].server_label, "github");
+assert.deepEqual(mcpBody.agent.tools[0].allowed_tools, ["search", "fetch_file"]);
+assert.equal(mcpBody.agent.tools[0].credential_id, "cred_123");
+assert.equal(mcpCall.init.headers["Idempotency-Key"], "kg-mcp-start");
+
+await assert.rejects(
+  () => engine.createSession({
+    prompt: "bad",
+    mcpTools: [{ type: "not-mcp" }]
+  }),
+  /Invalid KeepGoing MCP tool configuration/
+);
+
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
 const sentCall = calls.at(-1);
 const sent = JSON.parse(sentCall.init.body);
