@@ -8,9 +8,13 @@ const SENSITIVE_HEADER_RE = /^(authorization|proxy-authorization|cookie|set-cook
 
 export function createToolProfileRegistry({
   rawJson = "",
+  extraProfiles = {},
   env = process.env
 } = {}) {
   const configured = parseProfiles(rawJson);
+  if (!extraProfiles || typeof extraProfiles !== "object" || Array.isArray(extraProfiles)) {
+    throw new Error("extraProfiles must be an object");
+  }
   const profiles = new Map();
 
   profiles.set("web", freezeProfile({
@@ -24,6 +28,11 @@ export function createToolProfileRegistry({
   }));
 
   for (const [name, input] of Object.entries(configured)) {
+    profiles.set(name, normaliseProfile(name, input));
+  }
+
+  for (const [name, input] of Object.entries(extraProfiles)) {
+    if (profiles.has(name)) throw new Error("Duplicate KeepGoing tool profile");
     profiles.set(name, normaliseProfile(name, input));
   }
 
