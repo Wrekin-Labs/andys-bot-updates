@@ -14,7 +14,7 @@ import { createV12Service } from "./v12_service.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.22";
+const APP_VERSION = "1.3.0-beta.23";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -1070,6 +1070,9 @@ async function waitForJob(jobId, waitSeconds = 20) {
 
 async function startPersistentJobCompat(args, access) {
   if (!v12ForAccess(access)) {
+    if (args.codingWorkspace) {
+      throw new Error("Coding workspace requires KeepGoing durable v1.2+");
+    }
     const legacy = await startJob({
       ...args,
       tier: access.tier || "pro",
@@ -1091,6 +1094,9 @@ async function startPersistentJobCompat(args, access) {
     ownerSubjectHash: durableOwnerHash(access),
     clientRequestId: args.clientRequestId || access._mcp_request_id || null,
     context: args.context || "",
+    codingWorkspace: Boolean(args.codingWorkspace),
+    repositoryUrl: args.repositoryUrl || null,
+    repositoryRef: args.repositoryRef || null,
     beforeCreateSession: async () => reserveJobQuota(access)
   });
 }
@@ -1100,6 +1106,26 @@ async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
   return getV12Runtime().service.list(
     durableOwnerHash(access),
     { limit, activeOnly }
+  );
+}
+
+async function listJobArtifactsCompat(jobId, access, limit = 50) {
+  if (!v12ForAccess(access)) throw new Error("Job artifacts require KeepGoing durable v1.2+");
+  return getV12Runtime().service.artifacts(
+    jobId,
+    durableOwnerHash(access),
+    Boolean(access.admin),
+    limit
+  );
+}
+
+async function readJobArtifactCompat(jobId, artifactId, access) {
+  if (!v12ForAccess(access)) throw new Error("Job artifacts require KeepGoing durable v1.2+");
+  return getV12Runtime().service.readArtifact(
+    jobId,
+    artifactId,
+    durableOwnerHash(access),
+    Boolean(access.admin)
   );
 }
 
@@ -1160,10 +1186,10 @@ function createMcpServer(access = {}) {
   const publicV12Instructions = "Use KeepGoing when the user explicitly asks to use KeepGoing for a substantial objective or explicitly asks KeepGoing to continue or finish an existing objective. Prefer continue_until_done for that explicit KeepGoing intent. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
   const ownerV12Instructions = "OWNER MODE: Treat plain continuation phrases such as continue, keep going, finish it, until done, don't stop, carry on, or equivalent as KeepGoing intent when they refer to the current substantial objective. Prefer continue_until_done for those phrases even when the user does not repeat the word KeepGoing. Preserve and reuse the same durable job where possible; never create duplicates just to continue. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
   const startToolDescription = ownerAutoContinue
-    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
-    : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
+    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. For coding work, when a public GitHub repository is known, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the durable Agent can actually inspect/edit/test the code; do not start a no-files coding job. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
+    : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. For coding work, set codingWorkspace=true and optionally supply a public GitHub repository/ref. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
   const continueToolDescription = ownerAutoContinue
-    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. Reuse the same job where possible."
+    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. For coding objectives with a known public GitHub repo, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the background job has real code access. Reuse the same job where possible."
     : "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data.";
 
   const server = new McpServer(
@@ -1211,7 +1237,10 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional()
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
+      codingWorkspace: z.boolean().default(false).describe("Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support."),
+      repositoryUrl: z.string().url().max(500).describe("Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials.").optional(),
+      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1241,7 +1270,10 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("max"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional()
+      context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
+      codingWorkspace: z.boolean().default(false).describe("Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support."),
+      repositoryUrl: z.string().url().max(500).describe("Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials.").optional(),
+      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1367,6 +1399,60 @@ function createMcpServer(access = {}) {
       }
     });
 
+    server.registerTool("list_job_artifacts", {
+      title: "List job artifacts",
+      description: "List patch/report artifacts published by an owned KeepGoing coding job. Returns metadata only for files published from /workspace/outputs.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        limit: z.number().int().min(1).max(100).default(50)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        artifacts: z.array(z.object({
+          artifact_id: z.string(),
+          path: z.string(),
+          size_bytes: z.number(),
+          turn_id: z.string()
+        }))
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id, limit }) => {
+      try {
+        const result = await listJobArtifactsCompat(job_id, access, limit);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+
+    server.registerTool("read_job_artifact", {
+      title: "Read job artifact",
+      description: "Read a small text patch/report artifact published by an owned KeepGoing coding job. Only common text artifact formats under /workspace/outputs are readable.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        artifact_id: z.string().min(1).max(200)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        artifact_id: z.string(),
+        path: z.string(),
+        size_bytes: z.number(),
+        text: z.string()
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id, artifact_id }) => {
+      try {
+        const result = await readJobArtifactCompat(job_id, artifact_id, access);
+        return { content: [{ type: "text", text: result.text }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+
     server.registerTool("resume_persistent_job", {
       title: "Resume persistent job",
       description: "Use after a KeepGoing job is waiting for user input and the user has supplied the missing information. Resumes the same durable job rather than starting over.",
@@ -1410,7 +1496,10 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." }
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
+            codingWorkspace: { type: "boolean", default: false, description: "Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support." },
+            repositoryUrl: { type: "string", format: "uri", maxLength: 500, description: "Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials." },
+            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1442,7 +1531,10 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." }
+            context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
+            codingWorkspace: { type: "boolean", default: false, description: "Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support." },
+            repositoryUrl: { type: "string", format: "uri", maxLength: 500, description: "Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials." },
+            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1623,6 +1715,76 @@ function createMcpServer(access = {}) {
             }
           },
           required: ["jobs"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "list_job_artifacts",
+        title: "List job artifacts",
+        description: "List patch/report artifacts published by an owned KeepGoing coding job. Returns metadata only for files published from /workspace/outputs.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }
+          },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            artifacts: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  artifact_id: { type: "string" },
+                  path: { type: "string" },
+                  size_bytes: { type: "number" },
+                  turn_id: { type: "string" }
+                },
+                required: ["artifact_id", "path", "size_bytes", "turn_id"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["job_id", "artifacts"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "read_job_artifact",
+        title: "Read job artifact",
+        description: "Read a small text patch/report artifact published by an owned KeepGoing coding job. Only common text artifact formats under /workspace/outputs are readable.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            artifact_id: { type: "string", minLength: 1, maxLength: 200 }
+          },
+          required: ["job_id", "artifact_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            artifact_id: { type: "string" },
+            path: { type: "string" },
+            size_bytes: { type: "number" },
+            text: { type: "string" }
+          },
+          required: ["job_id", "artifact_id", "path", "size_bytes", "text"],
           additionalProperties: false
         },
         securitySchemes: oauthSecuritySchemes,
@@ -2151,7 +2313,7 @@ app.get("/privacy", (_req, res) => {
     "<p><strong>Last updated:</strong> 29 September 2026</p>",
     "<p>KeepGoing processes the minimum information needed to operate subscriptions and persistent jobs.</p>",
     "<h2>Information processed</h2>",
-    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, options and—only when needed—a brief task-specific checkpoint submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>KeepGoing does not independently retrieve your full ChatGPT history. The MCP context field is intentionally bounded and should never contain full chat transcripts, passwords, API keys, payment credentials or unrelated personal data.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
+    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, options and—only when needed—a brief task-specific checkpoint submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>When codingWorkspace is explicitly enabled, the public GitHub repository locator/ref and the public repository contents cloned from that source are processed in an isolated OpenAI-hosted sandbox so the job can inspect, edit and test code. Beta.23 supports public repositories only and does not perform remote repository writes.</li><li>KeepGoing does not independently retrieve your full ChatGPT history. The MCP context field is intentionally bounded and should never contain full chat transcripts, passwords, API keys, payment credentials or unrelated personal data.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
     "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
     "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. OpenAI may temporarily retain provider-side application state needed to run, poll and recover durable work according to the applicable API product and account data controls. Hosting providers may retain technical logs according to their own policies.</p>",

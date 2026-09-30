@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
-assert.match(source, /APP_VERSION = "1\.2\.0-beta\.22"/);
+assert.match(source, /APP_VERSION = "1\.3\.0-beta\.23"/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
@@ -140,9 +140,21 @@ assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_r
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /server\.registerTool\("continue_until_done"/);
+assert.match(source, /server\.registerTool\("list_job_artifacts"/);
+assert.match(source, /server\.registerTool\("read_job_artifact"/);
 assert.match(source, /Prefer continue_until_done/);
 assert.match(source, /context: z\.string\(\)\.max\(4000\)/);
 assert.match(source, /context: \{ type: "string", maxLength: 4000/);
+assert.match(source, /codingWorkspace: z\.boolean\(\)\.default\(false\)/);
+assert.match(source, /repositoryUrl: z\.string\(\)\.url\(\)\.max\(500\)/);
+assert.match(source, /repositoryRef: z\.string\(\)\.max\(200\)/);
+assert.match(source, /codingWorkspace: \{ type: "boolean", default: false/);
+assert.match(source, /repositoryUrl: \{ type: "string", format: "uri", maxLength: 500/);
+assert.match(source, /repositoryRef: \{ type: "string", maxLength: 200/);
+assert.match(source, /codingWorkspace: Boolean\(args\.codingWorkspace\)/);
+assert.match(source, /repositoryUrl: args\.repositoryUrl \|\| null/);
+assert.match(source, /repositoryRef: args\.repositoryRef \|\| null/);
+assert.match(source, /Coding workspace requires KeepGoing durable v1\.2\+/);
 assert.doesNotMatch(source, /context: z\.string\(\)\.max\(20000\)|context: \{ type: "string", maxLength: 20000/);
 assert.match(source, /Brief task-specific checkpoint only/);
 assert.match(source, /full conversation history, raw transcripts, credentials/);
@@ -167,7 +179,9 @@ for (const title of [
   "Wait for persistent job",
   "Cancel persistent job",
   "List persistent jobs",
-  "Resume persistent job"
+  "Resume persistent job",
+  "List job artifacts",
+  "Read job artifact"
 ]) {
   assert.ok(source.includes('title: "' + title + '"'), "missing tool title: " + title);
 }
@@ -176,6 +190,8 @@ assert.match(source, /name: "wait_for_persistent_job"[\s\S]{0,1500}openWorldHint
 assert.match(source, /name: "cancel_persistent_job"[\s\S]{0,1200}destructiveHint: true[\s\S]{0,120}openWorldHint: false/);
 assert.match(source, /name: "list_persistent_jobs"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,160}openWorldHint: false/);
 assert.match(source, /name: "resume_persistent_job"[\s\S]{0,1500}readOnlyHint: false[\s\S]{0,200}openWorldHint: true/);
+assert.match(source, /name: "list_job_artifacts"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,180}openWorldHint: false/);
+assert.match(source, /name: "read_job_artifact"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,180}openWorldHint: false/);
 
 console.log("server v1.2 source guards passed");
 

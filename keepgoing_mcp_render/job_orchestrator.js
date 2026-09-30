@@ -33,6 +33,7 @@ export class KeepGoingOrchestrator {
     ownerSubjectHash,
     clientRequestId = null,
     limits = {},
+    workspace = null,
     beforeCreateSession = null
   }) {
     if (!String(initialPrompt || "").trim()) throw new Error("initial prompt required");
@@ -65,7 +66,8 @@ export class KeepGoingOrchestrator {
         instructions,
         allowWeb,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
       return { created: false, job: retried };
     }
@@ -95,7 +97,8 @@ export class KeepGoingOrchestrator {
         instructions,
         allowWeb,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
     } catch (error) {
       const status = Number(error?.status || 0);
@@ -157,7 +160,8 @@ export class KeepGoingOrchestrator {
     instructions,
     allowWeb,
     reasoningEffort,
-    clientRequestId
+    clientRequestId,
+    workspace = null
   }) {
     const metadata = {
       keepgoing: "v1.2",
@@ -175,7 +179,8 @@ export class KeepGoingOrchestrator {
           allowWeb,
           reasoningEffort,
           metadata,
-          idempotencyKey
+          idempotencyKey,
+          workspace
         });
       } catch (error) {
         lastError = error;
@@ -209,7 +214,8 @@ export class KeepGoingOrchestrator {
     instructions,
     allowWeb,
     reasoningEffort,
-    clientRequestId
+    clientRequestId,
+    workspace = null
   }) {
     let current = existing;
     if (!current || current.providerSessionId || Number(current.attempt || 0) > 0) {
@@ -264,7 +270,8 @@ export class KeepGoingOrchestrator {
         instructions,
         allowWeb,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
     } catch (error) {
       const status = Number(error?.status || 0);

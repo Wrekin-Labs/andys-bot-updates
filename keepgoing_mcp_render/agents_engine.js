@@ -34,7 +34,8 @@ export function createAgentsEngine({
     allowWeb = true,
     reasoningEffort = "medium",
     metadata = {},
-    idempotencyKey = null
+    idempotencyKey = null,
+    workspace = null
   }) {
     if (!String(prompt || "").trim()) throw new Error("prompt required");
     const agent = {
@@ -47,7 +48,7 @@ export function createAgentsEngine({
     }
     const body = {
       agent,
-      environment: { type: "none" },
+      environment: buildAgentEnvironment(workspace),
       input: String(prompt),
       metadata
     };
@@ -227,6 +228,87 @@ export function createAgentsEngine({
     );
   }
 
+  async function listArtifacts(sessionId, {
+    order = "desc",
+    limit = 50,
+    after = null
+  } = {}) {
+    requireSessionId(sessionId);
+    const safeOrder = order === "asc" ? "asc" : "desc";
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+    const query = new URLSearchParams({
+      order: safeOrder,
+      limit: String(safeLimit)
+    });
+    if (after) query.set("after", String(after));
+
+    return request(
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/artifacts?" + query.toString(),
+      { method: "GET" }
+    );
+  }
+
+  async function readArtifactText(sessionId, artifactId, {
+    maxBytes = 512_000
+  } = {}) {
+    requireSessionId(sessionId);
+    const id = String(artifactId || "").trim();
+    if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) {
+      throw new Error("valid artifact id required");
+    }
+
+    const metadata = await request(
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/artifacts/" + encodeURIComponent(id),
+      { method: "GET" }
+    );
+
+    const path = String(metadata?.path || "");
+    if (!isReadableTextArtifactPath(path)) {
+      throw new Error("artifact type is not readable as text");
+    }
+
+    const size = Number(metadata?.size_bytes || 0);
+    const safeMax = Math.max(1, Math.min(1_000_000, Number(maxBytes) || 512_000));
+    if (!Number.isFinite(size) || size < 0 || size > safeMax) {
+      throw new Error("artifact exceeds the readable text size limit");
+    }
+
+    const response = await fetchImpl(
+      baseUrl +
+      "/agents/sessions/" + encodeURIComponent(sessionId) +
+      "/artifacts/" + encodeURIComponent(id) + "/content",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer " + apiKey,
+          "OpenAI-Beta": "agents=v1",
+          Accept: "application/octet-stream"
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => "");
+      const error = new Error(
+        message || ("Artifact content request failed (" + response.status + ")")
+      );
+      error.status = response.status;
+      throw error;
+    }
+
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > safeMax) {
+      throw new Error("artifact exceeds the readable text size limit");
+    }
+
+    return {
+      artifact: metadata,
+      text
+    };
+  }
+
   async function sendMessage(sessionId, text, idempotencyKey = null) {
     requireSessionId(sessionId);
     const value = String(text || "").trim();
@@ -259,7 +341,7 @@ export function createAgentsEngine({
     });
   }
 
-  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurnItems, listTurns, sendMessage, cancelTurn };
+  return { createSession, getSession, listSessions, findSessionByMetadata, listItems, listAllItems, listTurnItems, listTurns, listArtifacts, readArtifactText, sendMessage, cancelTurn };
 }
 
 export function latestSessionText(itemsResponse) {
@@ -323,7 +405,7 @@ export function classifySession(session, latestText = "", turnsResponse = null, 
 export function turnToolCallCount(itemsResponse, turnId = null) {
   return collection(itemsResponse).filter((item) => {
     if (turnId && item?.turn_id && item.turn_id !== turnId) return false;
-    return isToolLikeItem(item);
+    return isBudgetedExternalToolItem(item);
   }).length;
 }
 
@@ -344,6 +426,169 @@ function isToolLikeItem(item) {
     type.includes("tool") ||
     type.includes("execution") ||
     type.includes("search")
+  );
+}
+
+function isBudgetedExternalToolItem(item) {
+  const type = String(item?.type || "").toLowerCase();
+  return (
+    type === "web_search_call" ||
+    type === "mcp_call" ||
+    type === "function_call"
+  );
+}
+
+export function normaliseCodingWorkspace(workspace = null) {
+  if (!workspace || workspace.enabled !== true) {
+    return { enabled: false, repositoryUrl: null, repositoryRef: null };
+  }
+
+  const repositoryUrl = normaliseGitHubRepositoryUrl(workspace.repositoryUrl);
+  const repositoryRef = normaliseGitRef(workspace.repositoryRef);
+
+  if (repositoryRef && !repositoryUrl) {
+    throw new Error("repositoryRef requires repositoryUrl");
+  }
+
+  return {
+    enabled: true,
+    repositoryUrl,
+    repositoryRef
+  };
+}
+
+export function buildAgentEnvironment(workspace = null) {
+  const spec = normaliseCodingWorkspace(workspace);
+  if (!spec.enabled) return { type: "none" };
+
+  const setupCommands = [{ command: "mkdir -p /workspace/outputs" }];
+
+  if (spec.repositoryUrl) {
+    if (spec.repositoryRef) {
+      setupCommands.unshift(
+        {
+          command:
+            "git clone --filter=blob:none --no-checkout " +
+            shellQuote(spec.repositoryUrl) +
+            " /workspace/project"
+        },
+        {
+          command: "git fetch --depth 1 origin " + shellQuote(spec.repositoryRef),
+          cwd: "/workspace/project"
+        },
+        {
+          command: "git checkout -B keepgoing-work FETCH_HEAD",
+          cwd: "/workspace/project"
+        }
+      );
+    } else {
+      setupCommands.unshift(
+        {
+          command:
+            "git clone --depth 1 " +
+            shellQuote(spec.repositoryUrl) +
+            " /workspace/project"
+        },
+        {
+          command: "git checkout -B keepgoing-work",
+          cwd: "/workspace/project"
+        }
+      );
+    }
+  } else {
+    setupCommands.unshift({ command: "mkdir -p /workspace/project" });
+  }
+
+  return {
+    type: "openai_hosted",
+    container_size: "small",
+    network: {
+      access: "restricted",
+      allowed_domains: [
+        "github.com",
+        "raw.githubusercontent.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "deb.debian.org",
+        "security.debian.org",
+        "crates.io",
+        "static.crates.io",
+        "repo.maven.apache.org",
+        "plugins.gradle.org"
+      ]
+    },
+    setup_commands: setupCommands
+  };
+}
+
+function normaliseGitHubRepositoryUrl(value) {
+  if (value == null || String(value).trim() === "") return null;
+
+  let url;
+  try {
+    url = new URL(String(value).trim());
+  } catch {
+    throw new Error("repositoryUrl must be a valid public GitHub HTTPS URL");
+  }
+
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "github.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("repositoryUrl must be a public github.com HTTPS repository URL without credentials");
+  }
+
+  let pathname = url.pathname.replace(/\/+$/, "");
+  if (!/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(pathname)) {
+    throw new Error("repositoryUrl must identify one GitHub owner/repository");
+  }
+  if (!pathname.endsWith(".git")) pathname += ".git";
+  return "https://github.com" + pathname;
+}
+
+function normaliseGitRef(value) {
+  if (value == null || String(value).trim() === "") return null;
+  const ref = String(value).trim();
+
+  if (
+    ref.length > 200 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(ref) ||
+    ref.includes("..") ||
+    ref.includes("@{") ||
+    ref.includes("//") ||
+    ref.endsWith("/") ||
+    ref.endsWith(".") ||
+    ref.endsWith(".lock")
+  ) {
+    throw new Error("repositoryRef is not a valid safe Git ref");
+  }
+  return ref;
+}
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\"'\"'") + "'";
+}
+
+function isReadableTextArtifactPath(path) {
+  const value = String(path || "").toLowerCase();
+  return (
+    value.endsWith(".patch") ||
+    value.endsWith(".diff") ||
+    value.endsWith(".md") ||
+    value.endsWith(".txt") ||
+    value.endsWith(".json") ||
+    value.endsWith(".log") ||
+    value.endsWith(".csv") ||
+    value.endsWith(".xml") ||
+    value.endsWith(".yaml") ||
+    value.endsWith(".yml")
   );
 }
 

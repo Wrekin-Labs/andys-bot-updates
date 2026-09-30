@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { isTerminal } from "./durable_job.js";
-import { latestRootTurn, latestSessionText } from "./agents_engine.js";
+import { latestRootTurn, latestSessionText, normaliseCodingWorkspace } from "./agents_engine.js";
 
 export const JOB_INSTRUCTIONS = [
   "Finish the KeepGoing job.",
@@ -34,16 +34,35 @@ export function createV12Service({
     ownerSubjectHash,
     clientRequestId = null,
     context = "",
+    codingWorkspace = false,
+    repositoryUrl = null,
+    repositoryRef = null,
     beforeCreateSession = null
   }) {
-    const limits = planLimits(tier, allowWeb);
+    if ((repositoryUrl || repositoryRef) && !codingWorkspace) {
+      throw new Error("repositoryUrl/repositoryRef require codingWorkspace=true");
+    }
+
+    // Validate workspace configuration before durable reservation/quota use.
+    const workspace = codingWorkspace
+      ? normaliseCodingWorkspace({
+          enabled: true,
+          repositoryUrl,
+          repositoryRef
+        })
+      : null;
+
+    const limits = planLimits(tier, allowWeb, codingWorkspace);
     const result = await orchestrator.start({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
-      instructions: JOB_INSTRUCTIONS,
+      instructions: codingWorkspace
+        ? JOB_INSTRUCTIONS + " A coding workspace is available at /workspace/project. Read and modify files there, run appropriate tests, and save any useful patch/report artifacts under /workspace/outputs. Do not attempt to push to GitHub or request repository credentials; this first workspace mode is read/clone plus local edit/test only."
+        : JOB_INSTRUCTIONS,
       allowWeb,
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
       clientRequestId,
+      workspace,
       limits: {
         maxAttempts: limits.max_attempts,
         maxWallMs: limits.max_wall_seconds * 1000,
@@ -74,6 +93,61 @@ export function createV12Service({
         max_attempts: Number(job.maxAttempts || 0),
         error: job.safeErrorMessage || null
       }))
+    };
+  }
+
+  async function artifacts(jobId, ownerSubjectHash, admin = false, limit = 50) {
+    const job = await ownedJob(jobId, ownerSubjectHash, admin);
+    if (!job.providerSessionId || typeof engine.listArtifacts !== "function") {
+      return { job_id: job.id, artifacts: [] };
+    }
+
+    const response = await engine.listArtifacts(job.providerSessionId, {
+      order: "desc",
+      limit: Math.max(1, Math.min(100, Number(limit) || 50))
+    });
+
+    const rows = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.data) ? response.data
+      : Array.isArray(response?.items) ? response.items
+      : [];
+
+    return {
+      job_id: job.id,
+      artifacts: rows
+        .filter((item) => isPublishedOutputPath(item?.path))
+        .map((item) => ({
+          artifact_id: String(item.id || ""),
+          path: String(item.path || ""),
+          size_bytes: Number(item.size_bytes || 0),
+          turn_id: String(item.turn_id || "")
+        }))
+        .filter((item) => item.artifact_id && item.path)
+    };
+  }
+
+  async function readArtifact(jobId, artifactId, ownerSubjectHash, admin = false) {
+    const job = await ownedJob(jobId, ownerSubjectHash, admin);
+    if (!job.providerSessionId || typeof engine.readArtifactText !== "function") {
+      throw new Error("KeepGoing artifact reading is unavailable");
+    }
+
+    const result = await engine.readArtifactText(
+      job.providerSessionId,
+      artifactId,
+      { maxBytes: 512_000 }
+    );
+    if (!isPublishedOutputPath(result?.artifact?.path)) {
+      throw new Error("Artifact is outside the published output directory");
+    }
+
+    return {
+      job_id: job.id,
+      artifact_id: String(result.artifact.id || artifactId),
+      path: String(result.artifact.path || ""),
+      size_bytes: Number(result.artifact.size_bytes || 0),
+      text: String(result.text || "")
     };
   }
 
@@ -247,18 +321,22 @@ export function createV12Service({
     };
   }
 
-  return { start, list, get, wait, cancel, resume, ownedJob };
+  return { start, list, artifacts, readArtifact, get, wait, cancel, resume, ownedJob };
 }
 
-export function planLimits(tier, allowWeb = true) {
+export function planLimits(tier, allowWeb = true, codingWorkspace = false) {
   const business = tier === "business" || tier === "owner";
   return {
     // Continuations remain multi-turn, but aggregate budgets are deliberately
     // bounded to keep subscription economics predictable at maximum usage.
     max_attempts: business ? 8 : 6,
     max_total_tokens: business ? 30_000 : 20_000,
+    // This budget covers external web/MCP/function calls. Local sandbox shell
+    // and patch operations are controlled by the shorter coding wall clock.
     max_total_tool_calls: allowWeb ? (business ? 5 : 3) : 0,
-    max_wall_seconds: business ? 4 * 60 * 60 : 2 * 60 * 60
+    max_wall_seconds: codingWorkspace
+      ? (business ? 60 * 60 : 30 * 60)
+      : (business ? 4 * 60 * 60 : 2 * 60 * 60)
   };
 }
 
@@ -315,6 +393,11 @@ function terminalMessage(status) {
   if (status === "budget_exhausted") return "KeepGoing stopped at its configured safety/cost budget.";
   if (status === "cancelled") return "KeepGoing job was cancelled.";
   return "KeepGoing reached a terminal state.";
+}
+
+function isPublishedOutputPath(path) {
+  const value = String(path || "").replace(/\\/g, "/");
+  return value === "/workspace/outputs" || value.startsWith("/workspace/outputs/");
 }
 
 function sha256(value) {
