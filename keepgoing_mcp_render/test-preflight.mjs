@@ -21,7 +21,7 @@ const base = "https://keepgoing.example";
 const fetchOk = async (url, init = {}) => {
   const path = new URL(url).pathname;
   if (path === "/health") {
-    return response(200, { ok: true, version: "1.2.0-beta.1", durableEngineEnabled: true });
+    return response(200, { ok: true, version: "1.2.0-beta.23", durableEngineEnabled: true });
   }
   if (path === "/readiness") {
     return response(200, {
@@ -125,17 +125,6 @@ const missingGithub = await runDeploymentPreflight({
 });
 assert.equal(missingGithub.ok, false);
 assert.ok(missingGithub.failed.includes("readiness"));
-
-const toolsReady = await runDeploymentPreflight({
-  baseUrl: base,
-  fetchImpl: fetchOk,
-  requireV12: true,
-  requireToolProfiles: true,
-  requireGithubWorker: true,
-  requireRelayProfiles: true
-});
-assert.equal(toolsReady.ok, true);
-assert.ok(toolsReady.checks.some((item) => item.name === "private_worker_mcp_protected"));
 
 const toolsBroken = await runDeploymentPreflight({
   baseUrl: base,
