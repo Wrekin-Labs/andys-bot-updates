@@ -13,6 +13,8 @@ assert.match(source, /if \(isStart && V12_ENABLED && !v12ForAccess\(access\)\)/)
 assert.match(source, /validateCustomerToken\(access\._customer_token, true\)/);
 assert.match(source, /const v12Access = v12ForAccess\(access\)/);
 assert.match(source, /createV12Service/);
+assert.match(source, /createToolProfileRegistry/);
+assert.match(source, /KEEPGOING_TOOL_PROFILES_JSON/);
 assert.match(source, /createWatchdog/);
 assert.match(source, /createOpenAIWebhookVerifier/);
 assert.match(source, /express\.text\(\{ type: "application\/json"/);
@@ -25,14 +27,18 @@ assert.match(source, /authorise\(req, isStart && !V12_ENABLED\)/);
 assert.match(source, /toolName === "start_persistent_job" \|\| toolName === "continue_until_done"/);
 assert.match(source, /access\._mcp_request_id = "mcp-" \+ digest/);
 assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_request_id \|\| null/);
+assert.match(source, /server\.registerTool\("list_tool_profiles"/);
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /server\.registerTool\("continue_until_done"/);
 assert.match(source, /Prefer continue_until_done/);
 assert.match(source, /context: z\.string\(\)\.max\(20000\)\.optional\(\)/);
+assert.match(source, /toolProfile: z\.string\(\)\.min\(1\)\.max\(64\)\.optional\(\)/);
 assert.match(source, /durable_engine_ready: v12Configured\(\)/);
 assert.match(source, /runtime\.store\?\.healthCheck/);
 assert.match(source, /durable_store_ready: durableStoreReady/);
+assert.match(source, /tool_profiles_ready: toolProfilesReady/);
+assert.match(source, /tool_profile_count: toolProfileCount/);
 assert.match(source, /sell_ready: engineReady && billingBackendReady && checkoutReady && durableOpsReady/);
 assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 assert.match(source, /name: "get_profile"[\s\S]{0,900}"openai\/profile": true/);
@@ -42,6 +48,7 @@ for (const title of [
   "Get persistent job",
   "Wait for persistent job",
   "Cancel persistent job",
+  "List KeepGoing tool profiles",
   "List persistent jobs",
   "Resume persistent job"
 ]) {
@@ -50,6 +57,7 @@ for (const title of [
 assert.match(source, /name: "get_persistent_job"[\s\S]{0,1300}openWorldHint: false/);
 assert.match(source, /name: "wait_for_persistent_job"[\s\S]{0,1500}openWorldHint: false/);
 assert.match(source, /name: "cancel_persistent_job"[\s\S]{0,1200}destructiveHint: true[\s\S]{0,120}openWorldHint: false/);
+assert.match(source, /name: "list_tool_profiles"[\s\S]{0,2400}readOnlyHint: true[\s\S]{0,160}openWorldHint: false/);
 assert.match(source, /name: "list_persistent_jobs"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,160}openWorldHint: false/);
 assert.match(source, /name: "resume_persistent_job"[\s\S]{0,1500}readOnlyHint: false[\s\S]{0,200}openWorldHint: true/);
 
