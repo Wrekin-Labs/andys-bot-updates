@@ -1109,6 +1109,26 @@ async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
   );
 }
 
+async function listJobArtifactsCompat(jobId, access, limit = 50) {
+  if (!v12ForAccess(access)) throw new Error("Job artifacts require KeepGoing durable v1.2+");
+  return getV12Runtime().service.artifacts(
+    jobId,
+    durableOwnerHash(access),
+    Boolean(access.admin),
+    limit
+  );
+}
+
+async function readJobArtifactCompat(jobId, artifactId, access) {
+  if (!v12ForAccess(access)) throw new Error("Job artifacts require KeepGoing durable v1.2+");
+  return getV12Runtime().service.readArtifact(
+    jobId,
+    artifactId,
+    durableOwnerHash(access),
+    Boolean(access.admin)
+  );
+}
+
 async function getPersistentJobCompat(jobId, access) {
   if (!v12ForAccess(access)) {
     const legacy = await getJob(jobId);
@@ -1379,6 +1399,60 @@ function createMcpServer(access = {}) {
       }
     });
 
+    server.registerTool("list_job_artifacts", {
+      title: "List job artifacts",
+      description: "List patch/report artifacts published by an owned KeepGoing coding job. Returns metadata only for files published from /workspace/outputs.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        limit: z.number().int().min(1).max(100).default(50)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        artifacts: z.array(z.object({
+          artifact_id: z.string(),
+          path: z.string(),
+          size_bytes: z.number(),
+          turn_id: z.string()
+        }))
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id, limit }) => {
+      try {
+        const result = await listJobArtifactsCompat(job_id, access, limit);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+
+    server.registerTool("read_job_artifact", {
+      title: "Read job artifact",
+      description: "Read a small text patch/report artifact published by an owned KeepGoing coding job. Only common text artifact formats under /workspace/outputs are readable.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        artifact_id: z.string().min(1).max(200)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        artifact_id: z.string(),
+        path: z.string(),
+        size_bytes: z.number(),
+        text: z.string()
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id, artifact_id }) => {
+      try {
+        const result = await readJobArtifactCompat(job_id, artifact_id, access);
+        return { content: [{ type: "text", text: result.text }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+
     server.registerTool("resume_persistent_job", {
       title: "Resume persistent job",
       description: "Use after a KeepGoing job is waiting for user input and the user has supplied the missing information. Resumes the same durable job rather than starting over.",
@@ -1641,6 +1715,76 @@ function createMcpServer(access = {}) {
             }
           },
           required: ["jobs"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "list_job_artifacts",
+        title: "List job artifacts",
+        description: "List patch/report artifacts published by an owned KeepGoing coding job. Returns metadata only for files published from /workspace/outputs.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }
+          },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            artifacts: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  artifact_id: { type: "string" },
+                  path: { type: "string" },
+                  size_bytes: { type: "number" },
+                  turn_id: { type: "string" }
+                },
+                required: ["artifact_id", "path", "size_bytes", "turn_id"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["job_id", "artifacts"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "read_job_artifact",
+        title: "Read job artifact",
+        description: "Read a small text patch/report artifact published by an owned KeepGoing coding job. Only common text artifact formats under /workspace/outputs are readable.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            artifact_id: { type: "string", minLength: 1, maxLength: 200 }
+          },
+          required: ["job_id", "artifact_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            artifact_id: { type: "string" },
+            path: { type: "string" },
+            size_bytes: { type: "number" },
+            text: { type: "string" }
+          },
+          required: ["job_id", "artifact_id", "path", "size_bytes", "text"],
           additionalProperties: false
         },
         securitySchemes: oauthSecuritySchemes,
