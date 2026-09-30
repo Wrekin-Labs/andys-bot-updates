@@ -1058,6 +1058,43 @@ function createMcpServer(access = {}) {
         structuredContent: profile
       };
     });
+
+    server.registerTool("list_tool_profiles", {
+      title: "List KeepGoing tool profiles",
+      description: "List the approved background-tool profiles available to this KeepGoing account. Use before starting a job that needs GitHub, files, Project Relay, or another configured MCP server. Does not reveal credentials or server secrets.",
+      inputSchema: {},
+      outputSchema: {
+        profiles: z.array(z.object({
+          name: z.string(),
+          description: z.string(),
+          owner_only: z.boolean(),
+          write_capable: z.boolean(),
+          web: z.boolean(),
+          mcp_servers: z.array(z.object({
+            label: z.string(),
+            tool_count: z.number(),
+            required: z.boolean()
+          })),
+          max_tool_calls: z.number().nullable(),
+          policy_hash: z.string().nullable()
+        }))
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    }, async () => {
+      try {
+        const result = await listToolProfilesCompat(access);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
   }
 
   server.registerTool("start_persistent_job", {
@@ -1069,12 +1106,14 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("balanced"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(20000).optional()
+      context: z.string().max(20000).optional(),
+      toolProfile: z.string().min(1).max(64).optional()
     },
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
       duplicate: z.boolean().optional(),
+      tool_profile: z.string().optional(),
       message: z.string()
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
@@ -1099,12 +1138,14 @@ function createMcpServer(access = {}) {
       mode: z.enum(["safe","balanced","max"]).default("max"),
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
-      context: z.string().max(20000).optional()
+      context: z.string().max(20000).optional(),
+      toolProfile: z.string().min(1).max(64).optional()
     },
     outputSchema: {
       job_id: z.string(),
       status: z.string(),
       duplicate: z.boolean().optional(),
+      tool_profile: z.string().optional(),
       message: z.string()
     },
     securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
@@ -1268,7 +1309,8 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "balanced" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 20000 }
+            context: { type: "string", maxLength: 20000 },
+            toolProfile: { type: "string", minLength: 1, maxLength: 64 }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1279,6 +1321,7 @@ function createMcpServer(access = {}) {
             job_id: { type: "string" },
             status: { type: "string" },
             duplicate: { type: "boolean" },
+            tool_profile: { type: "string" },
             message: { type: "string" }
           },
           required: ["job_id", "status", "message"],
@@ -1300,7 +1343,8 @@ function createMcpServer(access = {}) {
             mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
-            context: { type: "string", maxLength: 20000 }
+            context: { type: "string", maxLength: 20000 },
+            toolProfile: { type: "string", minLength: 1, maxLength: 64 }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1311,6 +1355,7 @@ function createMcpServer(access = {}) {
             job_id: { type: "string" },
             status: { type: "string" },
             duplicate: { type: "boolean" },
+            tool_profile: { type: "string" },
             message: { type: "string" }
           },
           required: ["job_id", "status", "message"],
@@ -1445,6 +1490,60 @@ function createMcpServer(access = {}) {
           openWorldHint: false
         },
         _meta: { ...oauthMeta, "openai/profile": true }
+      });
+
+      tools.push({
+        name: "list_tool_profiles",
+        title: "List KeepGoing tool profiles",
+        description: "List approved background-tool profiles available to this account without revealing MCP credentials or secret headers.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            profiles: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  description: { type: "string" },
+                  owner_only: { type: "boolean" },
+                  write_capable: { type: "boolean" },
+                  web: { type: "boolean" },
+                  mcp_servers: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        label: { type: "string" },
+                        tool_count: { type: "number" },
+                        required: { type: "boolean" }
+                      },
+                      required: ["label", "tool_count", "required"],
+                      additionalProperties: false
+                    }
+                  },
+                  max_tool_calls: { type: ["number", "null"] },
+                  policy_hash: { type: ["string", "null"] }
+                },
+                required: [
+                  "name","description","owner_only","write_capable","web",
+                  "mcp_servers","max_tool_calls","policy_hash"
+                ],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["profiles"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
       });
 
       tools.push({
