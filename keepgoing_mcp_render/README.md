@@ -64,6 +64,7 @@ These are safety/cost ceilings, not promised consumption targets. A job stops ea
 - `cancel_persistent_job` — cancel the durable job/provider turn.
 - `list_persistent_jobs` — list the authenticated customer's own recent/active jobs using safe metadata only.
 - `resume_persistent_job` — deliver required user input to the same durable job with race-safe/idempotent delivery.
+- `list_tool_profiles` — discover approved background capability profiles before starting code/file/workstation jobs.
 
 ## Durable states
 
@@ -121,6 +122,35 @@ v1.2 durable engine:
 - `OPENAI_WEBHOOK_SECRET`
 - optional watchdog interval configuration
 
+Optional owner background tools:
+
+**Private GitHub worker**
+- `KEEPGOING_WORKER_MCP_SECRET` — random internal bearer secret used only between OpenAI Agents and the private `/worker-mcp` endpoint.
+- `KEEPGOING_GITHUB_TOKEN` — GitHub fine-grained token/PAT with only the required repository permissions.
+- `KEEPGOING_GITHUB_REPOS` — comma-separated exact `owner/repo` allowlist.
+- `KEEPGOING_GITHUB_BRANCH_PREFIX` — safe write prefix, default `keepgoing/`.
+- `KEEPGOING_WORKER_MCP_URL` — optional override; defaults to `<public-base>/worker-mcp`.
+
+When all required GitHub worker values are present, KeepGoing adds owner-only:
+- `github-read` — repository metadata, directories, files, code search and comparisons.
+- `github-write` — all read tools plus safe-branch creation, file create/update and pull-request opening. It cannot merge PRs, change repo settings or write directly to the default/protected branch.
+
+**Project Relay**
+- `KEEPGOING_RELAY_MCP_URL` — public HTTPS Project Relay MCP endpoint.
+- Prefer `KEEPGOING_RELAY_MCP_CREDENTIAL_ID` for an OpenAI Agents Vault credential.
+- Or use `KEEPGOING_RELAY_MCP_AUTHORIZATION` as a server-side authorization value when vault credentials are not used.
+- `KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE=true` — optional and off by default; exposes a broader destructive owner-only Relay admin profile.
+
+When Relay is configured, KeepGoing adds:
+- `relay-read` — diagnostics, approved-root reads/searches, processes/windows and supervised-app status.
+- `relay-developer` — read tools plus approved-root text/document edits, bounded commands, sandbox/terminal work and supervised-app start/restart.
+- `relay-admin` — only when explicitly enabled; includes filesystem delete, services, scheduled tasks, software administration, self-update and power actions.
+
+**Other MCP servers**
+- `KEEPGOING_TOOL_PROFILES_JSON` can define additional explicit HTTPS MCP profiles with per-server `allowed_tools` allowlists.
+- Write-capable profiles must be owner-only.
+- Secret headers are not accepted in JSON; use an OpenAI Vault `credential_id` or an environment authorization reference.
+
 Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
 
 PayPal live checkout:
@@ -166,3 +196,18 @@ Before enabling v1.2 for paid customers, verify:
 8. A missed webhook is repaired by the watchdog.
 9. PayPal/Stripe subscription claim and cancellation flows are tested in the selected live provider.
 10. Privacy, Terms, Support and Security pages match the deployed data flow.
+
+
+## Background tool profiles
+
+The foreground ChatGPT connection and the durable OpenAI Agent session do not automatically share connector permissions. For a code/file/workstation objective, the host should call `list_tool_profiles`, select the least-powerful profile that can complete the job, and pass its name as `toolProfile` to `continue_until_done` or `start_persistent_job`.
+
+Security rules:
+- default profile is `web`;
+- owner/write profiles never become available to non-owner accounts;
+- every MCP server requires an explicit `allowed_tools` list;
+- tool credentials are kept in server secret storage or OpenAI Agents Vault, not durable job rows;
+- each durable job stores the profile name and policy hash used when it started;
+- MCP/tool calls are audit-recorded as safe metadata only: tool type/name/server/status/turn, never arguments or outputs;
+- tool calls count against the same hard per-job tool budget;
+- changing a profile later does not silently broaden an already-created Agent session.
