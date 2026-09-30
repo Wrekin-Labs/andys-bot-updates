@@ -189,3 +189,40 @@ Run these only with the owner account and `KEEPGOING_V12_CANARY_ONLY=true` first
 3. Non-owner accounts cannot resolve owner-only/write-capable profiles.
 4. Tool-call audit contains metadata only, never arguments/results/secrets.
 5. Tool-call budgets stop runaway MCP activity.
+
+
+## Plugin Directory rollout
+
+The portable submission package is in `plugin/`.
+
+Before uploading:
+1. Run `npm run verify`.
+2. Run `npm run plugin:validate`.
+3. Build `npm run plugin:zip` or use the CI `keepgoing-plugin-submission` artifact.
+4. Confirm the plugin listing website is `/plugin` and contains no digital-subscription checkout/promotion.
+5. Confirm the root commercial site is not referenced by plugin metadata as a checkout flow.
+6. Recheck current OpenAI plugin commerce policy immediately before submission.
+
+Initial review requires exactly five positive and three negative MCP test cases plus a reviewer-accessible demo recording and dedicated reviewer credentials entered in the dashboard.
+
+## Background tool canary
+
+Optional GitHub worker:
+- configure `KEEPGOING_WORKER_MCP_SECRET`;
+- use a least-privilege `KEEPGOING_GITHUB_TOKEN`;
+- set exact `KEEPGOING_GITHUB_REPOS`;
+- verify `github_worker_ready=true`.
+
+Optional Project Relay:
+- set `KEEPGOING_RELAY_MCP_URL`;
+- configure a Relay Agents Vault credential ID or authorization secret;
+- verify `relay_profiles_ready=true`;
+- keep `KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE` off unless destructive administration is explicitly required.
+
+Run:
+
+```bash
+npm run preflight -- https://<domain> --v12 --tool-profiles --github-worker --relay-profiles
+```
+
+Omit a requirement flag only when that optional capability is deliberately not part of the release.
