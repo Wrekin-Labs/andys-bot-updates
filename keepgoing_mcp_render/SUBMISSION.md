@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.3.0-beta.23
+Version: 1.4.0-beta.24
 Updated: 29 September 2026
 
 This is a submission/reviewer worksheet. It contains no passwords, activation tokens, API keys, PayPal credentials, or reviewer secrets.
@@ -79,6 +79,20 @@ Reviewer expectations:
 - local Bash/apply-patch operations do not consume the 3/5 external web/MCP/function-call allowance;
 - failed shell work still prevents false completion;
 - coding sandbox wall limits are Pro 30 minutes and Business/owner 60 minutes.
+
+### Selected-file handoff
+
+Beta.24 can accept an explicitly selected set of task-relevant UTF-8 text files through `workspaceFiles` when `codingWorkspace=true`.
+
+Review boundary:
+- maximum 8 files;
+- maximum 32 KB per file and 128 KB total;
+- safe relative paths only;
+- selected files are copied into `/workspace/project` after any public-repository checkout;
+- high-risk key/config filename patterns are rejected;
+- validation happens before quota reservation;
+- KeepGoing durable job storage remains metadata-only; selected file bodies are not stored there;
+- this does not grant arbitrary desktop/filesystem access.
 
 ## Tool annotation justifications
 
@@ -242,9 +256,10 @@ Initial public-directory submission candidate.
 
 KeepGoing provides durable AI jobs that can continue bounded multi-turn work, survive chat changes, recover by job ID, pause for genuine user input, and resume the same job without repeatedly restarting completed work.
 
-Beta.23 includes:
+Beta.24 includes:
 
 - opt-in coding workspace for public GitHub repositories, with local file inspection/edit/test support;
+- bounded selected-file handoff for task-relevant local/uncommitted text files;
 - restricted sandbox networking and strict repository URL/ref validation;
 - watchdog recovery;
 - deterministic/idempotent initial-session startup;
