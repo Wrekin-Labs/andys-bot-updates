@@ -81,7 +81,7 @@ assert.match(oauthAuthorizeSource, /activation_token/);
 assert.match(oauthAuthorizeSource, /does not sell, upgrade or change subscriptions/);
 assert.doesNotMatch(oauthAuthorizeSource, /paypal\.Buttons|paypal\.com\/sdk|£7\.99|£29|setupMessage|proAction|bizAction/);
 
-const publicRootStart = source.indexOf('app.get("/",');
+const publicRootStart = source.indexOf('app.get(["/", "/plugin"]');
 const publicRootEnd = source.indexOf('app.get("/icon.svg"', publicRootStart);
 assert.ok(publicRootStart >= 0 && publicRootEnd > publicRootStart, "public root handler must be present");
 const publicRootSource = source.slice(publicRootStart, publicRootEnd);
@@ -96,7 +96,7 @@ const installEnd = source.indexOf('app.get("/privacy"', installStart);
 assert.ok(installStart >= 0 && installEnd > installStart, "install handler must be present");
 assert.doesNotMatch(source.slice(installStart, installEnd), /\/subscribe|paypal\.Buttons|paypal\.com\/sdk/);
 const subscribeStart = source.indexOf('app.get("/subscribe"');
-const subscribeEnd = source.indexOf('app.get("/",', subscribeStart);
+const subscribeEnd = source.indexOf('app.get(["/", "/plugin"]', subscribeStart);
 assert.ok(subscribeStart >= 0 && subscribeEnd > subscribeStart, "direct subscribe handler must be present");
 assert.match(source.slice(subscribeStart, subscribeEnd), /\/paypal\/start-subscription/);
 assert.match(source.slice(subscribeStart, subscribeEnd), /Continue with PayPal/);
