@@ -247,7 +247,7 @@ function buildMcpTool(server, env) {
       throw new Error("Required KeepGoing MCP authorization secret is not configured");
     }
     if (/[
-]/.test(authorization)) throw new Error("Invalid MCP authorization secret");
+    if (/[\\r\\n]/.test(authorization)) throw new Error("Invalid MCP authorization secret");
     transport.authorization = authorization;
   }
 
