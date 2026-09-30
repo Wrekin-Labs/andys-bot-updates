@@ -57,9 +57,39 @@ export function createToolProfileRegistry({
     };
   }
 
+  function healthCheck() {
+    let serverCount = 0;
+    let secretRefs = 0;
+    for (const profile of profiles.values()) {
+      for (const server of profile.servers) {
+        serverCount += 1;
+        if (server.authorization_env) {
+          secretRefs += 1;
+          const value = String(env?.[server.authorization_env] || "").trim();
+          if (!value) {
+            return {
+              ok: false,
+              error: "missing_mcp_authorization_secret",
+              profiles: profiles.size,
+              servers: serverCount,
+              secret_refs: secretRefs
+            };
+          }
+        }
+      }
+    }
+    return {
+      ok: true,
+      profiles: profiles.size,
+      servers: serverCount,
+      secret_refs: secretRefs
+    };
+  }
+
   return {
     list,
     resolve,
+    healthCheck,
     has(name) { return profiles.has(String(name || "")); }
   };
 }
@@ -184,9 +214,17 @@ function normaliseServer(input, index) {
     credential_id: credentialId || null,
     authorization_env: authorizationEnv || null,
     headers,
-    connection_origin: input.connection_origin === "environment" ? "environment" : "service",
+    connection_origin: normaliseConnectionOrigin(input.connection_origin),
     required: Boolean(input.required)
   };
+}
+
+function normaliseConnectionOrigin(value) {
+  const origin = String(value || "service").trim().toLowerCase();
+  if (origin !== "service") {
+    throw new Error("KeepGoing v1.2 MCP profiles currently support service connection_origin only");
+  }
+  return "service";
 }
 
 function buildMcpTool(server, env) {
