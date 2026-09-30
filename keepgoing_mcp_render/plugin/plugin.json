@@ -100,10 +100,13 @@
               "expected_behavior": "The existing job ID is reused through get/wait/server-side continuation. A new durable job is not created merely to keep the same objective moving."
             }
           ]
-        }
+        },
+        "commerce_description": "The ChatGPT plugin does not sell products, advertise subscription pricing, initiate checkout, or process payments. It authenticates existing KeepGoing accounts and uses the entitlements already associated with that account."
       },
       "publication": {
-        "countries": ["GB"],
+        "countries": [
+          "GB"
+        ],
         "release_notes": "KeepGoing 1.2 introduces durable multi-turn jobs, automatic PARTIAL continuation, recovery/listing across chats, safe resume after input_required, bounded tool profiles, server-side watchdog/webhook recovery, owner-scoped GitHub/Project Relay tooling, and stronger duplicate/usage safeguards."
       }
     }
