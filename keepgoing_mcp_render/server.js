@@ -915,6 +915,9 @@ async function waitForJob(jobId, waitSeconds = 20) {
 
 async function startPersistentJobCompat(args, access) {
   if (!v12ForAccess(access)) {
+    if (args.toolProfile && args.toolProfile !== "web") {
+      throw new Error("MCP tool profiles require KeepGoing v1.2");
+    }
     const legacy = await startJob({
       ...args,
       tier: access.tier || "pro",
@@ -933,11 +936,31 @@ async function startPersistentJobCompat(args, access) {
     mode: args.mode,
     allowWeb: args.allowWeb,
     tier: access.tier || "pro",
+    admin: Boolean(access.admin),
     ownerSubjectHash: durableOwnerHash(access),
     clientRequestId: args.clientRequestId || access._mcp_request_id || null,
     context: args.context || "",
+    toolProfile: args.toolProfile || "web",
     beforeCreateSession: async () => reserveJobQuota(access)
   });
+}
+
+async function listToolProfilesCompat(access) {
+  if (!v12ForAccess(access)) {
+    return {
+      profiles: [{
+        name: "web",
+        description: "Public web research only.",
+        owner_only: false,
+        write_capable: false,
+        web: true,
+        mcp_servers: [],
+        max_tool_calls: null,
+        policy_hash: null
+      }]
+    };
+  }
+  return getV12Runtime().service.listToolProfiles(Boolean(access.admin));
 }
 
 async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
