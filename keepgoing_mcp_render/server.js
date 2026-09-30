@@ -2048,6 +2048,8 @@ app.get("/readiness", async (_req, res) => {
     paypalSetupComplete
   );
   let durableStoreReady = !V12_ENABLED;
+  let toolProfilesReady = !V12_ENABLED;
+  let toolProfileCount = V12_ENABLED ? 0 : 1;
   if (V12_ENABLED && v12Configured()) {
     try {
       const runtime = getV12Runtime();
@@ -2055,13 +2057,21 @@ app.get("/readiness", async (_req, res) => {
         runtime.store?.healthCheck &&
         (await runtime.store.healthCheck()).ok
       );
+      const toolHealth = runtime.toolProfiles?.healthCheck
+        ? runtime.toolProfiles.healthCheck()
+        : { ok: true, profiles: 1 };
+      toolProfilesReady = Boolean(toolHealth.ok);
+      toolProfileCount = Number(toolHealth.profiles || 0);
     } catch {
       durableStoreReady = false;
+      toolProfilesReady = false;
+      toolProfileCount = 0;
     }
   }
   const durableOpsReady = !V12_ENABLED || Boolean(
     v12Configured() &&
     durableStoreReady &&
+    toolProfilesReady &&
     (V12_CANARY_ONLY || OPENAI_WEBHOOK_SECRET)
   );
   res.json({
@@ -2071,6 +2081,8 @@ app.get("/readiness", async (_req, res) => {
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
     durable_store_ready: durableStoreReady,
+    tool_profiles_ready: toolProfilesReady,
+    tool_profile_count: toolProfileCount,
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
