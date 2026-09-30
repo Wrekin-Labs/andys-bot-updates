@@ -64,6 +64,7 @@ assert.equal("limits" in started, false);
 const ownedActive = await service.list("ownerhash", { activeOnly: true });
 assert.equal(ownedActive.jobs.length, 1);
 assert.equal(ownedActive.jobs[0].job_id, started.job_id);
+assert.equal(ownedActive.jobs[0].tool_profile, "web");
 const otherOwner = await service.list("different-owner", { activeOnly: false });
 assert.equal(otherOwner.jobs.length, 0);
 
@@ -85,6 +86,7 @@ await orchestrator.reconcile(started.job_id);
 viewedTurns.length = 0;
 const finished = await service.get(started.job_id, "ownerhash");
 assert.equal(finished.status, JOB_STATES.COMPLETED);
+assert.equal(finished.tool_profile, "web");
 assert.match(finished.output, /COMPLETED/);
 assert.deepEqual(viewedTurns, ["turn_2"]);
 assert.deepEqual(Object.keys(finished.progress).sort(), ["attempt", "max_attempts"]);
@@ -343,6 +345,9 @@ assert.match(sent.at(-1).key, /^kg-user-/);
 
   const storedToolJob = await profileStore.get(toolJob.job_id);
   assert.equal(storedToolJob.toolCallBudgetTotal, 20);
+assert.equal(storedToolJob.toolProfileName, "developer-owner");
+assert.equal(storedToolJob.toolWriteCapable, true);
+assert.ok(/^[0-9a-f]{64}$/.test(storedToolJob.toolPolicyHash));
 }
 
 const limits = planLimits("business", true);
