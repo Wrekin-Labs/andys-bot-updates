@@ -560,6 +560,9 @@ function normaliseWorkspaceFiles(value) {
 
     const path = normaliseWorkspaceFilePath(item.path);
     const content = String(item.content ?? "");
+    if (content.includes("\0")) {
+      throw new Error("workspace file content must be UTF-8 text");
+    }
     const bytes = Buffer.byteLength(content, "utf8");
 
     if (bytes > 32_000) {
