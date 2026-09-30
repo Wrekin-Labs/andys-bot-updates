@@ -21,6 +21,10 @@ SITE_PAGE = os.environ.get(
     "PROJECT_RELAY_SITE_PAGE",
     "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-site",
 )
+BILLING_ENDPOINT = os.environ.get(
+    "PROJECT_RELAY_BILLING_ENDPOINT",
+    "https://dbhwjzznwhukoogjewfl.supabase.co/functions/v1/project-relay-billing",
+).rstrip("/")
 SUPABASE_URL = os.environ.get(
     "PROJECT_RELAY_SUPABASE_URL",
     "https://dbhwjzznwhukoogjewfl.supabase.co",
@@ -551,6 +555,41 @@ await renderSession();
             print("gateway support upstream error:", repr(exc), flush=True)
         self._send(status, payload, content_type, {"cache-control": "no-store"})
 
+    def _proxy_api(self, upstream: str) -> None:
+        length = int(self.headers.get("content-length", "0") or "0")
+        body = self.rfile.read(length) if length else None
+        headers: dict[str, str] = {}
+        for name in ("authorization", "content-type", "accept", "stripe-signature", "user-agent"):
+            value = self.headers.get(name)
+            if value:
+                headers[name] = value
+        req = urllib.request.Request(upstream, data=body, method=self.command, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                payload = response.read()
+                status = response.status
+                content_type = response.headers.get("Content-Type", "application/json; charset=utf-8")
+        except urllib.error.HTTPError as exc:
+            payload = exc.read()
+            status = exc.code
+            content_type = exc.headers.get("Content-Type", "application/json; charset=utf-8")
+        except Exception as exc:
+            payload = json.dumps({"ok": False, "error": "Project Relay billing upstream unavailable"}).encode()
+            status = 502
+            content_type = "application/json; charset=utf-8"
+            print("gateway billing upstream error:", repr(exc), flush=True)
+        self._send(
+            status,
+            payload,
+            content_type,
+            {
+                "cache-control": "no-store",
+                "access-control-allow-origin": "*",
+                "access-control-allow-headers": "authorization,content-type,stripe-signature",
+                "access-control-allow-methods": "GET,POST,OPTIONS",
+            },
+        )
+
     def _proxy(self) -> None:
         suffix = self.path[len("/mcp"):] if self.path.startswith("/mcp") else self.path
         upstream = UPSTREAM_MCP + suffix
@@ -636,6 +675,9 @@ await renderSession();
         if path == "/account":
             self._proxy_html(ACCOUNT_PAGE)
             return
+        if path == "/billing":
+            self._proxy_api(BILLING_ENDPOINT)
+            return
         if path == "/oauth":
             self._redirect("/account")
             return
@@ -664,6 +706,12 @@ await renderSession();
         if path == "/support":
             self._proxy_site_post(SITE_PAGE + "/support")
             return
+        if path == "/billing":
+            self._proxy_api(BILLING_ENDPOINT)
+            return
+        if path == "/billing/webhook":
+            self._proxy_api(BILLING_ENDPOINT + "/webhook")
+            return
         if path.startswith("/mcp"):
             self._proxy()
             return
@@ -673,6 +721,13 @@ await renderSession();
         path = urllib.parse.urlsplit(self.path).path
         if path.startswith("/mcp"):
             self._proxy()
+            return
+        if path == "/billing" or path == "/billing/webhook":
+            self._send(204, b"", "text/plain; charset=utf-8", {
+                "access-control-allow-origin": "*",
+                "access-control-allow-headers": "authorization,content-type,stripe-signature",
+                "access-control-allow-methods": "GET,POST,OPTIONS",
+            })
             return
         self._send(204, b"", "text/plain; charset=utf-8", {
             "access-control-allow-origin": "*",
