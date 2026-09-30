@@ -210,7 +210,7 @@ function normaliseServer(input, index) {
         throw new Error("Secret MCP headers must use credential_id or authorization_env");
       }
       const text = String(value ?? "");
-      if (/\\r|\\n/.test(text)) throw new Error("Invalid MCP header value");
+      if (/[\r\n]/.test(text)) throw new Error("Invalid MCP header value");
       headers[name] = text.slice(0, 1000);
     }
   }
@@ -246,8 +246,7 @@ function buildMcpTool(server, env) {
     if (!authorization) {
       throw new Error("Required KeepGoing MCP authorization secret is not configured");
     }
-    if (/[
-    if (/\\r|\\n/.test(authorization)) throw new Error("Invalid MCP authorization secret");
+    if (/[\r\n]/.test(authorization)) throw new Error("Invalid MCP authorization secret");
     transport.authorization = authorization;
   }
 
@@ -331,4 +330,3 @@ function clampInt(value, min, max) {
   if (!Number.isFinite(n)) throw new Error("Invalid maxToolCalls");
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
-
