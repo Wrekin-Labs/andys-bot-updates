@@ -507,9 +507,21 @@ export function buildAgentEnvironment(workspace = null) {
   }
 
   if (spec.files.length) {
-    setupCommands.push({
-      command: "cp -R /workspace/input/. /workspace/project/"
-    });
+    for (const file of spec.files) {
+      const source = "/workspace/input/" + file.path;
+      const destination = "/workspace/project/" + file.path;
+      setupCommands.push({
+        command: [
+          "dest=" + shellQuote(destination),
+          "parent=$(dirname -- \"$dest\")",
+          "resolved=$(realpath -m -- \"$parent\")",
+          "case \"$resolved\" in /workspace/project|/workspace/project/*) ;; *) echo 'KeepGoing inline file path escaped project workspace' >&2; exit 42 ;; esac",
+          "mkdir -p -- \"$parent\"",
+          "rm -rf -- \"$dest\"",
+          "cp -- " + shellQuote(source) + " \"$dest\""
+        ].join(" && ")
+      });
+    }
   }
   setupCommands.push({ command: "mkdir -p /workspace/outputs" });
 
