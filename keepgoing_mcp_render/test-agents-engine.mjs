@@ -53,7 +53,8 @@ assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
 assert.deepEqual(normaliseCodingWorkspace(null), {
   enabled: false,
   repositoryUrl: null,
-  repositoryRef: null
+  repositoryRef: null,
+  files: []
 });
 
 const hosted = buildAgentEnvironment({
