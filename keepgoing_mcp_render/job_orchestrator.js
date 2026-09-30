@@ -270,7 +270,8 @@ export class KeepGoingOrchestrator {
         instructions,
         allowWeb,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
     } catch (error) {
       const status = Number(error?.status || 0);
