@@ -9,13 +9,13 @@ const mcp = JSON.parse(readFileSync(resolve(here, "mcp.json"), "utf8"));
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
 assert.equal(plugin.name, "keepgoing");
-assert.equal(plugin.version, "1.2.0-beta.22");
+assert.equal(plugin.version, "1.2.0-beta.23");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.displayName, "KeepGoing");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.category, "Productivity");
 assert.ok(plugin.extensions?.["com.openai"]?.interface?.shortDescription.length <= 30);
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.supportURL, "https://keepgoing-mcp.onrender.com/support");
-assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColor, "#008C82");
-assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColorDark, "#27F3DF");
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColor, "#5F50E6");
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColorDark, "#A99FFF");
 assert.equal(plugin.extensions?.["com.openai"]?.review?.test_cases?.positive?.length, 5);
 assert.equal(plugin.extensions?.["com.openai"]?.review?.test_cases?.negative?.length, 3);
 assert.equal(plugin.extensions?.["com.openai"]?.review?.commerce, false);
@@ -27,3 +27,5 @@ assert.equal(mcp.$schema, "https://agent-plugins.org/schemas/1.0.0/mcp.schema.js
 assert.equal(mcp.mcpServers?.keepgoing?.type, "streamable-http");
 assert.equal(mcp.mcpServers?.keepgoing?.url, "https://keepgoing-mcp.onrender.com/mcp");
 console.log("plugin package tests passed");
+
+assert.equal(plugin.extensions?.["com.openai"]?.interface?.websiteURL, "https://keepgoing-mcp.onrender.com/plugin");
