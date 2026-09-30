@@ -34,7 +34,8 @@ export function createAgentsEngine({
     allowWeb = true,
     reasoningEffort = "medium",
     metadata = {},
-    idempotencyKey = null
+    idempotencyKey = null,
+    workspace = null
   }) {
     if (!String(prompt || "").trim()) throw new Error("prompt required");
     const agent = {
@@ -47,7 +48,7 @@ export function createAgentsEngine({
     }
     const body = {
       agent,
-      environment: { type: "none" },
+      environment: buildAgentEnvironment(workspace),
       input: String(prompt),
       metadata
     };
@@ -323,7 +324,7 @@ export function classifySession(session, latestText = "", turnsResponse = null, 
 export function turnToolCallCount(itemsResponse, turnId = null) {
   return collection(itemsResponse).filter((item) => {
     if (turnId && item?.turn_id && item.turn_id !== turnId) return false;
-    return isToolLikeItem(item);
+    return isBudgetedExternalToolItem(item);
   }).length;
 }
 
@@ -345,6 +346,136 @@ function isToolLikeItem(item) {
     type.includes("execution") ||
     type.includes("search")
   );
+}
+
+function isBudgetedExternalToolItem(item) {
+  const type = String(item?.type || "").toLowerCase();
+  return (
+    type === "web_search_call" ||
+    type === "mcp_call" ||
+    type === "function_call"
+  );
+}
+
+export function normaliseCodingWorkspace(workspace = null) {
+  if (!workspace || workspace.enabled !== true) {
+    return { enabled: false, repositoryUrl: null, repositoryRef: null };
+  }
+
+  const repositoryUrl = normaliseGitHubRepositoryUrl(workspace.repositoryUrl);
+  const repositoryRef = normaliseGitRef(workspace.repositoryRef);
+
+  if (repositoryRef && !repositoryUrl) {
+    throw new Error("repositoryRef requires repositoryUrl");
+  }
+
+  return {
+    enabled: true,
+    repositoryUrl,
+    repositoryRef
+  };
+}
+
+export function buildAgentEnvironment(workspace = null) {
+  const spec = normaliseCodingWorkspace(workspace);
+  if (!spec.enabled) return { type: "none" };
+
+  const setupCommands = [{ command: "mkdir -p /workspace/outputs" }];
+
+  if (spec.repositoryUrl) {
+    if (spec.repositoryRef) {
+      setupCommands.unshift(
+        {
+          command:
+            "git clone --filter=blob:none --no-checkout " +
+            shellQuote(spec.repositoryUrl) +
+            " /workspace/project"
+        },
+        {
+          command: "git fetch --depth 1 origin " + shellQuote(spec.repositoryRef),
+          cwd: "/workspace/project"
+        },
+        {
+          command: "git checkout -B keepgoing-work FETCH_HEAD",
+          cwd: "/workspace/project"
+        }
+      );
+    } else {
+      setupCommands.unshift(
+        {
+          command:
+            "git clone --depth 1 " +
+            shellQuote(spec.repositoryUrl) +
+            " /workspace/project"
+        },
+        {
+          command: "git checkout -B keepgoing-work",
+          cwd: "/workspace/project"
+        }
+      );
+    }
+  } else {
+    setupCommands.unshift({ command: "mkdir -p /workspace/project" });
+  }
+
+  return {
+    type: "openai_hosted",
+    container_size: "small",
+    network: { access: "enabled" },
+    setup_commands: setupCommands
+  };
+}
+
+function normaliseGitHubRepositoryUrl(value) {
+  if (value == null || String(value).trim() === "") return null;
+
+  let url;
+  try {
+    url = new URL(String(value).trim());
+  } catch {
+    throw new Error("repositoryUrl must be a valid public GitHub HTTPS URL");
+  }
+
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "github.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("repositoryUrl must be a public github.com HTTPS repository URL without credentials");
+  }
+
+  let pathname = url.pathname.replace(/\/+$/, "");
+  if (!/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(pathname)) {
+    throw new Error("repositoryUrl must identify one GitHub owner/repository");
+  }
+  if (!pathname.endsWith(".git")) pathname += ".git";
+  return "https://github.com" + pathname;
+}
+
+function normaliseGitRef(value) {
+  if (value == null || String(value).trim() === "") return null;
+  const ref = String(value).trim();
+
+  if (
+    ref.length > 200 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(ref) ||
+    ref.includes("..") ||
+    ref.includes("@{") ||
+    ref.includes("//") ||
+    ref.endsWith("/") ||
+    ref.endsWith(".") ||
+    ref.endsWith(".lock")
+  ) {
+    throw new Error("repositoryRef is not a valid safe Git ref");
+  }
+  return ref;
+}
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\"'\"'") + "'";
 }
 
 function collection(response) {
