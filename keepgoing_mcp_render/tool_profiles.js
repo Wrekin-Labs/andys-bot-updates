@@ -210,8 +210,7 @@ function normaliseServer(input, index) {
         throw new Error("Secret MCP headers must use credential_id or authorization_env");
       }
       const text = String(value ?? "");
-      if (/[
-]/.test(text)) throw new Error("Invalid MCP header value");
+      if (/[\\r\\n]/.test(text)) throw new Error("Invalid MCP header value");
       headers[name] = text.slice(0, 1000);
     }
   }
