@@ -142,13 +142,23 @@ assert.equal(
   Buffer.from(inlineWorkspace.files[0].data, "base64").toString("utf8"),
   "export const local = true;\n"
 );
-const copyCommandIndex = inlineWorkspace.setup_commands.findIndex(
-  (cmd) => cmd.command === "cp -R /workspace/input/. /workspace/project/"
+const overlayCommands = inlineWorkspace.setup_commands.filter(
+  (cmd) => cmd.command.includes("KeepGoing inline file path escaped project workspace")
+);
+assert.equal(overlayCommands.length, 2);
+for (const cmd of overlayCommands) {
+  assert.match(cmd.command, /realpath -m/);
+  assert.match(cmd.command, /\/workspace\/project/);
+  assert.match(cmd.command, /rm -rf/);
+  assert.match(cmd.command, /cp --/);
+}
+const firstOverlayIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => cmd.command.includes("KeepGoing inline file path escaped project workspace")
 );
 const checkoutIndex = inlineWorkspace.setup_commands.findIndex(
   (cmd) => /git checkout/.test(cmd.command)
 );
-assert.ok(copyCommandIndex > checkoutIndex, "local file overlay must happen after repository checkout");
+assert.ok(firstOverlayIndex > checkoutIndex, "local file overlay must happen after repository checkout");
 
 assert.throws(
   () => buildAgentEnvironment({
