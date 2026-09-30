@@ -272,6 +272,7 @@ app.use("/oauth/authorize", rateLimit("oauth-authorize", 30, 15 * 60 * 1000));
 app.use("/oauth/token", rateLimit("oauth-token", 60, 15 * 60 * 1000));
 app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
+app.use("/worker-mcp", rateLimit("worker-mcp", 600, 60 * 1000));
 
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -282,6 +283,7 @@ app.use((req, res, next) => {
   res.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   if (
     req.path === "/mcp" ||
+    req.path === "/worker-mcp" ||
     req.path.startsWith("/billing/") ||
     req.path.startsWith("/paypal/") ||
     req.path.startsWith("/openai/")
@@ -2133,6 +2135,38 @@ app.get("/paypal/status", async (_req, res) => {
   });
 });
 
+app.post("/worker-mcp", async (req, res) => {
+  if (!githubWorkerConfigured()) return res.status(404).json({ error: "not_configured" });
+  if (!workerAuthorised(req)) {
+    res.set("WWW-Authenticate", 'Bearer realm="KeepGoing private worker"');
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const server = createGithubWorkerMcpServer(getGithubWorker());
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on("close", async () => {
+    try { await transport.close(); } catch {}
+    try { await server.close(); } catch {}
+  });
+
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error("keepgoing_worker_mcp_error", safeLogError(error));
+    if (!res.headersSent) res.status(500).json({ error: "worker_mcp_error" });
+  }
+});
+
+app.get("/worker-mcp", (req, res) => {
+  if (!githubWorkerConfigured()) return res.status(404).json({ error: "not_configured" });
+  if (!workerAuthorised(req)) {
+    res.set("WWW-Authenticate", 'Bearer realm="KeepGoing private worker"');
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  return res.status(405).json({ error: "Use POST for stateless MCP" });
+});
+
 app.get("/readiness", async (_req, res) => {
   if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !paypalSetupComplete) {
     try { await ensurePayPalSetup(); } catch {}
@@ -2152,6 +2186,13 @@ app.get("/readiness", async (_req, res) => {
   let durableStoreReady = !V12_ENABLED;
   let toolProfilesReady = !V12_ENABLED;
   let toolProfileCount = V12_ENABLED ? 0 : 1;
+  const githubWorkerRequested = Boolean(
+    WORKER_MCP_SECRET || GITHUB_WORKER_TOKEN || GITHUB_WORKER_REPOS
+  );
+  const githubWorkerReady = githubWorkerConfigured();
+  const githubWorkerRepoCount = githubWorkerReady
+    ? normaliseRepoList(GITHUB_WORKER_REPOS).length
+    : 0;
   if (V12_ENABLED && v12Configured()) {
     try {
       const runtime = getV12Runtime();
@@ -2162,7 +2203,10 @@ app.get("/readiness", async (_req, res) => {
       const toolHealth = runtime.toolProfiles?.healthCheck
         ? runtime.toolProfiles.healthCheck()
         : { ok: true, profiles: 1 };
-      toolProfilesReady = Boolean(toolHealth.ok);
+      toolProfilesReady = Boolean(
+        toolHealth.ok &&
+        (!githubWorkerRequested || githubWorkerReady)
+      );
       toolProfileCount = Number(toolHealth.profiles || 0);
     } catch {
       durableStoreReady = false;
@@ -2185,6 +2229,9 @@ app.get("/readiness", async (_req, res) => {
     durable_store_ready: durableStoreReady,
     tool_profiles_ready: toolProfilesReady,
     tool_profile_count: toolProfileCount,
+    github_worker_requested: githubWorkerRequested,
+    github_worker_ready: githubWorkerReady,
+    github_worker_repo_count: githubWorkerRepoCount,
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
