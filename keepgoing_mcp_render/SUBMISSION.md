@@ -1,99 +1,110 @@
-# KeepGoing — Public Plugin Submission Kit
+# KeepGoing — Plugin Directory submission kit
 
-Version: 1.2.0 beta candidate  
-Prepared: 28 September 2026
+Version: **1.2.0-beta.2**  
+Prepared: **30 September 2026**
+
+## Package
+
+Submission source:
+
+`keepgoing_mcp_render/plugin/`
+
+Build/validate:
+
+```bash
+npm run plugin:validate
+npm run plugin:zip
+```
+
+CI also uploads the exact ZIP as the `keepgoing-plugin-submission` artifact.
 
 ## Listing
 
-**Plugin name:** KeepGoing
+**Display name:** KeepGoing  
+**Category:** Productivity  
+**Subtitle:** Finish long AI work
 
-**Category:** Productivity
+**Listing description**
 
-**Short description:** Run substantial AI work as a durable job that can continue across multiple model turns without repeatedly asking you to type “continue”.
+KeepGoing turns substantial supported work into one durable job that can continue across model turns instead of repeatedly starting over. It preserves a stable job ID, safely continues PARTIAL work within hard limits, recovers missed progress with server-side watchdog and webhook logic, and lets users list, inspect, resume or cancel the same job later.
 
-**Long description:** KeepGoing creates a stable durable job for substantial model work and research. The job is mapped to an OpenAI Agent session and can advance through multiple turns while KeepGoing persists safe orchestration state, enforces hard usage limits, and recovers from missed polling/webhooks. ChatGPT can later check, wait for, list, resume, or cancel the same job. KeepGoing does not control ChatGPT’s private reasoning, bypass platform safeguards or product limits, or force a new ChatGPT message after a chat turn has ended.
+Jobs can use explicitly approved public-web or MCP tool profiles when configured. KeepGoing does not inherit every connector from the foreground chat, bypass ChatGPT/OpenAI safeguards, or force a new ChatGPT message after a chat turn has ended. If a job genuinely needs authorization, approval, a private-account action or a missing fact, it stops in `input_required` and waits for the user.
 
-**Developer name:** Use the exact verified developer/business identity selected in the OpenAI Platform submission portal.
+## Public URLs
 
-**Website:** https://keepgoing-mcp.onrender.com/  
-**Support:** https://keepgoing-mcp.onrender.com/support  
-**Privacy:** https://keepgoing-mcp.onrender.com/privacy  
-**Terms:** https://keepgoing-mcp.onrender.com/terms  
-**Security:** https://keepgoing-mcp.onrender.com/security  
-**MCP server:** https://keepgoing-mcp.onrender.com/mcp
+Current beta URLs:
 
-Before public submission, replace the temporary Render subdomain with the final branded production domain and update `KEEPGOING_PUBLIC_BASE_URL`.
+- Website: https://keepgoing-mcp.onrender.com/plugin
+- Support: https://keepgoing-mcp.onrender.com/support
+- Privacy: https://keepgoing-mcp.onrender.com/privacy
+- Terms: https://keepgoing-mcp.onrender.com/terms
+- Security: https://keepgoing-mcp.onrender.com/security
+- MCP: https://keepgoing-mcp.onrender.com/mcp
+- Protected resource metadata: https://keepgoing-mcp.onrender.com/.well-known/oauth-protected-resource
+- Authorization server metadata: https://keepgoing-mcp.onrender.com/.well-known/oauth-authorization-server
+
+Replace the temporary Render hostname with the final branded domain before public launch if possible. Update the package and `KEEPGOING_PUBLIC_BASE_URL` together.
+
+## Current plugin commerce rule
+
+KeepGoing’s Plugin Directory surface is **commerce-neutral**.
+
+The current OpenAI plugin rules do not permit selling or promoting digital subscriptions inside a plugin. Therefore:
+
+- plugin metadata contains no prices;
+- plugin tools do not initiate checkout;
+- plugin pages do not promote upgrades;
+- `review.commerce` is false;
+- the listing website is the neutral `/plugin` page;
+- users may authenticate an existing KeepGoing account and use its existing entitlement;
+- the separate developer-operated commercial website is not the plugin checkout flow.
+
+Recheck the live OpenAI rule immediately before submission.
 
 ## Authentication
 
-OAuth 2.1 authorization-code flow with PKCE S256.
-
-Protected resource metadata:
-https://keepgoing-mcp.onrender.com/.well-known/oauth-protected-resource
-
-Authorization-server metadata:
-https://keepgoing-mcp.onrender.com/.well-known/oauth-authorization-server
+OAuth authorization-code flow with PKCE S256.
 
 Scope:
+
 `keepgoing.jobs`
 
-Customers authenticate with a KeepGoing activation token issued after an active subscription is claimed. The activation token is entered only on KeepGoing’s OAuth page. ChatGPT receives short-lived OAuth credentials; the activation token is not embedded in the MCP endpoint URL.
+ChatGPT connects to the universal `/mcp` endpoint. Existing KeepGoing accounts authenticate on KeepGoing’s OAuth page using their private activation credential. The activation credential is not embedded in the MCP URL or plugin ZIP.
 
-## Tools
+The plugin exposes `get_profile` with `_meta["openai/profile"] = true` so connected accounts can be distinguished.
 
-### start_persistent_job — “Start persistent job”
-Creates or idempotently reuses a durable KeepGoing job.
-- readOnlyHint: false
-- destructiveHint: false
-- idempotentHint: false
-- openWorldHint: true
-- OAuth scope: keepgoing.jobs
+## Main tools
 
-### get_persistent_job — “Get persistent job”
-Reads current state and latest available output for one owned durable job.
-- readOnlyHint: true
-- destructiveHint: false
-- idempotentHint: true
-- openWorldHint: false
-- OAuth scope: keepgoing.jobs
+### continue_until_done
+Primary natural-language autopilot entry point for “continue”, “keep going”, “finish it”, or equivalent substantial work.
 
-### wait_for_persistent_job — “Wait for persistent job”
-Waits for a bounded interval on the same durable job ID.
-- readOnlyHint: true
-- destructiveHint: false
-- idempotentHint: true
-- openWorldHint: false
-- OAuth scope: keepgoing.jobs
+### start_persistent_job
+Starts or idempotently reuses one durable job.
 
-### cancel_persistent_job — “Cancel persistent job”
-Cancels the owned durable job/provider turn.
-- readOnlyHint: false
-- destructiveHint: true
-- idempotentHint: true
-- openWorldHint: false
-- OAuth scope: keepgoing.jobs
+### get_persistent_job
+Reads status and latest available output for one owned job.
 
-### list_persistent_jobs — “List persistent jobs”
-Lists the authenticated customer’s own recent/active durable jobs using safe metadata only. It does not expose raw prompts.
-- readOnlyHint: true
-- destructiveHint: false
-- idempotentHint: true
-- openWorldHint: false
-- OAuth scope: keepgoing.jobs
+### wait_for_persistent_job
+Waits for a bounded interval on the same job.
 
-### resume_persistent_job — “Resume persistent job”
-Provides required user input to the same `input_required` durable job. Delivery is CAS-claimed and idempotency-keyed to prevent duplicate resumes.
-- readOnlyHint: false
-- destructiveHint: false
-- idempotentHint: true
-- openWorldHint: true
-- OAuth scope: keepgoing.jobs
+### list_persistent_jobs
+Lists safe metadata for the authenticated account’s own jobs.
 
-## Durable semantics reviewers should understand
+### resume_persistent_job
+Supplies missing user input to the same `input_required` job.
 
-A KeepGoing job has a stable `kgj_...` identifier that is distinct from the provider session ID.
+### cancel_persistent_job
+Cancels the same durable job.
 
-The durable states are:
+### list_tool_profiles
+Lists tool profiles visible to the current account without revealing credentials.
+
+Owner-only profiles may include GitHub and Project Relay tools. They are not expected to be visible to an ordinary reviewer/customer account.
+
+## Durable semantics
+
+Stable states:
+
 - `queued`
 - `working`
 - `continuing`
@@ -103,163 +114,135 @@ The durable states are:
 - `cancelled`
 - `budget_exhausted`
 
-Every root model turn is required to end with one of:
+Each root turn is instructed to end with exactly one marker:
+
 - `STATUS: COMPLETED`
 - `STATUS: NEEDS_USER`
 - `STATUS: PARTIAL`
 
-KeepGoing checks provider turn status and failed tool work as well as the marker. A session being idle is not treated as proof of successful completion.
+KeepGoing verifies provider turn state and tool failures as well as the text marker. An idle session by itself is not considered proof of success.
 
-Server-side webhook/watchdog processing can advance a PARTIAL job after the original ChatGPT tool call has returned. KeepGoing cannot independently create a new ChatGPT conversation turn; the result is retrieved later through the same job ID or `list_persistent_jobs`.
+The server can advance PARTIAL work after the foreground ChatGPT tool call has returned. It cannot independently force a new ChatGPT message to appear; users later retrieve the durable result.
 
-## Plans used for reviewer expectations
+## Package review cases
 
-- Pro: 100 jobs/month, up to 3 web/tool calls per durable job.
-- Business: 500 jobs/month, up to 5 web/tool calls per durable job.
+The exact five positive and three negative cases submitted to OpenAI are stored in:
 
-v1.2 also enforces aggregate per-job attempt/token/wall-clock ceilings. These are safety/cost limits and may terminate a job as `budget_exhausted`.
+`plugin/plugin.json`
 
-## Starter prompts
+They are intentionally package-managed so the dashboard and source control stay aligned.
 
-1. “Use KeepGoing to research this thoroughly. Definition of done: give me the completed comparison with sources. Keep the same durable job until done.”
-2. “List my active KeepGoing jobs and show me the status of the newest one.”
-3. “Check KeepGoing job <job_id>. If it is still active, wait on that same job rather than starting another.”
-4. “Resume KeepGoing job <job_id> with this missing information: <input>.”
-5. “Cancel KeepGoing job <job_id>.”
+### Positive coverage
 
-## Exactly five positive review cases
+1. Start one durable job through `continue_until_done`.
+2. Recover an active job in a later chat.
+3. Read latest status/result.
+4. Resume an `input_required` job.
+5. Cancel a durable job.
 
-### Positive 1 — Start once and deduplicate
-Prompt: “Use KeepGoing to produce a detailed comparison of heat-pump and gas-boiler running-cost factors in the UK. Definition of done: explain the main variables and give a concise checklist.”
+### Negative coverage
 
-Expected:
-- Calls `start_persistent_job` once for the initial request.
-- Receives a stable `job_id`.
-- A retried identical MCP request reuses the existing durable job rather than creating another provider session or charging another job allowance.
-- Later status checks use the same job ID.
+1. Unknown/unowned job ID.
+2. Missing authorization/private-account access.
+3. Existing running job must not be duplicated.
 
-### Positive 2 — Durable PARTIAL continuation
-Use a reviewer fixture/job that requires more than one root turn.
-
-Expected:
-- The first turn can finish with `STATUS: PARTIAL`.
-- KeepGoing persists that turn, claims one continuation, and sends only one next-turn input.
-- Duplicate webhook/poll reconciliation does not create duplicate continuations.
-- The final turn reaches `completed`, `input_required`, another terminal state, or a configured hard budget.
-
-### Positive 3 — Recover an existing job in a new chat
-Prompt: “List my active KeepGoing jobs and show me the newest one.”
-
-Expected:
-- Calls `list_persistent_jobs`.
-- Returns only jobs belonging to the authenticated customer.
-- Does not expose raw original prompts or another customer’s jobs.
-- `get_persistent_job` can retrieve the selected job’s latest result/status.
-
-### Positive 4 — NEEDS_USER and safe resume
-Use a job whose definition of done genuinely requires missing user information.
-
-Expected:
-- Job enters `input_required`.
-- It does not invent the missing credential/fact.
-- `resume_persistent_job` supplies the user input to the same durable job.
-- Concurrent/retried resume requests do not deliver the same input twice.
-
-### Positive 5 — Cancel
-Prompt: “Cancel KeepGoing job <valid active job_id>.”
-
-Expected:
-- Calls `cancel_persistent_job`.
-- Durable job becomes cancelled/terminal.
-- No replacement job is created.
-
-## Exactly three negative review cases
-
-### Negative 1 — Unknown or unowned job ID
-Prompt: “Check KeepGoing job definitely-not-a-real-id.”
-
-Expected:
-- Clear not-found/error result.
-- No fabricated output.
-- No new job.
-- A job owned by another customer is indistinguishable from not found.
-
-### Negative 2 — Missing/invalid authentication
-Scenario: call MCP without a valid OAuth access token.
-
-Expected:
-- HTTP 401 / OAuth challenge.
-- No tool executes.
-- No job quota is consumed.
-
-### Negative 3 — Duplicate continuation/resume pressure
-Scenario: deliver simultaneous duplicate reconciliation or resume requests.
-
-Expected:
-- Compare-and-set/version checks permit only one worker to claim the mutation.
-- Provider idempotency key is reused when delivery outcome is unknown.
-- The service does not send two new turns for one durable step.
-
-## Demo recording plan
-
-Record one short end-to-end demo after the final production domain, durable database migration, OpenAI webhook and reviewer account are ready:
-
-1. Connect KeepGoing in ChatGPT through OAuth.
-2. Start one substantial durable job.
-3. Show the stable KeepGoing job ID.
-4. Show a PARTIAL turn followed by server-side continuation of the same job.
-5. Open a fresh chat and use `list_persistent_jobs` to recover it.
-6. Show completed output with `get_persistent_job`.
-7. Demonstrate an `input_required` fixture and `resume_persistent_job`.
-8. Start a disposable active job and demonstrate `cancel_persistent_job`.
-9. Briefly show `/readiness`, Privacy, Terms, Support and Security pages.
-
-Never expose an activation token, OAuth token, API key, Supabase service key or live payment credential in the recording.
+Run every case against the exact release commit and dedicated reviewer account before submission.
 
 ## Reviewer account
 
-Create a dedicated reviewer subscription/account before submission.
+Create a dedicated sample account for OpenAI review.
 
 Requirements:
-- No MFA/SMS/private-network dependency for reviewer access unless the review process explicitly supports it.
-- Disposable reviewer activation credential.
-- Enough quota for the submitted tests plus reasonable retries.
-- Reviewer can use only its own jobs.
-- Rotate/revoke the credential after review if no longer required.
+
+- works immediately;
+- sufficient entitlement/quota for all test cases and retries;
+- sample/non-sensitive data only;
+- no MFA, SMS code, email code, magic-link or private-network dependency unless OpenAI explicitly supports it for review;
+- no owner-only GitHub/Relay profile exposure unless that capability is intentionally part of the submitted reviewer flow.
+
+Reviewer credentials and sign-in instructions must be entered in the secure OpenAI review dashboard, **not committed in the ZIP or repository**.
+
+## Demo recording
+
+A reviewer-accessible recording is required before MCP review submission.
+
+Show:
+
+1. Connect KeepGoing through OAuth.
+2. Run `continue_until_done`.
+3. Show the stable KeepGoing job ID.
+4. Demonstrate PARTIAL -> server-side continuation.
+5. Open a fresh chat and recover the job with `list_persistent_jobs`.
+6. Show completed output.
+7. Demonstrate `input_required` -> `resume_persistent_job`.
+8. Demonstrate cancellation.
+9. Briefly show the neutral plugin page plus Privacy/Terms/Support/Security.
+10. Do not show live activation credentials, OAuth tokens, API keys, GitHub tokens, Relay credentials or payment credentials.
+
+## Tool profiles / background tooling
+
+Commercial beta may include owner-only background tooling.
+
+### GitHub worker
+- exact repository allowlist;
+- read/search/diff;
+- safe KeepGoing branch creation;
+- conflict-protected file writes;
+- pull-request creation;
+- no merge/delete/settings/secrets tools.
+
+### Project Relay
+- `relay-read`
+- `relay-developer`
+- optional `relay-admin`, disabled by default.
+
+Project Relay’s OAuth role, approved-root and locally revocable Owner Full Control safeguards still apply.
+
+Ordinary reviewer/customer accounts should see only profiles allowed to them.
 
 ## Domain verification
 
-When the OpenAI submission portal provides the challenge token, publish that exact token as plain text at:
+Publish the exact OpenAI challenge token at:
 
-`https://<final-production-domain>/.well-known/openai-apps-challenge`
+`https://<plugin-domain>/.well-known/openai-apps-challenge`
 
-The endpoint must return only the configured challenge token.
+Return only the exact token as plain text.
 
-## Availability
+## Upload workflow
 
-Begin with the United Kingdom during commercial beta unless support, tax/payment and legal readiness are confirmed for additional regions.
+1. Select the verified OpenAI organization/project and publisher identity.
+2. Download the CI `keepgoing-plugin-submission` artifact.
+3. Upload the ZIP to the Plugins dashboard.
+4. Resolve metadata/skill findings.
+5. Connect the declared MCP server.
+6. Complete domain verification.
+7. Authenticate the MCP connection.
+8. Run/inspect the automated MCP tool scan.
+9. Fix/rescan any blocking findings.
+10. Enter reviewer credentials securely.
+11. Add the demo recording URL.
+12. Confirm country availability.
+13. Submit policy attestations.
+14. Submit for review.
+15. Publish only after approval.
 
-## v1.2 release notes
+## Release notes
 
-KeepGoing 1.2 changes the execution engine from a single background Response into a durable KeepGoing-owned job mapped to an OpenAI Agent session. It adds multi-turn automatic continuation, signed Agents webhooks, watchdog recovery, durable CAS/idempotency protection, active-job recovery/listing, safe user-input resume, hard aggregate usage budgets, bounded durable metadata retention, owner-scoped job access, and live durable-store readiness checks.
+KeepGoing 1.2 introduces a KeepGoing-owned durable job model on top of OpenAI Agent sessions, automatic multi-turn PARTIAL continuation, watchdog/webhook recovery, cross-chat job recovery, race-safe user-input resume, hard usage budgets, permission-scoped tool profiles, owner-only GitHub/Project Relay background tooling, tool-call audit metadata, live readiness/preflight checks and a portable Plugin Directory package.
 
-The v1.1 Responses path remains available while v1.2 is feature-flagged for staged rollout.
+## Remaining external gates
 
-## Remaining launch gates
+- Final publisher/business identity verification.
+- Final production domain decision.
+- Production durable database migration/security review.
+- Production OpenAI webhook secret/events.
+- Least-privilege optional GitHub/Relay credentials.
+- Independent website payment-provider live authorization and account-activation testing.
+- Dedicated reviewer account.
+- Demo recording URL.
+- OpenAI domain challenge.
+- Plugin ZIP upload and automated findings.
+- MCP tool scan/rescan.
+- OpenAI review approval.
 
-- Apply the reviewed `sql/durable_jobs.sql` migration to the intended production Supabase project.
-- Configure `KEEPGOING_V12_ENABLED=true` with `KEEPGOING_V12_CANARY_ONLY=true`, the durable Supabase service credentials and `OPENAI_WEBHOOK_SECRET` only after the migration exists.
-- Configure the OpenAI Agents session webhook for the production `/openai/webhook` endpoint and subscribed session events.
-- Confirm `/readiness` is green, including live `durable_store_ready`.
-- Run the durability drills through the owner account while canary-only mode keeps ordinary subscribers on v1.1.
-- Disable canary-only mode only after those drills pass.
-- Run a real end-to-end PARTIAL -> continuation -> COMPLETED test against the production OpenAI account.
-- Run real duplicate-start, duplicate-continuation, NEEDS_USER/resume and watchdog-recovery drills.
-- Authorise/live-test the selected payment provider and subscription claim/cancellation flow.
-- Move from the temporary Render subdomain to the branded production domain and re-test OAuth discovery.
-- Complete OpenAI developer/business identity verification under the intended publisher name.
-- Create reviewer credentials.
-- Add the generated OpenAI domain-verification challenge token.
-- Record the final reviewer demo.
-- Run the submission portal’s tool scan and resolve findings.
-- Submit only after the above gates are green.
+Repository code can prepare the technical package, but publisher verification, live credentials, payment authorization and OpenAI review require owner/external action.
