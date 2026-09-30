@@ -9,7 +9,7 @@ const mcp = JSON.parse(readFileSync(resolve(here, "mcp.json"), "utf8"));
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
 assert.equal(plugin.name, "keepgoing");
-assert.equal(plugin.version, "1.2.0-beta.22");
+assert.equal(plugin.version, "1.3.0-beta.23");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.displayName, "KeepGoing");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.category, "Productivity");
 assert.ok(plugin.extensions?.["com.openai"]?.interface?.shortDescription.length <= 30);
@@ -19,6 +19,8 @@ assert.equal(plugin.extensions?.["com.openai"]?.interface?.brandColorDark, "#27F
 assert.equal(plugin.extensions?.["com.openai"]?.review?.test_cases?.positive?.length, 5);
 assert.equal(plugin.extensions?.["com.openai"]?.review?.test_cases?.negative?.length, 3);
 assert.equal(plugin.extensions?.["com.openai"]?.review?.commerce, false);
+assert.ok(plugin.extensions?.["com.openai"]?.interface?.capabilities?.includes("Opt-in coding workspace"));
+assert.match(plugin.extensions?.["com.openai"]?.publication?.release_notes || "", /coding workspace/i);
 assert.deepEqual(plugin.extensions?.["com.openai"]?.publication?.countries, ["GB"]);
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.composerIcon, "./assets/keepgoing-icon.png");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.logo, "./assets/keepgoing-icon.png");
