@@ -76,7 +76,7 @@ The plugin exposes `get_profile` with `_meta["openai/profile"] = true` so connec
 ## Main tools
 
 ### continue_until_done
-Primary natural-language autopilot entry point for “continue”, “keep going”, “finish it”, or equivalent substantial work.
+Primary entry point when the user explicitly asks KeepGoing to continue or finish substantial work. Generic continuation phrases apply only to authenticated owner mode when advertised by the server.
 
 ### start_persistent_job
 Starts or idempotently reuses one durable job.
@@ -100,6 +100,66 @@ Cancels the same durable job.
 Lists tool profiles visible to the current account without revealing credentials.
 
 Owner-only profiles may include GitHub and Project Relay tools. They are not expected to be visible to an ordinary reviewer/customer account.
+
+## Tool annotation justifications
+
+These justifications describe the ordinary reviewer/customer profile. Owner-only write-capable profiles are separately permission-gated and are not part of the public reviewer flow.
+
+
+### get_profile
+- readOnlyHint: true — resolves only the already-authenticated KeepGoing account identity.
+- openWorldHint: false — accesses only the bounded authenticated KeepGoing account.
+- destructiveHint: false — does not create, update, delete, send, or cancel anything.
+- idempotentHint: true — repeated reads have no additional effect.
+
+### list_tool_profiles
+- readOnlyHint: true — returns only the tool-profile metadata visible to the authenticated account.
+- openWorldHint: false — reads KeepGoing's bounded server-side profile catalogue and does not itself contact the external tool providers.
+- destructiveHint: false — no external tool is executed and no data is changed.
+- idempotentHint: true — repeated listing has no additional effect.
+- Privacy/security note: secret authorization values, vault credentials and raw tool arguments are not returned.
+
+### start_persistent_job
+- readOnlyHint: false — creates/reserves a durable job and starts provider work.
+- openWorldHint: true — the job may access the public web when `allowWeb=true`.
+- destructiveHint: false — starts bounded work but does not delete/overwrite user data or complete an irreversible external transaction.
+- idempotentHint: false — a stable client request ID enables deduplication, but arbitrary repeated calls can represent separate jobs.
+
+### continue_until_done
+- readOnlyHint: false — creates or recovers a durable job and may advance provider work.
+- openWorldHint: true — the job may access the public web when allowed.
+- destructiveHint: false — does not delete/overwrite user data or complete an irreversible external transaction.
+- idempotentHint: false — recovery is idempotent with a stable request ID, but arbitrary repeated calls are not guaranteed to be the same request.
+
+### get_persistent_job
+- readOnlyHint: true — reads one authenticated account's durable job state/result.
+- openWorldHint: false — reads only bounded private KeepGoing/provider state.
+- destructiveHint: false — no state-changing action is performed.
+- idempotentHint: true — repeated reads are safe.
+
+### wait_for_persistent_job
+- readOnlyHint: true — waits and polls the same durable job; it does not create a replacement or initiate a continuation itself.
+- openWorldHint: false — reads only bounded private job/provider state.
+- destructiveHint: false — no state-changing action is performed.
+- idempotentHint: true — repeated waits are safe.
+
+### list_persistent_jobs
+- readOnlyHint: true — lists minimal metadata for the authenticated account's jobs.
+- openWorldHint: false — accesses only the bounded authenticated account.
+- destructiveHint: false — no state-changing action is performed.
+- idempotentHint: true — repeated listing is safe.
+
+### resume_persistent_job
+- readOnlyHint: false — sends user-supplied missing information into the same provider session and resumes work.
+- openWorldHint: true — resumed work may access the public web if that job was allowed to do so.
+- destructiveHint: false — input delivery is idempotency-protected and does not delete/overwrite user data or complete an irreversible external transaction.
+- idempotentHint: true — exact repeated input reuses a deterministic provider idempotency key.
+
+### cancel_persistent_job
+- readOnlyHint: false — cancels the active durable job/provider turn.
+- openWorldHint: false — operates only on the bounded authenticated KeepGoing job.
+- destructiveHint: true — cancellation ends the current job and cannot restore that same running provider turn.
+- idempotentHint: true — repeated cancellation has no additional destructive effect.
 
 ## Durable semantics
 
@@ -234,8 +294,8 @@ KeepGoing 1.2 introduces a KeepGoing-owned durable job model on top of OpenAI Ag
 
 - Final publisher/business identity verification.
 - Final production domain decision.
-- Production durable database migration/security review.
-- Production OpenAI webhook secret/events.
+- Exact-release authenticated canary and reviewer validation (the durable migration/security checks were completed; see `COMMERCIAL_RELEASE_STATUS.md`).
+- OpenAI webhook secret/event registration and real signed delivery proof if enabling the optional webhook path; watchdog continuation remains available without it.
 - Least-privilege optional GitHub/Relay credentials.
 - Independent website payment-provider live authorization and account-activation testing.
 - Dedicated reviewer account.

@@ -21,7 +21,7 @@
 
 ## MCP/review
 - [ ] Deploy the exact release commit.
-- [ ] Run production `/readiness` and `npm run preflight -- --require-v12`.
+- [ ] Run production `/readiness` and `npm run preflight -- https://keepgoing-mcp.onrender.com --v12 --commit=<final-full-SHA>`.
 - [ ] Connect `https://keepgoing-mcp.onrender.com/mcp` in ChatGPT Developer Mode.
 - [ ] Run every advertised tool with valid and invalid inputs.
 - [ ] Run all five positive review cases with the dedicated reviewer account.
