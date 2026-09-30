@@ -1,6 +1,6 @@
-# KeepGoing v1.3 beta
+# KeepGoing v1.4 beta
 
-**Current beta:** `1.3.0-beta.23` — durable multi-turn jobs plus an opt-in coding workspace for public GitHub repositories, alongside watchdog-first recovery, idempotent startup/continuation, owner auto-continue, secure external PayPal checkout and runtime hardening.
+**Current beta:** `1.4.0-beta.24` — durable multi-turn jobs, public-GitHub coding workspaces, and bounded selected-file handoff for local/uncommitted text files, alongside watchdog-first recovery, idempotent startup/continuation, owner auto-continue, secure external PayPal checkout and runtime hardening.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -65,6 +65,22 @@ Safety boundary for this first release:
 - failed shell commands still prevent a false `COMPLETED` result.
 
 Hosted coding workspaces have shorter wall-clock ceilings to bound container cost: Pro 30 minutes; Business/owner 60 minutes.
+
+### Selected local/uncommitted files (beta.24)
+
+When a coding task depends on text files that are not yet in the public repository, the foreground client can explicitly pass `workspaceFiles` with only the task-relevant files already available in the current task context.
+
+Limits:
+- up to 8 files;
+- up to 32 KB UTF-8 text per file;
+- up to 128 KB total;
+- safe relative project paths only;
+- selected files are overlaid into `/workspace/project` after the repository checkout;
+- high-risk key/config filename patterns are rejected;
+- validation happens before durable reservation/quota use;
+- the file bodies are sent in the provider session-creation request and are not written into KeepGoing's durable job database.
+
+This is a bounded handoff, not general filesystem access. KeepGoing still cannot browse arbitrary files on the user's computer.
 
 Files intentionally written by the Agent under `/workspace/outputs` are published by the hosted session as immutable artifacts after a completed turn. KeepGoing exposes:
 - `list_job_artifacts` — safe metadata for published output files owned by that job.
@@ -218,7 +234,7 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.23 candidate:
+As of the beta.24 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
@@ -229,6 +245,7 @@ As of the beta.23 candidate:
 - The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
 - `/readiness` reports no commercial blockers and `sell_ready: true` when the production dependencies are healthy.
 - Beta.23 adds the opt-in public-GitHub coding workspace so durable coding jobs can inspect/edit/test real files instead of failing with a no-files tooling limit.
+- Beta.24 adds explicit selected-file handoff so a small set of task-relevant local/uncommitted UTF-8 files can be overlaid into the hosted coding workspace without broad PC access.
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 ## Public-plugin commerce boundary
 
