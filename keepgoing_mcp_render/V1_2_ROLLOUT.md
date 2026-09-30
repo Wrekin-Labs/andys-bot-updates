@@ -38,6 +38,10 @@ New for durable v1.2:
 - OPENAI_WEBHOOK_SECRET
 - KEEPGOING_V12_WATCHDOG_INTERVAL_MS (optional; default 15000)
 - KEEPGOING_V12_ENABLED
+- KEEPGOING_TOOL_PROFILES_JSON (optional explicit HTTPS MCP profiles)
+- KEEPGOING_WORKER_MCP_SECRET / KEEPGOING_GITHUB_TOKEN / KEEPGOING_GITHUB_REPOS (optional private GitHub worker)
+- KEEPGOING_RELAY_MCP_URL plus either KEEPGOING_RELAY_MCP_CREDENTIAL_ID or KEEPGOING_RELAY_MCP_AUTHORIZATION (optional Project Relay)
+- KEEPGOING_ENABLE_RELAY_ADMIN_PROFILE (optional; destructive owner-only Relay profile; keep false unless deliberately testing it)
 
 Do not put a service-role key, activation token, OAuth token or webhook secret in GitHub.
 
@@ -156,3 +160,32 @@ Before merging/enabling broadly:
 - Demo recording updated.
 - Production domain verification complete.
 - Payment/entitlement end-to-end test passed.
+
+
+## Tool-capability canary
+
+Run these only with the owner account and `KEEPGOING_V12_CANARY_ONLY=true` first.
+
+### GitHub
+1. Confirm `/readiness` reports `github_worker_ready=true` and the expected repo count.
+2. Confirm unauthenticated `/worker-mcp` returns 401.
+3. Call `list_tool_profiles`; verify `github-read` and `github-write` are owner-only.
+4. Start a `github-read` job and read/search only an allowlisted repository.
+5. Verify a non-allowlisted repository is rejected.
+6. Start a `github-write` job that creates a `keepgoing/...` branch, updates a disposable file and opens a PR.
+7. Verify direct writes to `main`/default branch are rejected or rewritten to the configured safe prefix.
+8. Verify no merge/delete/settings tools are exposed.
+
+### Project Relay
+1. Confirm `/readiness` reports `relay_profiles_ready=true`.
+2. Verify `relay-read` can inspect the intended workstation/approved roots.
+3. Verify `relay-developer` can complete a disposable approved-root edit using Relay's existing owner/local safety controls.
+4. Verify Relay secrets never appear in profile listings, job rows, audit events or logs.
+5. Keep `relay-admin` disabled until a separate destructive-action review is complete.
+
+### Generic MCP profiles
+1. Each server must use HTTPS.
+2. Every server must have a non-empty explicit `allowed_tools` list.
+3. Non-owner accounts cannot resolve owner-only/write-capable profiles.
+4. Tool-call audit contains metadata only, never arguments/results/secrets.
+5. Tool-call budgets stop runaway MCP activity.
