@@ -66,6 +66,12 @@ Safety boundary for this first release:
 
 Hosted coding workspaces have shorter wall-clock ceilings to bound container cost: Pro 30 minutes; Business/owner 60 minutes.
 
+Files intentionally written by the Agent under `/workspace/outputs` are published by the hosted session as immutable artifacts after a completed turn. KeepGoing exposes:
+- `list_job_artifacts` — safe metadata for published output files owned by that job.
+- `read_job_artifact` — reads small text artifacts such as patches, diffs, Markdown, JSON or logs (up to 512 KB).
+
+Files outside `/workspace/outputs` are not exposed by these tools.
+
 
 ## Plans and technical limits
 
@@ -88,6 +94,8 @@ These are safety/cost ceilings, not promised consumption targets. A job stops ea
 - `cancel_persistent_job` — cancel the durable job/provider turn.
 - `list_persistent_jobs` — list the authenticated customer's own recent/active jobs using safe metadata only.
 - `resume_persistent_job` — deliver required user input to the same durable job with race-safe/idempotent delivery.
+- `list_job_artifacts` — list patch/report artifacts published by an owned coding job.
+- `read_job_artifact` — read a small text patch/report artifact from an owned coding job.
 
 ## Durable states
 
