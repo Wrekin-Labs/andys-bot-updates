@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.21
+Version: 1.3.0-beta.23
 Updated: 29 September 2026
 
 This is a submission/reviewer worksheet. It contains no passwords, activation tokens, API keys, PayPal credentials, or reviewer secrets.
@@ -63,6 +63,22 @@ The submitted ChatGPT plugin is for existing KeepGoing accounts. The plugin list
 - promote an upgrade inside ChatGPT.
 
 KeepGoing may explain that a requested feature is unavailable under the user's existing entitlement. The separately hosted `/subscribe` route is an off-plugin direct web route; it is intentionally excluded from the plugin website navigation, install page, FAQ/status navigation, sitemap, and plugin metadata, and is marked noindex/no-store.
+
+## Coding workspace boundary
+
+Beta.23 adds an opt-in coding workspace for code tasks.
+
+When `codingWorkspace=true`, KeepGoing creates an isolated OpenAI-hosted sandbox. If a public GitHub `repositoryUrl` and optional `repositoryRef` are provided, the repository is cloned into `/workspace/project` before provider work begins.
+
+Reviewer expectations:
+- public `https://github.com/owner/repo` repositories only;
+- repository locator/ref validation happens before session creation;
+- this release does not support private-repository access or remote repository writes;
+- edits and tests happen inside the isolated workspace;
+- outbound sandbox networking is restricted to common source/package hosts;
+- local Bash/apply-patch operations do not consume the 3/5 external web/MCP/function-call allowance;
+- failed shell work still prevents false completion;
+- coding sandbox wall limits are Pro 30 minutes and Business/owner 60 minutes.
 
 ## Tool annotation justifications
 
@@ -140,15 +156,18 @@ Expected:
 - returns only the authenticated review account's fixture job;
 - returns `job_id`, `status`, `output`, `error`, and bounded progress metadata.
 
-### Positive 3 — wait without duplicating
+### Positive 3 — coding workspace against a public GitHub fixture
 
 Prompt:
-`Wait briefly for that same KeepGoing job.`
+`Use KeepGoing to inspect the public GitHub repository chipblock2/project-relay on branch main, make one small code-quality improvement locally, run an appropriate test, and report the result. Use the coding workspace.`
 
 Expected:
-- calls `wait_for_persistent_job` with the same job ID;
-- never starts a second job;
-- if still active, returns `should_continue_polling: true`.
+- calls `continue_until_done` or `start_persistent_job` with `codingWorkspace: true`;
+- passes the public GitHub repository URL and safe ref;
+- the hosted sandbox clones the repo into `/workspace/project`;
+- the Agent may read/edit/test the real files locally;
+- no private-repository or push capability is used;
+- local shell commands do not consume the external web/MCP/function-call allowance.
 
 ### Positive 4 — recover in a new chat
 
@@ -211,8 +230,10 @@ Initial public-directory submission candidate.
 
 KeepGoing provides durable AI jobs that can continue bounded multi-turn work, survive chat changes, recover by job ID, pause for genuine user input, and resume the same job without repeatedly restarting completed work.
 
-Beta.21 includes:
+Beta.23 includes:
 
+- opt-in coding workspace for public GitHub repositories, with local file inspection/edit/test support;
+- restricted sandbox networking and strict repository URL/ref validation;
 - watchdog recovery;
 - deterministic/idempotent initial-session startup;
 - retry and metadata recovery for transient provider-start failures;
