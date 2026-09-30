@@ -125,6 +125,80 @@ assert.equal(workspaceBody.environment.type, "openai_hosted");
 assert.equal(workspaceBody.environment.network.access, "restricted");
 assert.match(workspaceBody.environment.setup_commands[0].command, /git clone/);
 
+const inlineWorkspace = buildAgentEnvironment({
+  enabled: true,
+  repositoryUrl: "https://github.com/chipblock2/project-relay",
+  repositoryRef: "main",
+  files: [
+    { path: "src/local-change.js", content: "export const local = true;\n" },
+    { path: "notes/task.txt", content: "local-only task note\n" }
+  ]
+});
+assert.equal(inlineWorkspace.files.length, 2);
+assert.equal(inlineWorkspace.files[0].type, "inline");
+assert.equal(inlineWorkspace.files[0].path, "/workspace/input/src/local-change.js");
+assert.equal(
+  Buffer.from(inlineWorkspace.files[0].data, "base64").toString("utf8"),
+  "export const local = true;\n"
+);
+const copyCommandIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => cmd.command === "cp -R /workspace/input/. /workspace/project/"
+);
+const checkoutIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => /git checkout/.test(cmd.command)
+);
+assert.ok(copyCommandIndex > checkoutIndex, "local file overlay must happen after repository checkout");
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "../escape.txt", content: "x" }]
+  }),
+  /safe relative project path/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: ".env", content: "x" }]
+  }),
+  /not allowed for inline handoff/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "keys/client.pem", content: "x" }]
+  }),
+  /not allowed for inline handoff/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: Array.from({ length: 9 }, (_, i) => ({
+      path: "src/f" + i + ".js",
+      content: "x"
+    }))
+  }),
+  /at most 8 files/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/huge.txt", content: "x".repeat(32001) }]
+  }),
+  /32 KB/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: Array.from({ length: 5 }, (_, i) => ({
+      path: "src/big" + i + ".txt",
+      content: "x".repeat(30000)
+    }))
+  }),
+  /128 KB/
+);
+
+
 
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
 const sentCall = calls.at(-1);
