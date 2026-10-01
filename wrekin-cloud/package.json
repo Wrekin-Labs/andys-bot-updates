@@ -1,0 +1,12 @@
+{
+  "name": "wrekin-cloud-control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wrekin Cloud bootstrap control-plane dashboard and health API.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
