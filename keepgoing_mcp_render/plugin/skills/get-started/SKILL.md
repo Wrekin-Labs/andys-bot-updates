@@ -1,15 +1,17 @@
 ---
 name: keepgoing-get-started
-description: Use KeepGoing for substantial work that should continue as one durable job across normal chat-turn boundaries.
+description: Use when the user explicitly asks KeepGoing to start or finish substantial work, or to inspect, recover, resume or cancel an existing KeepGoing job.
 ---
 
 # KeepGoing
 
-Use KeepGoing when the user clearly wants substantial work to continue until completion rather than repeatedly restarting or asking them to type "continue".
+Use KeepGoing for an explicitly requested durable objective. A substantial task or a generic "continue" by itself is not permission to send a new objective to KeepGoing.
 
 ## Preferred entry point
 
-When the user says things such as "keep going", "continue until done", "finish it", "don't stop", or asks for a substantial task that may outlast a normal model turn, prefer `continue_until_done`.
+When the user explicitly asks KeepGoing to continue or finish substantial work, prefer `continue_until_done`. For example: "Use KeepGoing to finish this comparison."
+
+Generic continuation phrases may select this tool only when the authenticated server explicitly advertises owner-mode implicit continuation. Public/reviewer connections require explicit KeepGoing intent.
 
 Start one durable job for one objective. Preserve the returned `job_id`.
 
@@ -26,7 +28,7 @@ Use:
 
 ## Context
 
-Before starting a durable job, include concise relevant context already available in the current conversation when it materially helps the task. Do not dump unrelated chat history or secrets into `context`.
+Before starting a durable job, include only a brief task-specific checkpoint intentionally shared for this objective, at most 4,000 characters. Never send full chat history, raw transcripts, unrelated personal data or secrets in `context`.
 
 ## Tool profiles
 

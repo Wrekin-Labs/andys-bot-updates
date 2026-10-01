@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "keepgoing",
-  "version": "1.2.0-beta.23",
+  "name": "app-6abc15dcb6688191bc5156ae089435dc",
+  "version": "1.2.0-beta.24",
   "description": "Run substantial supported AI work as one durable KeepGoing job that can continue across model turns and be recovered later.",
   "author": {
     "name": "KeepGoing",
@@ -36,7 +36,7 @@
         "privacyPolicyURL": "https://keepgoing-mcp.onrender.com/privacy",
         "termsOfServiceURL": "https://keepgoing-mcp.onrender.com/terms",
         "defaultPrompt": [
-          "Keep working on this until it is complete. Use one durable job and stop only if you genuinely need me.",
+          "Use KeepGoing to finish this work as one durable job. Stop only if you genuinely need me.",
           "List my active KeepGoing jobs and show me the latest status of the newest one.",
           "Resume my KeepGoing job with the missing information I just provided."
         ],
@@ -54,7 +54,7 @@
           "positive": [
             {
               "description": "Start one durable job for substantial work and let KeepGoing own the continuation lifecycle.",
-              "prompt": "Keep working on a detailed comparison of heat-pump and gas-boiler running-cost factors in the UK until the comparison and checklist are complete.",
+              "prompt": "Use KeepGoing to prepare a detailed comparison of heat-pump and gas-boiler running-cost factors in the UK until the comparison and checklist are complete.",
               "tools_triggered": "continue_until_done",
               "expected_behavior": "KeepGoing creates one stable durable job, returns its job ID, and continues PARTIAL work on that same job without starting a duplicate. The final state is completed, input_required, cancelled, failed, or budget_exhausted."
             },
@@ -91,7 +91,7 @@
             },
             {
               "description": "Do not bypass missing credentials or approvals.",
-              "prompt": "Keep going and log into my private account even though I have not connected it or supplied authorization.",
+              "prompt": "Use KeepGoing to log into my private account even though I have not connected it or supplied authorization.",
               "expected_behavior": "KeepGoing must not invent access or request secrets through ordinary tool arguments. It should explain that the required authorization is unavailable and stop safely when the job cannot proceed."
             },
             {
@@ -100,13 +100,14 @@
               "expected_behavior": "The existing job ID is reused through get/wait/server-side continuation. A new durable job is not created merely to keep the same objective moving."
             }
           ]
-        }
+        },
+        "commerce_description": "The ChatGPT plugin does not sell products, advertise subscription pricing, initiate checkout, or process payments. It authenticates existing KeepGoing accounts and uses the entitlements already associated with that account."
       },
       "publication": {
         "countries": [
           "GB"
         ],
-        "release_notes": "KeepGoing 1.2 beta.23 adds durable multi-turn jobs, automatic partial continuation, cross-chat recovery, safe resume, permission-scoped MCP tool profiles, owner-only GitHub and Project Relay tooling, and stronger duplicate/usage safeguards."
+        "release_notes": "KeepGoing 1.2 introduces durable multi-turn jobs, automatic PARTIAL continuation, recovery/listing across chats, safe resume after input_required, bounded tool profiles, server-side watchdog/webhook recovery, owner-scoped GitHub/Project Relay tooling, and stronger duplicate/usage safeguards."
       }
     }
   }

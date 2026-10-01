@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac, randomBytes } from "node:crypto";
 import {
   createOpenAIWebhookVerifier,
   createWebhookProcessor,
@@ -92,3 +93,24 @@ assert.deepEqual(ctorOptions, { apiKey: "api-test", webhookSecret: "whsec-test" 
 assert.equal(unwrapArgs[0], '{"x":1}');
 
 console.log("webhook processor tests passed");
+
+// Exercise the installed official SDK verifier, without any provider request.
+const secretBytes = randomBytes(32);
+const signedVerifier = createOpenAIWebhookVerifier({
+  apiKey: "local-signature-test-only",
+  webhookSecret: "whsec_" + secretBytes.toString("base64")
+});
+const timestamp = String(Math.floor(Date.now() / 1000));
+const signedHeaders = {
+  "webhook-id": "wh_signed_test",
+  "webhook-timestamp": timestamp,
+  "webhook-signature": "v1," + createHmac("sha256", secretBytes).update(`wh_signed_test.${timestamp}.${raw}`).digest("base64")
+};
+assert.equal((await signedVerifier(raw, signedHeaders)).type, "agent.session.idle");
+await assert.rejects(() => signedVerifier(raw + " ", signedHeaders), /signature/i);
+await assert.rejects(() => signedVerifier(raw, { ...signedHeaders, "webhook-timestamp": "1" }), /too old/i);
+const signedProcessor = createWebhookProcessor({ store, orchestrator, verify: signedVerifier });
+const signedFirst = await signedProcessor.ingest(raw, signedHeaders);
+assert.equal(signedFirst.duplicate, false);
+assert.equal((await signedProcessor.ingest(raw, signedHeaders)).duplicate, true);
+console.log("official SDK webhook signature, tamper, expiry, and deduplication tests passed");

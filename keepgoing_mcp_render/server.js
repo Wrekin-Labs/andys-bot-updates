@@ -16,7 +16,8 @@ import { createGithubWorker, createGithubWorkerMcpServer, normaliseRepoList } fr
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.23";
+const APP_VERSION = "1.2.0-beta.24";
+const RELEASE_COMMIT = /^[0-9a-f]{40}$/.test(process.env.RENDER_GIT_COMMIT || "") ? process.env.RENDER_GIT_COMMIT : null;
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -2707,6 +2708,7 @@ app.get("/readiness", async (_req, res) => {
   res.json({
     ok: engineReady && billingBackendReady && durableOpsReady,
     version: V12_ENABLED ? APP_VERSION : "1.1.0",
+    release_commit: RELEASE_COMMIT,
     engine_ready: engineReady,
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
@@ -2740,6 +2742,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     name: "KeepGoing MCP",
     version: V12_ENABLED ? APP_VERSION : "1.1.0",
+    release_commit: RELEASE_COMMIT,
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),

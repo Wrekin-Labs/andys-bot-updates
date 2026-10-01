@@ -6,10 +6,16 @@ export async function runDeploymentPreflight({
   requireToolProfiles = false,
   requireGithubWorker = false,
   requireRelayProfiles = false,
-  requireChallenge = false
+  requireChallenge = false,
+  requireWebhook = false,
+  expectedCommit = null
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
   const base = normalizeBase(baseUrl);
+  if (expectedCommit !== null && !/^[0-9a-f]{40}$/.test(expectedCommit)) {
+    throw new Error("expectedCommit must be a full 40-character commit SHA");
+  }
+  const request = (url, init = {}) => fetchImpl(url, { ...init, signal: AbortSignal.timeout(20_000) });
   const checks = [];
 
   async function check(name, fn) {
@@ -29,17 +35,19 @@ export async function runDeploymentPreflight({
   let readiness = null;
 
   await check("health", async () => {
-    const response = await fetchImpl(base + "/health", { method: "GET" });
+    const response = await request(base + "/health", { method: "GET" });
     health = await jsonResponse(response, "health");
     if (!health?.ok) throw new Error("health endpoint did not report ok");
+    if (expectedCommit && health.release_commit !== expectedCommit) throw new Error("deployed commit does not match expectedCommit");
     return {
       version: health.version || null,
+      release_commit: health.release_commit || null,
       durableEngineEnabled: Boolean(health.durableEngineEnabled)
     };
   });
 
   await check("readiness", async () => {
-    const response = await fetchImpl(base + "/readiness", { method: "GET" });
+    const response = await request(base + "/readiness", { method: "GET" });
     readiness = await jsonResponse(response, "readiness");
     if (!readiness?.ok) throw new Error("readiness endpoint did not report ok");
     if (requireSellReady && !readiness.sell_ready) {
@@ -49,8 +57,10 @@ export async function runDeploymentPreflight({
       if (!readiness.durable_engine_enabled) throw new Error("durable engine is not enabled");
       if (!readiness.durable_engine_ready) throw new Error("durable engine configuration is not ready");
       if (!readiness.durable_store_ready) throw new Error("durable store is not reachable");
-      if (!readiness.openai_webhook_ready) throw new Error("OpenAI webhook is not ready");
+      if (!readiness.watchdog_ready && !readiness.openai_webhook_ready) throw new Error("no background continuation path is ready");
     }
+    if (expectedCommit && readiness.release_commit !== expectedCommit) throw new Error("readiness commit does not match expectedCommit");
+    if (requireWebhook && !readiness.openai_webhook_ready) throw new Error("OpenAI webhook is not ready");
     if (requireToolProfiles && !readiness.tool_profiles_ready) {
       throw new Error("tool profiles are not ready");
     }
@@ -71,26 +81,28 @@ export async function runDeploymentPreflight({
       durable_store_ready: Boolean(readiness.durable_store_ready),
       tool_profiles_ready: Boolean(readiness.tool_profiles_ready),
       github_worker_ready: Boolean(readiness.github_worker_ready),
-      relay_profiles_ready: Boolean(readiness.relay_profiles_ready)
+      relay_profiles_ready: Boolean(readiness.relay_profiles_ready),
+      openai_webhook_ready: Boolean(readiness.openai_webhook_ready),
+      continuation_mode: readiness.continuation_mode || null
     };
   });
 
   await check("protected_resource_metadata", async () => {
-    const response = await fetchImpl(base + "/.well-known/oauth-protected-resource", { method: "GET" });
+    const response = await request(base + "/.well-known/oauth-protected-resource", { method: "GET" });
     const data = await jsonResponse(response, "protected resource metadata");
     const resource = String(data?.resource || "");
     const servers = Array.isArray(data?.authorization_servers) ? data.authorization_servers : [];
-    if (!resource.startsWith(base)) throw new Error("resource metadata points at another origin");
-    if (!servers.some((value) => String(value).startsWith(base))) {
+    if (new URL(resource).origin !== new URL(base).origin) throw new Error("resource metadata points at another origin");
+    if (!servers.some((value) => new URL(String(value)).origin === new URL(base).origin)) {
       throw new Error("authorization server metadata points at another origin");
     }
     return { resource, authorization_servers: servers.length };
   });
 
   await check("authorization_server_metadata", async () => {
-    const response = await fetchImpl(base + "/.well-known/oauth-authorization-server", { method: "GET" });
+    const response = await request(base + "/.well-known/oauth-authorization-server", { method: "GET" });
     const data = await jsonResponse(response, "authorization server metadata");
-    if (!String(data?.issuer || "").startsWith(base)) throw new Error("OAuth issuer points at another origin");
+    if (new URL(String(data?.issuer || "")).origin !== new URL(base).origin) throw new Error("OAuth issuer points at another origin");
     const methods = Array.isArray(data?.code_challenge_methods_supported)
       ? data.code_challenge_methods_supported
       : [];
@@ -99,7 +111,7 @@ export async function runDeploymentPreflight({
   });
 
   await check("unauthenticated_mcp_rejected", async () => {
-    const response = await fetchImpl(base + "/mcp", {
+    const response = await request(base + "/mcp", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -126,7 +138,7 @@ export async function runDeploymentPreflight({
 
   if (requireGithubWorker || readiness?.github_worker_ready) {
     await check("private_worker_mcp_protected", async () => {
-      const response = await fetchImpl(base + "/worker-mcp", {
+      const response = await request(base + "/worker-mcp", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -156,7 +168,7 @@ export async function runDeploymentPreflight({
 
   for (const path of ["/privacy", "/terms", "/support", "/security"]) {
     await check("page:" + path.slice(1), async () => {
-      const response = await fetchImpl(base + path, { method: "GET" });
+      const response = await request(base + path, { method: "GET" });
       if (!response.ok) throw new Error(path + " returned " + response.status);
       const text = await response.text();
       if (text.length < 100) throw new Error(path + " returned unexpectedly short content");
@@ -165,7 +177,7 @@ export async function runDeploymentPreflight({
   }
 
   await check("openai_apps_challenge", async () => {
-    const response = await fetchImpl(base + "/.well-known/openai-apps-challenge", { method: "GET" });
+    const response = await request(base + "/.well-known/openai-apps-challenge", { method: "GET" });
     if (response.status === 404 && !requireChallenge) {
       return { configured: false, optional: true };
     }
@@ -181,6 +193,7 @@ export async function runDeploymentPreflight({
     ok: failed.length === 0,
     base_url: base,
     health_version: health?.version || null,
+    release_commit: health?.release_commit || null,
     readiness: readiness
       ? {
           ok: Boolean(readiness.ok),

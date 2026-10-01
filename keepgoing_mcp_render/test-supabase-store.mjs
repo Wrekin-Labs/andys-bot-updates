@@ -70,7 +70,7 @@ const store = new SupabaseJobStore({
 
 const health = await store.healthCheck();
 assert.deepEqual(health, { ok: true });
-assert.ok(calls.some((c) => c.url.includes("keepgoing_jobs?select=job_id&limit=1")));
+assert.ok(calls.some((c) => c.url.includes("keepgoing_jobs?select=job_id,tool_profile,tool_policy_hash,tool_write_capable&limit=1")));
 assert.ok(calls.some((c) => c.url.includes("keepgoing_job_events?select=id&limit=1")));
 
 const reservation = await store.createOrGet({
@@ -157,7 +157,7 @@ const proxyStore = new SupabaseJobStore({
 });
 assert.deepEqual(await proxyStore.healthCheck(), { ok: true });
 assert.equal(proxyCalls.length, 2);
-assert.ok(proxyCalls.some((c) => JSON.parse(c.init.body).path.includes("keepgoing_jobs?select=job_id&limit=1")));
+assert.ok(proxyCalls.some((c) => JSON.parse(c.init.body).path.includes("keepgoing_jobs?select=job_id,tool_profile,tool_policy_hash,tool_write_capable&limit=1")));
 assert.ok(proxyCalls.some((c) => JSON.parse(c.init.body).path.includes("keepgoing_job_events?select=id&limit=1")));
 
 assert.throws(

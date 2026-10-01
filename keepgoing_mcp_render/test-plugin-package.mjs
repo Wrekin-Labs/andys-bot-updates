@@ -10,8 +10,9 @@ const packaged = JSON.parse(readFileSync(resolve(here, "plugin/plugin.json"), "u
 const packagedMcp = JSON.parse(readFileSync(resolve(here, "plugin/mcp.json"), "utf8"));
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
-assert.equal(plugin.name, "keepgoing");
-assert.equal(plugin.version, "1.2.0-beta.23");
+// Directory updates must preserve the existing registered plugin identity.
+assert.equal(plugin.name, "app-6abc15dcb6688191bc5156ae089435dc");
+assert.equal(plugin.version, "1.2.0-beta.24");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.displayName, "KeepGoing");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.category, "Productivity");
 assert.ok(plugin.extensions?.["com.openai"]?.interface?.shortDescription.length <= 30);

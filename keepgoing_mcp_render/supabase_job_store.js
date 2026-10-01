@@ -23,7 +23,7 @@ export class SupabaseJobStore {
 
   async healthCheck() {
     await Promise.all([
-      this.request("/rest/v1/keepgoing_jobs?select=job_id&limit=1", { method: "GET" }),
+      this.request("/rest/v1/keepgoing_jobs?select=job_id,tool_profile,tool_policy_hash,tool_write_capable&limit=1", { method: "GET" }),
       this.request("/rest/v1/keepgoing_job_events?select=id&limit=1", { method: "GET" })
     ]);
     return { ok: true };

@@ -13,9 +13,9 @@ This split follows the current OpenAI plugin commerce policy for digital subscri
 
 ## Current code status
 
-Version: **1.2.0-beta.23**
+Version: **1.2.0-beta.24**
 
-Branch: `keepgoing-v1.2-commercial-beta23`
+Branch: `keepgoing-v1.2-durable-agent`
 
 ### Durable engine — implemented
 - Stable KeepGoing-owned `kgj_...` job IDs.

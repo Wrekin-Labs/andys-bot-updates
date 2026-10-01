@@ -12,7 +12,9 @@ const result = await runDeploymentPreflight({
   requireToolProfiles: args.has("--tool-profiles"),
   requireGithubWorker: args.has("--github-worker"),
   requireRelayProfiles: args.has("--relay-profiles"),
-  requireChallenge: args.has("--challenge")
+  requireChallenge: args.has("--challenge"),
+  requireWebhook: args.has("--webhook"),
+  expectedCommit: [...args].find(arg => arg.startsWith("--commit="))?.slice(9) || null
 });
 
 console.log(JSON.stringify(result, null, 2));

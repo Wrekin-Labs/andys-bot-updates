@@ -23,6 +23,7 @@ function validateHttps(name, value) {
   try { url = new URL(String(value || "")); }
   catch { fail(name + " must be a valid URL"); }
   if (url.protocol !== "https:") fail(name + " must use HTTPS");
+  if (String(value).length > 1024) fail(name + " exceeds final directory URL limit");
   if (url.username || url.password) fail(name + " must not embed credentials");
   return url;
 }
@@ -56,6 +57,9 @@ if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(manifest.name || "") || String(manifest.n
   fail("Invalid portable plugin name");
 }
 if (!manifest.version) fail("Plugin version is required");
+if (String(manifest.version).length > 64 || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(String(manifest.version))) {
+  fail("Plugin version must be semantic versioning and <= 64 characters");
+}
 
 const ext = manifest?.extensions?.["com.openai"];
 const ui = ext?.interface;
@@ -65,6 +69,20 @@ if (!ui.shortDescription || ui.shortDescription.length > 30) fail("shortDescript
 if (!ui.longDescription || ui.longDescription.length > 4000) fail("longDescription must be 1-4000 characters");
 if (!ui.developerName || ui.developerName.length > 80) fail("developerName must be 1-80 characters");
 if (!ui.category) fail("category is required");
+for (const [field, value, max] of [
+  ["displayName", ui.displayName, 30],
+  ["shortDescription", ui.shortDescription, 30],
+  ["developerName", ui.developerName, 80]
+]) {
+  if (/\r|\n|\u2028|\u2029/.test(String(value || ""))) fail(field + " must be one line");
+  if (String(value || "").length > max) fail(field + " exceeds final directory limit");
+}
+if (!Array.isArray(ui.capabilities) || ui.capabilities.length > 20) fail("capabilities must contain at most 20 items");
+for (const capability of ui.capabilities || []) {
+  if (!String(capability || "").trim() || String(capability).length > 120 || /\r|\n|\u2028|\u2029/.test(String(capability))) {
+    fail("Each capability must be one non-empty line <= 120 characters");
+  }
+}
 
 for (const field of ["websiteURL","supportURL","privacyPolicyURL","termsOfServiceURL"]) {
   validateHttps(field, ui[field]);
@@ -77,8 +95,26 @@ const prompts = Array.isArray(ui.defaultPrompt) ? ui.defaultPrompt : [];
 if (prompts.length < 1 || prompts.length > 3) fail("defaultPrompt must contain 1-3 prompts");
 for (const prompt of prompts) {
   if (!prompt || prompt.length > 128) fail("Each defaultPrompt must be 1-128 characters");
-  if (/@KeepGoing|@keepgoing/.test(prompt)) fail("Starter prompts must not contain an app @mention");
+  if (/\r|\n|\u2028|\u2029/.test(prompt)) fail("Starter prompts must be one line");
+  if (/@[A-Za-z0-9_.-]+/.test(prompt)) fail("Starter prompts must not contain an MCP server @mention");
 }
+
+function hexRgb(value) {
+  const m = String(value || "").match(/^#([0-9A-Fa-f]{6})$/);
+  if (!m) fail("Brand colors must use six-digit hex");
+  const n = Number.parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function luminance(hex) {
+  return hexRgb(hex).map(v => v / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [0.2126,0.7152,0.0722][i], 0);
+}
+function contrast(a, b) {
+  const x=luminance(a), y=luminance(b);
+  return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);
+}
+if (contrast(ui.brandColor, "#FFFFFF") < 2) fail("brandColor needs >=2:1 contrast against white");
+if (contrast(ui.brandColorDark, "#212121") < 2) fail("brandColorDark needs >=2:1 contrast against #212121");
 
 for (const assetField of ["logo","logoDark","composerIcon","composerIconDark"]) {
   if (!ui[assetField]) fail(assetField + " is required for the KeepGoing package");
