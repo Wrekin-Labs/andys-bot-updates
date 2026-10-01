@@ -1,0 +1,5 @@
+# Example only. Install Caddy on the host and replace the hostname.
+forge.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:3000
+}

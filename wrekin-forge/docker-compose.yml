@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wrekin_forge
+      POSTGRES_USER: wrekin_forge
+      POSTGRES_PASSWORD: ${FORGE_DB_PASSWORD:?set FORGE_DB_PASSWORD}
+    volumes:
+      - forgejo-postgres:/var/lib/postgresql/data
+    networks:
+      - forge-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wrekin_forge -d wrekin_forge"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  forge:
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      USER_UID: ${FORGE_UID:-1000}
+      USER_GID: ${FORGE_GID:-1000}
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: db:5432
+      FORGEJO__database__NAME: wrekin_forge
+      FORGEJO__database__USER: wrekin_forge
+      FORGEJO__database__PASSWD: ${FORGE_DB_PASSWORD:?set FORGE_DB_PASSWORD}
+      FORGEJO__server__ROOT_URL: ${FORGE_ROOT_URL:?set FORGE_ROOT_URL}
+      FORGEJO__server__DOMAIN: ${FORGE_DOMAIN:?set FORGE_DOMAIN}
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+    volumes:
+      - forgejo-data:/data
+    networks:
+      - forge-internal
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+networks:
+  forge-internal:
+    driver: bridge
+
+volumes:
+  forgejo-data:
+  forgejo-postgres:
