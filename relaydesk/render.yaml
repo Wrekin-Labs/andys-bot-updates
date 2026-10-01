@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: relaydesk-relay-v02
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: python relay_server.py
+    envVars:
+      - key: RELAYDESK_SESSION_TTL
+        value: "600"
+      - key: RELAYDESK_MAX_PACKET
+        value: "4194304"
+      - key: RELAYDESK_JOIN_WINDOW
+        value: "60"
+      - key: RELAYDESK_MAX_FAILED_JOINS
+        value: "8"
