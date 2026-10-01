@@ -1,0 +1,12 @@
+{
+  "name": "wrekin-runtime-node",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bootstrap Wrekin Runtime node agent.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
