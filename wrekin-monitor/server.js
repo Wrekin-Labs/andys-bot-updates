@@ -2,7 +2,7 @@ const http = require('http');
 const { URL } = require('url');
 
 const PORT = Number(process.env.PORT || 3000);
-const VERSION = process.env.WREKIN_MONITOR_VERSION || '0.1.0';
+const VERSION = process.env.WREKIN_MONITOR_VERSION || '0.1.1';
 const STARTED_AT = new Date().toISOString();
 
 const targets = [
@@ -70,14 +70,24 @@ footer{margin-top:34px;border-top:1px solid var(--line);padding-top:18px;color:#
 <h1>Wrekin Monitor</h1><div class="tag">See it before users do.</div>
 <p class="lead">Bootstrap observability for Wrekin Cloud. It performs bounded public health checks and reports availability and latency without storing credentials.</p>
 <div id="grid" class="grid"><div class="card"><div class="k">Checking</div><div class="state">Loading...</div></div></div>
-<footer>Wrekin Monitor v${VERSION} • <a href="/health">Self health</a> • <a href="/api/checks">Checks API</a></footer>
+<footer>Wrekin Monitor v${VERSION} | <a href="/health">Self health</a> | <a href="/api/checks">Checks API</a></footer>
 <script>
 async function refresh(){
-  const grid=document.getElementById('grid');
+  var grid=document.getElementById('grid');
   try{
-    const r=await fetch('/api/checks',{cache:'no-store'}); const data=await r.json();
-    grid.innerHTML=data.checks.map(x=>`<article class="card"><div class="k">${x.name}</div><div class="state ${x.ok?'ok':'bad'}">${x.ok?'Healthy':'Degraded'}</div><div class="m">HTTP ${x.status_code??'-'} • ${x.latency_ms} ms<br>${x.service??x.key}${x.version?' v'+x.version:''}<br>${new Date(x.checked_at).toLocaleString()}</div></article>`).join('');
-  }catch{grid.innerHTML='<div class="card"><div class="k">Monitor</div><div class="state bad">Check failed</div></div>'}
+    var r=await fetch('/api/checks',{cache:'no-store'});
+    var data=await r.json();
+    grid.innerHTML=data.checks.map(function(x){
+      var cls=x.ok?'ok':'bad';
+      var state=x.ok?'Healthy':'Degraded';
+      var code=(x.status_code===null||x.status_code===undefined)?'-':x.status_code;
+      var service=x.service||x.key;
+      var version=x.version?(' v'+x.version):'';
+      return '<article class="card"><div class="k">'+x.name+'</div><div class="state '+cls+'">'+state+'</div><div class="m">HTTP '+code+' | '+x.latency_ms+' ms<br>'+service+version+'<br>'+new Date(x.checked_at).toLocaleString()+'</div></article>';
+    }).join('');
+  }catch(e){
+    grid.innerHTML='<div class="card"><div class="k">Monitor</div><div class="state bad">Check failed</div></div>';
+  }
 }
 refresh(); setInterval(refresh,30000);
 </script></main></body></html>`;
