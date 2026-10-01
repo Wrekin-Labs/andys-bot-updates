@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0-alpha.4
+
+- Added attended **session-code join** for trusted private relays.
+- Code join is disabled by default and must be explicitly enabled with `RELAYDESK_TRUSTED_CODE_JOIN=1`.
+- Code join is accepted only from loopback or Tailscale `100.64.0.0/10` source addresses.
+- The host still receives the normal visible Allow/Deny permission dialog before any screen or input access begins.
+- Secure `rd2_` invites remain the required path for public/untrusted relays.
+- Added tests proving code join works only when explicitly enabled and is rejected by default.
+
 ## 0.2.0-alpha.3 — 2026-10-01
 
 ### Added

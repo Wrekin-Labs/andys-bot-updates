@@ -55,6 +55,18 @@ py controller.py --server ws://RELAY-SERVER:8765
 
 Paste the secure invite into the connection window. The host must approve the request.
 
+### Private Tailscale/LAN code join (alpha)
+
+For an owner-controlled private relay only, start the relay with `RELAYDESK_TRUSTED_CODE_JOIN=1`. A viewer on loopback or the Tailscale `100.64.0.0/10` range can then use the visible 6-digit attended session code:
+
+```powershell
+$env:RELAYDESK_TRUSTED_CODE_JOIN = "1"
+py relay_server.py
+py controller.py --code 123456 --server ws://TAILSCALE-IP:8765
+```
+
+The host still receives the normal visible Allow/Deny permission dialog. Code join is deliberately disabled by default and is not a replacement for secure invites on public relays.
+
 For Internet use, deploy the relay behind HTTPS/TLS and use `wss://`. The plain `ws://` examples are for a trusted local test network only.
 
 ## Build Windows alpha executables

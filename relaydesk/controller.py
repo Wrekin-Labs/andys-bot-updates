@@ -36,9 +36,12 @@ class Frame:
 
 
 class ControllerApp:
-    def __init__(self, args: argparse.Namespace, invite: Invite):
+    def __init__(self, args: argparse.Namespace, invite: Invite | None, session_id: str | None = None):
         self.args = args
         self.invite = invite
+        self.session_id = invite.session_id if invite is not None else str(session_id or "")
+        if not (len(self.session_id) == 6 and self.session_id.isdigit()):
+            raise ValueError("session code must be exactly 6 digits")
         self.private_key, self.public_key = new_keypair()
         self.frames: queue.Queue[Frame] = queue.Queue(maxsize=2)
         self.outgoing: queue.Queue[bytes] = queue.Queue(maxsize=1000)
@@ -58,7 +61,7 @@ class ControllerApp:
         self.monitor_values: dict[str, int] = {}
 
         self.root = tk.Tk()
-        self.root.title(f"RelayDesk v0.2 — session {invite.session_id}")
+        self.root.title(f"RelayDesk v0.2 — session {self.session_id}")
         self.root.geometry("1200x760")
         self.root.minsize(720, 480)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -208,12 +211,14 @@ class ControllerApp:
 
     async def _network(self) -> None:
         requested = ["view"] if self.args.view_only else ["view", "control"]
-        verifier = join_verifier(self.invite.join_secret, self.invite.session_id)
+        code_join = self.invite is None
+        verifier = "" if code_join else join_verifier(self.invite.join_secret, self.session_id)
         async with connect(self.args.server, max_size=4 * 1024 * 1024, compression=None) as ws:
             await ws.send(json.dumps({
                 "type": "hello",
                 "role": "viewer",
-                "session_id": self.invite.session_id,
+                "session_id": self.session_id,
+                "join_mode": "code" if code_join else "invite",
                 "join_verifier": verifier,
                 "public_key": self.public_key,
                 "device_name": self.args.name,
@@ -225,7 +230,8 @@ class ControllerApp:
                 raise RuntimeError(host.get("message", "relay error"))
             if host.get("type") != "host_hello":
                 raise RuntimeError("unexpected relay response")
-            if host.get("public_key") != self.invite.host_public_key:
+            host_hello_key = str(host.get("public_key", ""))
+            if self.invite is not None and host_hello_key != self.invite.host_public_key:
                 raise RuntimeError("host identity does not match the secure invite")
 
             decision = json.loads(await ws.recv())
@@ -234,7 +240,8 @@ class ControllerApp:
             if not decision.get("accept"):
                 raise RuntimeError("the remote user denied the connection")
             host_public = str(decision.get("host_public_key", ""))
-            if host_public != self.invite.host_public_key:
+            expected_host_key = self.invite.host_public_key if self.invite is not None else host_hello_key
+            if not expected_host_key or host_public != expected_host_key:
                 raise RuntimeError("host key changed during approval")
 
             expected = short_fingerprint(self.public_key, host_public)
@@ -245,7 +252,7 @@ class ControllerApp:
                 raise RuntimeError("host did not grant screen viewing")
             self.control_allowed = "control" in granted
             self.crypto = SessionCrypto.from_exchange(
-                self.private_key, host_public, self.invite.session_id, "viewer"
+                self.private_key, host_public, self.session_id, "viewer"
             )
             mode = "screen + control" if self.control_allowed else "view only"
             self.root.after(0, lambda: self.status.set(f"Connected securely ({mode}) — {expected}"))
@@ -370,10 +377,19 @@ def _prompt_connection(default_server: str) -> tuple[str, str, bool] | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="RelayDesk v0.2 controller")
     parser.add_argument("invite", nargs="?", help="Secure rd2_ invite copied from the host")
+    parser.add_argument("--code", help="6-digit attended session code (trusted private relay only)")
     parser.add_argument("--server", default="ws://127.0.0.1:8765", help="Relay WebSocket URL")
     parser.add_argument("--name", default=f"{platform.node()} (controller)")
     parser.add_argument("--view-only", action="store_true", help="Request screen view only")
     args = parser.parse_args()
+    if args.invite and args.code:
+        parser.error("use either an invite or --code, not both")
+    if args.code:
+        code = str(args.code).strip()
+        if not (len(code) == 6 and code.isdigit()):
+            parser.error("--code must be exactly 6 digits")
+        ControllerApp(args, None, code).run()
+        return
     if not args.invite:
         chosen = _prompt_connection(args.server)
         if not chosen:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import ipaddress
 import secrets
 import time
 from collections import defaultdict, deque
@@ -18,6 +19,8 @@ SESSION_TTL_SECONDS = int(os.environ.get("RELAYDESK_SESSION_TTL", "600"))
 MAX_PACKET_BYTES = int(os.environ.get("RELAYDESK_MAX_PACKET", str(4 * 1024 * 1024)))
 JOIN_WINDOW_SECONDS = int(os.environ.get("RELAYDESK_JOIN_WINDOW", "60"))
 MAX_FAILED_JOINS_PER_WINDOW = int(os.environ.get("RELAYDESK_MAX_FAILED_JOINS", "8"))
+TRUSTED_CODE_JOIN = os.environ.get("RELAYDESK_TRUSTED_CODE_JOIN", "0").strip().lower() in {"1", "true", "yes", "on"}
+TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 
 
 @dataclass
@@ -63,18 +66,36 @@ def _record_join_failure(ip: str, now: float) -> None:
     _prune_failures(ip, now).append(now)
 
 
+def _trusted_code_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return addr.is_loopback or addr in TAILSCALE_NET
+
+
 def _valid_hello(data: Any) -> bool:
     if not isinstance(data, dict) or data.get("type") != "hello":
         return False
     if data.get("role") not in {"host", "viewer"}:
         return False
     sid = data.get("session_id")
-    verifier = data.get("join_verifier")
+    verifier = data.get("join_verifier", "")
+    join_mode = data.get("join_mode", "invite")
     public_key = data.get("public_key")
     name = data.get("device_name")
     if not (isinstance(sid, str) and len(sid) == 6 and sid.isdigit()):
         return False
-    if not (isinstance(verifier, str) and 32 <= len(verifier) <= 128):
+    if data.get("role") == "host":
+        if not (isinstance(verifier, str) and 32 <= len(verifier) <= 128):
+            return False
+    elif join_mode == "invite":
+        if not (isinstance(verifier, str) and 32 <= len(verifier) <= 128):
+            return False
+    elif join_mode == "code":
+        if verifier not in {"", None}:
+            return False
+    else:
         return False
     if not (isinstance(public_key, str) and 40 <= len(public_key) <= 80):
         return False
@@ -128,7 +149,12 @@ async def _join_viewer(ws: ServerConnection, hello: dict[str, Any]) -> Session:
             SESSIONS.pop(sid, None)
             _record_join_failure(ip, now)
             raise ValueError("session expired")
-        if not secrets.compare_digest(session.join_verifier, hello["join_verifier"]):
+        join_mode = hello.get("join_mode", "invite")
+        if join_mode == "code":
+            if not TRUSTED_CODE_JOIN or not _trusted_code_ip(ip):
+                _record_join_failure(ip, now)
+                raise ValueError("session code join is unavailable on this relay")
+        elif not secrets.compare_digest(session.join_verifier, hello["join_verifier"]):
             _record_join_failure(ip, now)
             raise ValueError("invalid invite")
         if session.viewer is not None:
