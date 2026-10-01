@@ -1,9 +1,11 @@
 # KeepGoing — Plugin Directory submission kit
 
 Version: **1.2.0-beta.24**
-Prepared: **30 September 2026**
+Prepared: **1 October 2026**
 
 ## Package
+
+Existing OpenAI Directory identity: `app-6abc15dcb6688191bc5156ae089435dc`. Keep this exact `plugin.json` name when uploading a new version to the existing KeepGoing listing; `KeepGoing` remains the display name and `keepgoing` remains the MCP server name.
 
 Submission source:
 

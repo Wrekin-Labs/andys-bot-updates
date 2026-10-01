@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "keepgoing",
+  "name": "app-6abc15dcb6688191bc5156ae089435dc",
   "version": "1.2.0-beta.24",
   "description": "Run substantial supported AI work as one durable KeepGoing job that can continue across model turns and be recovered later.",
   "author": {
