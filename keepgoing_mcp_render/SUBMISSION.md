@@ -302,9 +302,8 @@ KeepGoing 1.2 introduces a KeepGoing-owned durable job model on top of OpenAI Ag
 - Independent website payment-provider live authorization and account-activation testing.
 - Dedicated reviewer account.
 - Demo recording URL.
-- OpenAI domain challenge.
-- Plugin ZIP upload and automated findings.
-- MCP tool scan/rescan.
+- Corrected beta.24 ZIP uploaded on 1 October; metadata and skill automated checks passed. Existing associated MCP app reports Domain verified.
+- Reconnect the existing app's missing/expired scanner authorization, resolve its relationship to the portable `keepgoing` server, and complete MCP discovery/rescan. Confirm beta.24 review cases and release notes replace the earlier associated-app values before submission; see `COMMERCIAL_RELEASE_STATUS.md`.
 - OpenAI review approval.
 
 Repository code can prepare the technical package, but publisher verification, live credentials, payment authorization and OpenAI review require owner/external action.

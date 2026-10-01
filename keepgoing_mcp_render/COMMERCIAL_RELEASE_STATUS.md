@@ -33,6 +33,7 @@ Post-migration production readiness was rechecked: `version=1.2.0-beta.23`, `ok=
 - Production-dependency audit: `npm audit --omit=dev` reported zero vulnerabilities at all severities.
 - ZIP byte reproducibility was checked after changing input file modification times.
 - First reconciled CI: https://github.com/chipblock2/andys-bot-updates/actions/runs/36788601180 — passed on `fef8d65a27ab120e265969f12206c9850f398eeb` before the final exact-head checkout/prompt updates.
+- Identity-corrected candidate CI: https://github.com/chipblock2/andys-bot-updates/actions/runs/36825971558 — passed on `cc1f587dac4af44ec919c95f034d2919f42d2186`. Downloaded artifact `11144877811` matches the local nine-file ZIP byte for byte; its provenance records that SHA. The subsequent handoff-only commit must also pass CI and be deployed; use PR #49 for that final evidence.
 - **Final exact-commit evidence is recorded in the PR #49 description after this status commit is pushed:** final head SHA, passing CI run, matching canary deployment and artifact provenance. This document cannot embed its own commit SHA. Do not substitute the earlier green run for the final check.
 
 ## Beta.24 canary
@@ -41,6 +42,7 @@ Created the separate free-plan Frankfurt service `srv-daup8md9fdbs739qsqp0` on t
 - URL: https://keepgoing-v12-canary.onrender.com
 - Dashboard: https://dashboard.render.com/web/srv-daup8md9fdbs739qsqp0
 - 1 October: configured the existing narrow durable-store URL and OAuth-code ledger URL on the canary; no secret or billing configuration copied. Environment-only redeploy `dep-dauvu60473hc73cth8hg` is live at `8cc5c0a52c9a91826571d75fd733f2e1e8b25d47`.
+- Identity-corrected deployment `dep-dav02el9fdbs73al9bc0` became live on 1 October at 06:45:11 UTC on `cc1f587dac4af44ec919c95f034d2919f42d2186`, superseding the environment-only deployment. Exact-commit preflight passes health, OAuth metadata/PKCE, unauthenticated MCP rejection and public pages; readiness alone fails for missing runtime secrets.
 - Initial successful deploy: `dep-daup8n59fdbs739qsrtg`, exact commit `fef8d65a27ab120e265969f12206c9850f398eeb`.
 - Build runs `npm ci --ignore-scripts`, the full regression suite and SQL execution tests; startup also runs verification.
 - Node 24.19.0, v1.2 enabled, owner-canary-only enabled, Relay admin disabled, PayPal sandbox selected. No live payment or production credential was copied.
@@ -51,14 +53,18 @@ After secure credential setup, run `npm run preflight -- https://keepgoing-v12-c
 
 ## Credentials and publisher gates
 
-- The Render connector supports secret updates but no safe secret-copy/read operation. Configure the canary securely in Render: `OPENAI_API_KEY`, `KEEPGOING_OWNER_TOKEN_HASH`, `KEEPGOING_DURABLE_STORE_URL` plus `KEEPGOING_DURABLE_STORE_TOKEN` (prefer the existing narrow proxy), `KEEPGOING_OAUTH_SECRET`, `KEEPGOING_OAUTH_CODE_URL`, and that ledger's required backend authorization. Configure subscriber auth/billing endpoints only for reviewer/customer validation; keep canary checkout sandboxed. Do not paste secrets into chat or commit them.
+- The Render connector supports secret updates but no safe secret-copy/read operation. Configure the canary securely in Render: `OPENAI_API_KEY`, `KEEPGOING_OWNER_TOKEN_HASH`, `KEEPGOING_DURABLE_STORE_TOKEN` (existing narrow proxy), `KEEPGOING_OAUTH_SECRET`, and `KEEPGOING_BILLING_INGEST_TOKEN` for the OAuth-code ledger. The durable-store and OAuth-code URLs are already configured. Configure subscriber auth/billing endpoints only for reviewer/customer validation; keep canary checkout sandboxed. Do not paste secrets into chat or commit them.
 - For webhook proof, register the canary `/openai/webhook` endpoint with the Agents-session event stream and set `OPENAI_WEBHOOK_SECRET` in Render. Verify a real signed event and replay rejection. Current local signature tests do not constitute live delivery evidence.
 - On 1 October, OpenAI Platform target lookup succeeded for the connected Personal organization / Default project. New-key creation was authorized in chat, but secure local-destination confirmation twice returned `not_approved`; no new key was created or written.
 - Publisher sign-in is now successful. The existing KeepGoing entry uses identity `app-6abc15dcb6688191bc5156ae089435dc` and shows Individual — ANDREW ROBERT EASTMENT. No legal attestation was accepted.
 - The first CI ZIP upload was rejected because its portable name `keepgoing` did not match this existing identity. Corrected both manifests and the package identity regression check; preserve the existing listing rather than create a duplicate. Portal validation and subsequent exact-commit evidence are recorded in PR #49 as observed.
+- The corrected ZIP was accepted as draft `appsub_6abe01318a5c81918aac0e5e468a32cb`, version `1.2.0-beta.24`. Metadata shows **No Issues** and `keepgoing-get-started` shows **Checks passed**. The new neutral `/plugin` website, description and assets are present. It remains **Not submitted / Not published**.
+- The MCP selector has both the new portable `keepgoing` server (connection unknown; no Connect control shown) and the existing associated `KeepGoing` app. The associated app points to the same production `/mcp`, reports **Domain verified**, and requires authorization. A real rescan failed with: “Authorization for scanning is missing or no longer works. Reconnect your account in the plugin editor, then rescan.” No tools were discovered and no successful MCP scan is claimed. Do not replace the existing domain challenge or create a duplicate listing.
+- Saved nonsecret reviewer sign-in instructions and explicitly recorded that reviewer activation credentials are pending. The portal retains earlier associated-app test cases and beta.22 release notes while the uploaded package declares beta.24 cases/notes. Reconcile the associated-app binding and confirm the imported values after reconnecting; do not claim that package upload updated those legacy app fields. All five existing positive and three negative cases were inspected and preserved.
+- The portal requires `extensions.com.openai.review.demo_recording_url` in a new ZIP before MCP submission. Supply a real authenticated recording after live drills; no placeholder or invented video was added.
 - Create/select a dedicated reviewer account and enter its credentials only in the secure review form.
 - Provide a reviewer-accessible recording of the real authenticated flow. No demo URL is fabricated in the package.
-- Complete the portal's actual domain challenge, MCP/skill scan and five positive/three negative cases against the reviewer account.
+- Reconnect reviewer authorization, resolve the portable-server/associated-app setup, and complete the MCP scan plus five positive/three negative cases against the exact release. Metadata/skill checks and the existing app's domain verification are already complete.
 - Complete identity verification and policy attestations personally. Submit/publish only after all live gates and OpenAI review are complete.
 
 ## Submission package
