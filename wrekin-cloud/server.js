@@ -9,11 +9,11 @@ const STARTED_AT = new Date().toISOString();
 const modules = [
   { name: 'Wrekin Forge', key: 'forge', purpose: 'Source control, branches, reviews and CI', status: 'planned', foundation: 'Forgejo / Git' },
   { name: 'Wrekin Base', key: 'base', purpose: 'PostgreSQL, auth, storage, realtime and APIs', status: 'bootstrap', foundation: 'PostgreSQL / Supabase-compatible services' },
-  { name: 'Wrekin Deploy', key: 'deploy', purpose: 'Builds, previews, releases, domains and TLS', status: 'building', foundation: 'Render bootstrap → Wrekin runtime' },
-  { name: 'Wrekin Runtime', key: 'runtime', purpose: 'Web services, workers, cron and containers', status: 'building', foundation: 'Container nodes' },
+  { name: 'Wrekin Deploy', key: 'deploy', purpose: 'Builds, previews, releases, domains and TLS', status: 'running', foundation: 'Render bootstrap; Wrekin deploy control plane online' },
+  { name: 'Wrekin Runtime', key: 'runtime', purpose: 'Web services, workers, cron and containers', status: 'running', foundation: 'Bootstrap node: wrekin-runtime.onrender.com' },
   { name: 'Wrekin Agents', key: 'agents', purpose: 'AI agents, triggers, tools, approvals and runs', status: 'planned', foundation: 'Wrekin orchestration' },
   { name: 'Wrekin Relay', key: 'relay', purpose: 'Authorised workstation and local software bridge', status: 'running', foundation: 'Project Relay' },
-  { name: 'Wrekin Monitor', key: 'monitor', purpose: 'Health, logs, uptime, metrics and incidents', status: 'building', foundation: 'Wrekin observability' },
+  { name: 'Wrekin Monitor', key: 'monitor', purpose: 'Health, logs, uptime, metrics and incidents', status: 'running', foundation: 'Health checks: wrekin-monitor.onrender.com' },
   { name: 'Wrekin Secrets', key: 'secrets', purpose: 'Scoped secrets, rotation and audit', status: 'planned', foundation: 'Encrypted secret references' },
   { name: 'Wrekin Billing', key: 'billing', purpose: 'Plans, subscriptions, usage and payments', status: 'planned', foundation: 'Provider adapters' }
 ];
@@ -103,17 +103,17 @@ a{color:var(--accent)}
 <section>
   <h2>One project, one operating surface</h2>
   <div class="flow">
-    <div class="step">Code</div><div class="arrow">→</div>
-    <div class="step">Database</div><div class="arrow">→</div>
-    <div class="step">Build</div><div class="arrow">→</div>
+    <div class="step">Code</div><div class="arrow">â†’</div>
+    <div class="step">Database</div><div class="arrow">â†’</div>
+    <div class="step">Build</div><div class="arrow">â†’</div>
     <div class="step">Deploy</div>
   </div>
   <div class="grid">${cards}</div>
 </section>
 
 <footer class="footer">
-  <span>Wrekin Labs • Wrekin Cloud bootstrap</span>
-  <span><a href="/health">Health</a> · <a href="/api/status">Status API</a></span>
+  <span>Wrekin Labs â€¢ Wrekin Cloud bootstrap</span>
+  <span><a href="/health">Health</a> Â· <a href="/api/status">Status API</a></span>
 </footer>
 </main>
 </body>
