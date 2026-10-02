@@ -1,5 +1,5 @@
 {
-  "description": "Multi-tenant app configuration and PWA generation layer for Wrekin Cloud.",
+  "description": "Multi-tenant app configuration, builder and PWA generation layer for Wrekin Cloud.",
   "engines": {
     "node": ">=20"
   },
@@ -9,5 +9,5 @@
     "start": "node server.js",
     "test": "node --test self-test.js"
   },
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
