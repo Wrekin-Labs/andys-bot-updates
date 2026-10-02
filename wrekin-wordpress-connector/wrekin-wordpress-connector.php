@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Wrekin WordPress Connector
  * Description: Secure connector for Wrekin Cloud WordPress inspection, diagnostics and approved maintenance actions.
- * Version: 0.3.0
+ * Version: 0.3.1
  * Author: Wrekin Labs
  */
 
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Wrekin_WordPress_Connector {
-    const VERSION = '0.3.0';
+    const VERSION = '0.3.1';
     const OPTION_SECRET = 'wrekin_connector_secret';
     const REST_NS = 'wrekin/v1';
     const MAX_CLOCK_SKEW = 300;
