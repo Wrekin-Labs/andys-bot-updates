@@ -173,7 +173,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/" && req.method === "GET") return serveFile(res, "index.html", "text/html; charset=utf-8");
   if (url.pathname === "/app.js" && req.method === "GET") return serveFile(res, "app.js", "text/javascript; charset=utf-8");
   if (url.pathname === "/api/health" && req.method === "GET") {
-    return json(res, 200, { ok: true, version: "0.1.0", configured: Boolean(CONTROL_TOKEN), clients: clients.size });
+    return json(res, 200, { ok: true, version: "0.1.1", configured: Boolean(CONTROL_TOKEN), clients: clients.size });
   }
   const viewRequest = req.method === "GET" && (url.pathname === "/api/snapshot" || url.pathname === "/api/stream");
   if (url.pathname.startsWith("/api/") && !(LOCAL_VIEW && viewRequest) && !authorized(req)) {
@@ -212,7 +212,7 @@ server.requestTimeout = 15_000;
 server.headersTimeout = 20_000;
 server.keepAliveTimeout = 5_000;
 server.listen(PORT, HOST, () => {
-  console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.1.0", local_view: LOCAL_VIEW });
+  console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.1.1", local_view: LOCAL_VIEW });
 });
 
 
@@ -224,5 +224,6 @@ const stopAdapters = startAdapters({
   }
 });
 for (const signal of ["SIGINT","SIGTERM"]) process.once(signal, () => { stopAdapters(); server.close(() => process.exit(0)); });
+
 
 
