@@ -1,0 +1,56 @@
+﻿name: RelayDesk alpha
+
+on:
+  push:
+    branches:
+      - relaydesk-v0.2-alpha.3
+    paths:
+      - "relaydesk/**"
+      - ".github/workflows/relaydesk-alpha.yml"
+  pull_request:
+    paths:
+      - "relaydesk/**"
+      - ".github/workflows/relaydesk-alpha.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: relaydesk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            relaydesk/requirements-dev.txt
+            relaydesk/requirements-host.txt
+            relaydesk/requirements-controller.txt
+            relaydesk/requirements-server.txt
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Install Windows build dependencies
+        run: python -m pip install -r requirements-host.txt -r requirements-controller.txt "pyinstaller>=6,<7"
+      - name: Build Host
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all dxcam --name RelayDeskHost host_gui.py
+      - name: Build Viewer
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name RelayDeskViewer controller.py
+      - name: Build Relay
+        run: python -m PyInstaller --noconfirm --clean --onefile --noconsole --name RelayDeskRelay relay_server.py
+      - name: Hash artifacts
+        shell: pwsh
+        run: Get-FileHash -Algorithm SHA256 dist\RelayDesk*.exe | Format-Table -AutoSize
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relaydesk-windows-alpha
+          path: relaydesk/dist/RelayDesk*.exe
+          if-no-files-found: error
+          retention-days: 14

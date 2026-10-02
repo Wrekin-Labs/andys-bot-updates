@@ -1,0 +1,28 @@
+name: RelayDesk tests
+
+on:
+  pull_request:
+    paths:
+      - 'relaydesk/**'
+      - '.github/workflows/relaydesk-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'relaydesk/**'
+      - '.github/workflows/relaydesk-tests.yml'
+
+jobs:
+  python-protocol:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relaydesk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m py_compile shared.py relay_server.py host.py host_gui.py controller.py
+      - run: python -m pytest -q
