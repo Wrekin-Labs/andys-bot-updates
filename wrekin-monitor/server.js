@@ -145,6 +145,13 @@ async function wordpressChecks() {
           connector_paired:Boolean(site.credential_ref),
           connector_status_code:connectorStatus,
           signed_connector:signed,
+          rollout:{
+            installed_version:site?.metadata?.installed_connector_version || null,
+            recommended_version:site?.metadata?.recommended_connector_version || null,
+            pairing_state:site?.metadata?.pairing_state || null,
+            upgrade_state:site?.metadata?.upgrade_state || null,
+            last_signed_diagnostics_at:site?.metadata?.last_signed_diagnostics_at || null
+          },
           checked_at:new Date().toISOString()
         });
       } catch (error) {
@@ -201,6 +208,11 @@ function renderCard(x){
       if(x.signed_connector.connector_version) extra += ' · v'+x.signed_connector.connector_version;
       if(Array.isArray(x.signed_connector.backup_providers) && x.signed_connector.backup_providers.length) extra += '<br>Backup '+x.signed_connector.backup_providers.map(function(p){return p.provider}).join(', ');
       if(x.signed_connector.wp_mail_smtp_active) extra += '<br>Mail '+(x.signed_connector.using_php_mail?'PHP mail':'SMTP/provider');
+    }
+    if(x.rollout){
+      if(x.rollout.upgrade_state) extra += '<br>Rollout '+x.rollout.upgrade_state.replaceAll('_',' ');
+      if(x.rollout.recommended_version && x.rollout.installed_version && x.rollout.recommended_version!==x.rollout.installed_version) extra += ' · '+x.rollout.installed_version+' → '+x.rollout.recommended_version;
+      if(x.rollout.pairing_state) extra += '<br>'+x.rollout.pairing_state.replaceAll('_',' ');
     }
   }
   return '<article class="card"><div class="k">'+x.name+'</div><div class="state '+cls+'">'+state+'</div><div class="m">HTTP '+code+' | '+x.latency_ms+' ms'+extra+'<br>'+new Date(x.checked_at).toLocaleString()+'</div></article>';
