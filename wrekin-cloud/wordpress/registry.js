@@ -1,4 +1,4 @@
-class WordPressRegistry {
+﻿class WordPressRegistry {
   constructor({
     registryUrl,
     registryToken,
@@ -120,6 +120,17 @@ class WordPressRegistry {
     throw new Error('registry_not_configured');
   }
 
+async listAudit({ siteId = null, limit = 50 } = {}) {
+    if (this.mode() === 'gateway' || this.mode() === 'rpc') {
+      return this.call('list_audit', { siteId, limit });
+    }
+    if (this.mode() === 'direct') {
+      const filter = siteId ? ('&site_id=eq.' + encodeURIComponent(siteId)) : '';
+      return this.requestDirect('wrekin_wordpress_audit?select=id,site_id,action,risk,status,checkpoint_id,details,created_at&order=created_at.desc&limit=' + Math.min(Math.max(Number(limit)||50,1),200) + filter);
+    }
+    throw new Error('registry_not_configured');
+  }
+
   async audit(event) {
     if (this.mode() === 'gateway' || this.mode() === 'rpc') return this.call('audit', { event });
     if (this.mode() === 'direct') {
@@ -141,3 +152,4 @@ class WordPressRegistry {
 }
 
 module.exports = { WordPressRegistry };
+

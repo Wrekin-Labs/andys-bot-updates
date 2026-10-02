@@ -1,4 +1,4 @@
-﻿const http = require('http');
+const http = require('http');
 const os = require('os');
 const crypto = require('crypto');
 const { URL } = require('url');
@@ -8,6 +8,8 @@ const { WordPressSecretStore } = require('./wordpress/secret-store');
 const { WrekinConnectorClient } = require('./wordpress/connector-client');
 const { versionPlan, verifyVersion } = require('./wordpress/operations');
 const { publicSiteDiagnostic, probePath } = require('./wordpress/diagnostics');
+const { simplePerformanceAudit, pageSpeedAudit } = require('./wordpress/performance');
+const { backupPlan, restoreGuard } = require('./wordpress/backups');
 const { planHostAction } = require('./wordpress/host-plan');
 const { assertSafeWordPressUrl } = require('./wordpress/url-safety');
 
@@ -210,7 +212,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/wordpress/audit') {
+    if (!registry.configured()) return json(res, 503, { error: 'registry_not_configured' });
+    try {
+      const siteId = url.searchParams.get('siteId') || null;
+      const limit = Number(url.searchParams.get('limit') || 50);
+      return json(res, 200, await registry.listAudit({ siteId, limit }));
+    } catch (error) {
+      return json(res, 502, { error: error.message || 'audit_read_failed' });
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/wordpress/sites') {
+
     if (!registry.configured()) return json(res, 503, { error: 'registry_not_configured' });
     try {
       return json(res, 200, await registry.listSites());
@@ -266,7 +280,41 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/performance') {
+    try {
+      const body = await readJson(req);
+      const site = assertSafeWordPressUrl(body.site);
+      const path = typeof body.path === 'string' ? body.path : '/';
+      const simple = await simplePerformanceAudit(site, path);
+      const pageSpeed = body.pageSpeed === true
+        ? await pageSpeedAudit(site, path, { strategy: body.strategy === 'desktop' ? 'desktop' : 'mobile' })
+        : { configured: false, reason: 'not_requested' };
+      return json(res, 200, { simple, pageSpeed });
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'performance_audit_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/backup/plan') {
+    try {
+      const body = await readJson(req);
+      return json(res, 200, backupPlan(body.capabilities || {}, body.action || 'create'));
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'backup_plan_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/backup/restore-guard') {
+    try {
+      const body = await readJson(req);
+      return json(res, 200, restoreGuard(body));
+    } catch (error) {
+      return json(res, 409, { error: error.message || 'restore_guard_failed' });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/wordpress/plan') {
+
     try {
       const body = await readJson(req);
       return json(res, 200, wordpressManager.plan(body.action, body.payload || {}));
