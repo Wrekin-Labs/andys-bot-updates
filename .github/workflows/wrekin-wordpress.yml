@@ -1,0 +1,39 @@
+name: Wrekin WordPress Manager
+
+on:
+  push:
+    branches:
+      - wrekin-cloud-v0.1
+    paths:
+      - 'wrekin-cloud/**'
+      - 'wrekin-wordpress-connector/**'
+      - '.github/workflows/wrekin-wordpress.yml'
+  pull_request:
+    paths:
+      - 'wrekin-cloud/**'
+      - 'wrekin-wordpress-connector/**'
+      - '.github/workflows/wrekin-wordpress.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: wrekin-cloud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax check
+        run: node --check server.js
+      - name: WordPress Manager tests
+        run: npm test
+      - name: Verify connector release checksum
+        working-directory: .
+        run: |
+          echo "A272CC3FF2BABEEC5E4FC10E610EDCA1B11219F72BABC11540317AE20616F600  releases/wrekin-wordpress-connector-0.2.0.zip" | sha256sum -c -

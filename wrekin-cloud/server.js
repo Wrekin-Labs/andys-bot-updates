@@ -105,7 +105,7 @@ function statusClass(status) {
   return 'muted';
 }
 
-function page() {
+async function page() {
   const cards = modules.map(m => `
     <article class="card">
       <div class="row">
@@ -118,6 +118,33 @@ function page() {
       <p>${m.purpose}</p>
       <div class="foundation">${m.foundation}</div>
     </article>`).join('');
+
+  let wpSiteCards = '<article class="card"><div class="eyebrow">WORDPRESS</div><h3>No registered sites</h3><p>Pair WordPress sites to manage them from Wrekin Cloud.</p></article>';
+  if (registry.configured()) {
+    try {
+      const registered = await registry.listSites();
+      const sites = Array.isArray(registered && registered.sites) ? registered.sites : [];
+      if (sites.length) {
+        wpSiteCards = sites.map(site => {
+          const paired = Boolean(site.credential_ref);
+          return `
+            <article class="card">
+              <div class="row">
+                <div>
+                  <div class="eyebrow">WORDPRESS SITE</div>
+                  <h3>${site.name}</h3>
+                </div>
+                <span class="pill ${paired ? 'ok' : 'warn'}">${paired ? 'paired' : 'monitor-only'}</span>
+              </div>
+              <p>${site.base_url}</p>
+              <div class="foundation">Relay: ${site.relay_device || 'not assigned'} &middot; Status: ${site.status || 'unknown'}</div>
+            </article>`;
+        }).join('');
+      }
+    } catch (error) {
+      wpSiteCards = '<article class="card"><div class="eyebrow">WORDPRESS</div><h3>Registry unavailable</h3><p>Wrekin Cloud could not load the WordPress registry.</p></article>';
+    }
+  }
 
   return `<!doctype html>
 <html lang="en">
@@ -167,6 +194,12 @@ a{color:var(--accent)}
     <div class="step">Deploy</div>
   </div>
   <div class="grid">${cards}</div>
+</section>
+
+<section>
+  <h2>WordPress fleet</h2>
+  <p class="lead">Registered WordPress sites. Monitor-only sites are checked publicly; paired sites can use the signed Wrekin Connector for maintenance operations.</p>
+  <div class="grid">${wpSiteCards}</div>
 </section>
 
 <footer class="footer">
@@ -420,7 +453,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/') {
-    return html(res, page());
+    return html(res, await page());
   }
 
   return json(res, 404, { error: 'not_found' });
