@@ -1,8 +1,8 @@
-<?php
+﻿<?php
 /**
  * Plugin Name: Wrekin WordPress Connector
  * Description: Secure connector for Wrekin Cloud WordPress inspection, diagnostics and approved maintenance actions.
- * Version: 0.3.1
+ * Version: 0.3.2
  * Author: Wrekin Labs
  */
 
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Wrekin_WordPress_Connector {
-    const VERSION = '0.3.1';
+    const VERSION = '0.3.2';
     const OPTION_SECRET = 'wrekin_connector_secret';
     const REST_NS = 'wrekin/v1';
     const MAX_CLOCK_SKEW = 300;
@@ -450,6 +450,7 @@ final class Wrekin_WordPress_Connector {
         return rest_ensure_response([
             'wp_mail_smtp_active' => defined('WPMS_PLUGIN_VER') || defined('WP_MAIL_SMTP_VERSION'),
             'mailer' => $mailer,
+            'using_php_mail' => empty($mailer) || $mailer === 'mail',
         ]);
     }
 
@@ -474,18 +475,21 @@ final class Wrekin_WordPress_Connector {
         $plugins = get_plugins();
         $known = [
             'updraftplus/updraftplus.php' => 'UpdraftPlus',
+            'all-in-one-wp-migration/all-in-one-wp-migration.php' => 'All-in-One WP Migration',
             'all-in-one-wp-migration/master.php' => 'All-in-One WP Migration',
             'backwpup/backwpup.php' => 'BackWPup',
             'duplicator/duplicator.php' => 'Duplicator',
         ];
         $available = [];
+        $seen = [];
         foreach ($known as $file => $name) {
-            if (isset($plugins[$file])) {
+            if (isset($plugins[$file]) && empty($seen[$name])) {
                 $available[] = [
                     'provider' => $name,
                     'file' => $file,
                     'active' => is_plugin_active($file),
                 ];
+                $seen[$name] = true;
             }
         }
         return rest_ensure_response([
@@ -621,3 +625,5 @@ final class Wrekin_WordPress_Connector {
 }
 
 Wrekin_WordPress_Connector::init();
+
+

@@ -1,8 +1,8 @@
-# Wrekin WordPress Connector
+﻿# Wrekin WordPress Connector
 
 Secure WordPress-side connector for Wrekin Cloud.
 
-## Version 0.3.1
+## Version 0.3.2
 
 ### Security
 - HMAC-SHA256 signed requests.
@@ -38,7 +38,13 @@ Secure WordPress-side connector for Wrekin Cloud.
 4. WordPress sends its connector secret directly to Wrekin Cloud over HTTPS.
 5. Wrekin validates the one-time code, stores the secret in Vault, and updates the site registry with only a credential reference.
 
-Release zip: `releases/wrekin-wordpress-connector-0.3.1.zip`
+Release zip: `releases/wrekin-wordpress-connector-0.3.2.zip`
 
 
 Packaging fix in v0.3.1: ZIP entry paths are normalised to forward slashes for Linux/WordPress compatibility.
+
+### 0.3.2 fixes
+- Correct All-in-One WP Migration detection for the current plugin path.
+- Avoid duplicate backup-provider entries.
+- Report when WP Mail SMTP is still using PHP mail.
+
