@@ -53,6 +53,12 @@ test('http endpoints respond', async () => {
     const manifest = await fetch(`http://127.0.0.1:${address.port}/api/apps/smashroom/manifest.webmanifest`).then(r => r.json());
     assert.equal(manifest.name, 'The Smashroom');
 
+    const builderResponse = await fetch(`http://127.0.0.1:${address.port}/builder`);
+    const builder = await builderResponse.text();
+    assert.equal(builderResponse.status, 200);
+    assert.match(builder, /Create a branded app/);
+    assert.match(builder, /Generate app preview/);
+
     const previewResponse = await fetch(`http://127.0.0.1:${address.port}/preview/smashroom`);
     const preview = await previewResponse.text();
     assert.equal(previewResponse.status, 200);
