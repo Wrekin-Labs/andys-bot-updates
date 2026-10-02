@@ -5,11 +5,11 @@
   "name": "wrekin-project-control-center",
   "private": true,
   "scripts": {
-    "check": "node --check server.mjs && node --check adapters.mjs && node --check public/app.js && node --check test/smoke.mjs && node --check test/sse.mjs && node --check test/persistence.mjs",
+    "check": "node --check server.mjs && node --check engine.mjs && node --check adapters.mjs && node --check public/app.js && node --check test/engine.mjs && node --check test/smoke.mjs && node --check test/sse.mjs && node --check test/persistence.mjs",
     "start": "node server.mjs",
-    "test": "node test/smoke.mjs && node test/sse.mjs && node test/persistence.mjs",
+    "test": "node test/engine.mjs && node test/smoke.mjs && node test/sse.mjs && node test/persistence.mjs",
     "verify": "npm run check && npm test"
   },
   "type": "module",
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

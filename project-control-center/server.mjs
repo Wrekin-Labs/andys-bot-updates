@@ -1,8 +1,9 @@
-﻿import http from "node:http";
+import http from "node:http";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { startAdapters } from "./adapters.mjs";
+import { EngineeringTaskStore } from "./engine.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, "public");
@@ -72,9 +73,7 @@ function cleanProgress(value) {
 
 function normalizeEvent(raw = {}) {
   const projectId = cleanString(raw.project_id, 80);
-  if (!projectId || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(projectId)) {
-    throw new Error("invalid project_id");
-  }
+  if (!projectId || !/^[a-z0-9][a-z0-9._-]{0,79}$/i.test(projectId)) throw new Error("invalid project_id");
   const allowed = new Set(["unknown","queued","working","healthy","blocked","needs_owner","failed","completed","paused"]);
   const status = allowed.has(String(raw.status || "")) ? String(raw.status) : "working";
   return {
@@ -95,6 +94,14 @@ function normalizeEvent(raw = {}) {
   };
 }
 
+let engineering;
+engineering = new EngineeringTaskStore({
+  onChange(change) {
+    schedulePersist();
+    broadcast({ type: "engineering", change, snapshot: snapshot() });
+  }
+});
+
 async function loadPersistedState() {
   try {
     const saved = JSON.parse(await readFile(STATE_FILE, "utf8"));
@@ -103,6 +110,7 @@ async function loadPersistedState() {
       projects.set(row.id, { ...projects.get(row.id), ...row });
     }
     for (const evt of Array.isArray(saved.events) ? saved.events.slice(0, MAX_EVENTS) : []) events.push(evt);
+    engineering.restore(saved.engineering_tasks);
   } catch (error) {
     if (error?.code !== "ENOENT") console.warn("control_center_state_load_error", String(error?.message || error).slice(0,160));
   }
@@ -114,7 +122,13 @@ function schedulePersist() {
     persistTimer = null;
     const temp = STATE_FILE + ".tmp";
     try {
-      const body = JSON.stringify({ version: 1, saved_at: new Date().toISOString(), projects: [...projects.values()], events: events.slice(0, MAX_EVENTS) });
+      const body = JSON.stringify({
+        version: 2,
+        saved_at: new Date().toISOString(),
+        projects: [...projects.values()],
+        events: events.slice(0, MAX_EVENTS),
+        engineering_tasks: engineering.list()
+      });
       await writeFile(temp, body, { encoding: "utf8", mode: 0o600 });
       await rename(temp, STATE_FILE);
     } catch (error) {
@@ -124,6 +138,7 @@ function schedulePersist() {
 }
 
 await loadPersistedState();
+
 function applyEvent(evt) {
   const old = projects.get(evt.project_id) || {};
   projects.set(evt.project_id, {
@@ -163,6 +178,8 @@ function snapshot() {
       failed: rows.filter(p => p.status === "failed").length,
       completed: rows.filter(p => p.status === "completed").length
     },
+    engineering_tasks: engineering.list(),
+    engineering_totals: engineering.summary(),
     recent_events: events.slice(0, 50)
   };
 }
@@ -200,28 +217,93 @@ async function readJson(req, limit = 32_000) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
+function actionError(error) {
+  const message = String(error?.message || "invalid_request");
+  if (message === "task_not_found") return [404, message];
+  if (message === "payload_too_large") return [413, message];
+  if (message === "approval_pending" || message === "no_pending_approval" || message === "task_completed" || message.startsWith("invalid_transition:")) return [409, message];
+  return [400, message.slice(0,160)];
+}
+
+function isReadRoute(req, pathname) {
+  return req.method === "GET" && (
+    pathname === "/api/snapshot" ||
+    pathname === "/api/stream" ||
+    pathname === "/api/engineering/tasks" ||
+    /^\/api\/engineering\/tasks\/[a-z0-9._-]+$/i.test(pathname)
+  );
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://localhost");
   if (url.pathname === "/" && req.method === "GET") return serveFile(res, "index.html", "text/html; charset=utf-8");
   if (url.pathname === "/app.js" && req.method === "GET") return serveFile(res, "app.js", "text/javascript; charset=utf-8");
+
   if (url.pathname === "/api/health" && req.method === "GET") {
-    return json(res, 200, { ok: true, version: "0.2.0", configured: Boolean(CONTROL_TOKEN), clients: clients.size });
+    return json(res, 200, {
+      ok: true,
+      version: "0.3.0",
+      configured: Boolean(CONTROL_TOKEN),
+      clients: clients.size,
+      engineering_tasks: engineering.summary().all
+    });
   }
-  const viewRequest = req.method === "GET" && (url.pathname === "/api/snapshot" || url.pathname === "/api/stream");
-  if (url.pathname.startsWith("/api/") && !(LOCAL_VIEW && viewRequest) && !authorized(req)) {
+
+  if (url.pathname.startsWith("/api/") && !(LOCAL_VIEW && isReadRoute(req, url.pathname)) && !authorized(req)) {
     res.setHeader("www-authenticate", 'Bearer realm="Project Control Center"');
     return json(res, 401, { error: "unauthorized" });
   }
+
   if (url.pathname === "/api/snapshot" && req.method === "GET") return json(res, 200, snapshot());
+
   if (url.pathname === "/api/events" && req.method === "POST") {
     try {
       const evt = normalizeEvent(await readJson(req));
       applyEvent(evt);
       return json(res, 202, { accepted: true, event_id: evt.id });
     } catch (error) {
-      return json(res, String(error?.message) === "payload_too_large" ? 413 : 400, { error: cleanString(error?.message, 120) || "invalid_event" });
+      const [status, message] = actionError(error);
+      return json(res, status, { error: message });
     }
   }
+
+  if (url.pathname === "/api/engineering/tasks" && req.method === "GET") {
+    return json(res, 200, { tasks: engineering.list(), totals: engineering.summary() });
+  }
+  if (url.pathname === "/api/engineering/tasks" && req.method === "POST") {
+    try {
+      const task = engineering.create(await readJson(req));
+      return json(res, 201, { task });
+    } catch (error) {
+      const [status, message] = actionError(error);
+      return json(res, status, { error: message });
+    }
+  }
+
+  const taskMatch = url.pathname.match(/^\/api\/engineering\/tasks\/([a-z0-9._-]+)$/i);
+  if (taskMatch && req.method === "GET") {
+    try { return json(res, 200, { task: engineering.get(taskMatch[1]) }); }
+    catch (error) {
+      const [status, message] = actionError(error);
+      return json(res, status, { error: message });
+    }
+  }
+
+  const actionMatch = url.pathname.match(/^\/api\/engineering\/tasks\/([a-z0-9._-]+)\/(transition|evidence|approval-request|approval-resolve)$/i);
+  if (actionMatch && req.method === "POST") {
+    try {
+      const body = await readJson(req);
+      const [id, action] = [actionMatch[1], actionMatch[2]];
+      if (action === "transition") return json(res, 200, { task: engineering.transition(id, body.phase, body) });
+      if (action === "evidence") return json(res, 201, { evidence: engineering.addEvidence(id, body), task: engineering.get(id) });
+      if (action === "approval-request") return json(res, 200, { task: engineering.requestApproval(id, body) });
+      if (action === "approval-resolve") return json(res, 200, { task: engineering.resolveApproval(id, body) });
+    } catch (error) {
+      const [status, message] = actionError(error);
+      return json(res, status, { error: message });
+    }
+  }
+
   if (url.pathname === "/api/stream" && req.method === "GET") {
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -237,6 +319,7 @@ const server = http.createServer(async (req, res) => {
     res.on("close", () => { clearInterval(keepalive); clients.delete(res); });
     return;
   }
+
   return json(res, 404, { error: "not_found" });
 });
 
@@ -244,10 +327,8 @@ server.requestTimeout = 15_000;
 server.headersTimeout = 20_000;
 server.keepAliveTimeout = 5_000;
 server.listen(PORT, HOST, () => {
-  console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.2.0", local_view: LOCAL_VIEW });
+  console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.3.0", local_view: LOCAL_VIEW });
 });
-
-
 
 const stopAdapters = startAdapters({
   ingest: (raw) => {
@@ -255,11 +336,7 @@ const stopAdapters = startAdapters({
     catch (error) { console.warn("control_center_adapter_event_rejected", String(error?.message || error).slice(0,160)); }
   }
 });
-for (const signal of ["SIGINT","SIGTERM"]) process.once(signal, () => { stopAdapters(); server.close(() => process.exit(0)); });
-
-
-
-
-
-
-
+for (const signal of ["SIGINT","SIGTERM"]) process.once(signal, () => {
+  stopAdapters();
+  server.close(() => process.exit(0));
+});
