@@ -5,7 +5,7 @@
   "name": "wrekin-project-control-center",
   "private": true,
   "scripts": {
-    "check": "node --check server.mjs && node --check public/app.js",
+    "check": "node --check server.mjs && node --check adapters.mjs && node --check public/app.js",
     "start": "node server.mjs",
     "test": "node test/smoke.mjs",
     "verify": "npm run check && npm test"

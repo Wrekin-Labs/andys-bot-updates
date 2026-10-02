@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { startAdapters } from "./adapters.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, "public");
@@ -15,9 +16,14 @@ const clients = new Set();
 const projects = new Map();
 const events = [];
 
-seedProject("keepgoing", "KeepGoing", "ai-orchestrator");
-seedProject("project-relay", "Project Relay", "remote-control");
-seedProject("github", "GitHub / CI", "source-control");
+try {
+  const registry = JSON.parse(await readFile(path.join(ROOT, "projects.json"), "utf8"));
+  for (const item of registry) seedProject(item.id, item.name, item.type || "project");
+} catch {
+  seedProject("keepgoing", "KeepGoing", "AI orchestration");
+  seedProject("project-relay", "Project Relay", "Remote control");
+  seedProject("github", "GitHub / CI", "Source control");
+}
 
 function seedProject(id, name, type) {
   projects.set(id, {
@@ -209,4 +215,13 @@ server.listen(PORT, HOST, () => {
   console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.1.0", local_view: LOCAL_VIEW });
 });
 
+
+
+const stopAdapters = startAdapters({
+  ingest: (raw) => {
+    try { applyEvent(normalizeEvent(raw)); }
+    catch (error) { console.warn("control_center_adapter_event_rejected", String(error?.message || error).slice(0,160)); }
+  }
+});
+for (const signal of ["SIGINT","SIGTERM"]) process.once(signal, () => { stopAdapters(); server.close(() => process.exit(0)); });
 

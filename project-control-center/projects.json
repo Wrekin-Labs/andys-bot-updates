@@ -1,0 +1,57 @@
+[
+  {
+    "id": "keepgoing",
+    "name": "KeepGoing",
+    "type": "AI orchestration"
+  },
+  {
+    "id": "project-relay",
+    "name": "Project Relay",
+    "type": "Remote control"
+  },
+  {
+    "id": "deskroute-ai",
+    "name": "DeskRoute AI",
+    "type": "SaaS"
+  },
+  {
+    "id": "giglink",
+    "name": "GigLink",
+    "type": "Marketplace"
+  },
+  {
+    "id": "eruk",
+    "name": "Electronic Repairs UK",
+    "type": "Website"
+  },
+  {
+    "id": "floorquote-ai",
+    "name": "FloorQuote AI",
+    "type": "Mobile app"
+  },
+  {
+    "id": "valve-bias-pro",
+    "name": "Valve Bias Pro",
+    "type": "Mobile / desktop app"
+  },
+  {
+    "id": "ask-shropshire",
+    "name": "Ask Shropshire",
+    "type": "Local discovery"
+  },
+  {
+    "id": "mommabscakes",
+    "name": "Mommabscakes",
+    "type": "Website"
+  },
+  {
+    "id": "walle",
+    "name": "WALL-E V2",
+    "type": "Robotics"
+  },
+  {
+    "id": "whatsapp-bridge",
+    "name": "WhatsApp ↔ ChatGPT Bridge",
+    "type": "Integration"
+  }
+]
