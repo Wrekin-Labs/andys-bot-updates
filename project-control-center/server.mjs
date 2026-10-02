@@ -202,7 +202,7 @@ const server = http.createServer(async (req, res) => {
     const keepalive = setInterval(() => {
       try { res.write(": keepalive\n\n"); } catch {}
     }, 15_000);
-    req.on("close", () => { clearInterval(keepalive); clients.delete(res); });
+    res.on("close", () => { clearInterval(keepalive); clients.delete(res); });
     return;
   }
   return json(res, 404, { error: "not_found" });
@@ -224,4 +224,5 @@ const stopAdapters = startAdapters({
   }
 });
 for (const signal of ["SIGINT","SIGTERM"]) process.once(signal, () => { stopAdapters(); server.close(() => process.exit(0)); });
+
 

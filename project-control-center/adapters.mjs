@@ -152,7 +152,7 @@ function createGithubPoller(emit, log) {
       if (!res.ok) throw new Error("GitHub returned " + res.status);
       const body = await res.json();
       emit({
-        project_id: "github",
+        project_id: "github-ci",
         project_name: "GitHub / CI",
         status: "healthy",
         stage: branch,
@@ -162,7 +162,7 @@ function createGithubPoller(emit, log) {
     } catch (error) {
       log.warn?.("control_center_github_poll_error", String(error?.message || error).slice(0,180));
       emit({
-        project_id: "github",
+        project_id: "github-ci",
         project_name: "GitHub / CI",
         status: "blocked",
         stage: "Repository status unavailable",
@@ -186,4 +186,5 @@ function mapKeepGoingStatus(status) {
   if (status === "cancelled") return "paused";
   return "unknown";
 }
+
 

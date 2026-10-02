@@ -10,6 +10,11 @@
     "type": "Remote control"
   },
   {
+    "id": "github-ci",
+    "name": "GitHub / CI",
+    "type": "Source control"
+  },
+  {
     "id": "deskroute-ai",
     "name": "DeskRoute AI",
     "type": "SaaS"
@@ -51,7 +56,7 @@
   },
   {
     "id": "whatsapp-bridge",
-    "name": "WhatsApp ↔ ChatGPT Bridge",
+    "name": "WhatsApp - ChatGPT Bridge",
     "type": "Integration"
   }
 ]
