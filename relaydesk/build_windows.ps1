@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
 $venv = Join-Path $PSScriptRoot '.venv-build'
@@ -15,10 +15,13 @@ Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
   --collect-all dxcam --name RelayDeskHost host_gui.py
 & $python -m PyInstaller --noconfirm --clean --onefile --windowed `
   --name RelayDeskViewer controller.py
+& $python -m PyInstaller --noconfirm --clean --onefile --noconsole `
+  --name RelayDeskRelay relay_server.py
 
 Write-Host ''
 Write-Host 'Built:'
 Write-Host "  $PSScriptRoot\dist\RelayDeskHost.exe"
 Write-Host "  $PSScriptRoot\dist\RelayDeskViewer.exe"
+Write-Host "  $PSScriptRoot\dist\RelayDeskRelay.exe"
 Write-Host ''
 Write-Host 'These are unsigned alpha binaries. Do not distribute publicly until code signing and update verification are in place.'
