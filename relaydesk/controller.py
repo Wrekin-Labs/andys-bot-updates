@@ -320,10 +320,10 @@ class ControllerApp:
         self.root.mainloop()
 
 
-def _prompt_connection(default_server: str) -> tuple[str, str, bool] | None:
+def _prompt_connection(default_server: str) -> tuple[str, str, bool, bool] | None:
     root = tk.Tk()
     root.title("RelayDesk — Connect")
-    root.geometry("620x300")
+    root.geometry("620x310")
     root.resizable(False, False)
     result: dict[str, object] = {}
 
@@ -332,17 +332,19 @@ def _prompt_connection(default_server: str) -> tuple[str, str, bool] | None:
     )
     tk.Label(
         root,
-        text="Paste the secure RelayDesk invite supplied by the person at the remote PC.",
+        text="Enter the 6-digit session code shown on the remote PC, or paste a secure invite.",
         anchor="w",
+        wraplength=570,
+        justify="left",
     ).pack(fill="x", padx=20)
 
-    invite_var = tk.StringVar()
+    join_var = tk.StringVar()
     server_var = tk.StringVar(value=default_server)
     view_only_var = tk.BooleanVar(value=False)
 
-    tk.Label(root, text="Secure invite").pack(anchor="w", padx=20, pady=(14, 2))
-    invite_entry = tk.Entry(root, textvariable=invite_var, font=("Consolas", 10))
-    invite_entry.pack(fill="x", padx=20)
+    tk.Label(root, text="Session code or secure invite").pack(anchor="w", padx=20, pady=(14, 2))
+    join_entry = tk.Entry(root, textvariable=join_var, font=("Consolas", 12))
+    join_entry.pack(fill="x", padx=20)
     tk.Label(root, text="Relay server").pack(anchor="w", padx=20, pady=(10, 2))
     tk.Entry(root, textvariable=server_var).pack(fill="x", padx=20)
     tk.Checkbutton(root, text="Request view only (no mouse/keyboard control)", variable=view_only_var).pack(
@@ -350,13 +352,20 @@ def _prompt_connection(default_server: str) -> tuple[str, str, bool] | None:
     )
 
     def connect_now() -> None:
-        token = invite_var.get().strip()
-        try:
-            Invite.decode(token)
-        except Exception as exc:
-            messagebox.showerror("RelayDesk", f"Invalid secure invite: {exc}", parent=root)
-            return
-        result["invite"] = token
+        value = join_var.get().strip()
+        is_code = len(value) == 6 and value.isdigit()
+        if not is_code:
+            try:
+                Invite.decode(value)
+            except Exception:
+                messagebox.showerror(
+                    "RelayDesk",
+                    "Enter a 6-digit session code or paste a valid secure invite.",
+                    parent=root,
+                )
+                return
+        result["value"] = value
+        result["is_code"] = is_code
         result["server"] = server_var.get().strip() or default_server
         result["view_only"] = bool(view_only_var.get())
         root.destroy()
@@ -365,13 +374,18 @@ def _prompt_connection(default_server: str) -> tuple[str, str, bool] | None:
     buttons.pack(fill="x", padx=20, pady=(6, 14))
     tk.Button(buttons, text="Connect", command=connect_now, width=16).pack(side="right")
     tk.Button(buttons, text="Cancel", command=root.destroy, width=12).pack(side="right", padx=(0, 8))
-    invite_entry.focus_set()
+    join_entry.focus_set()
     root.bind("<Return>", lambda _e: connect_now())
     root.mainloop()
 
-    if "invite" not in result:
+    if "value" not in result:
         return None
-    return str(result["invite"]), str(result["server"]), bool(result["view_only"])
+    return (
+        str(result["value"]),
+        str(result["server"]),
+        bool(result["view_only"]),
+        bool(result["is_code"]),
+    )
 
 
 def main() -> None:
@@ -394,7 +408,12 @@ def main() -> None:
         chosen = _prompt_connection(args.server)
         if not chosen:
             return
-        args.invite, args.server, args.view_only = chosen
+        value, args.server, args.view_only, is_code = chosen
+        if is_code:
+            args.code = value
+            ControllerApp(args, None, value).run()
+            return
+        args.invite = value
     invite = Invite.decode(args.invite)
     ControllerApp(args, invite).run()
 
