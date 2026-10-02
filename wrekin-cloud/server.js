@@ -1,10 +1,15 @@
-﻿const http = require('http');
+const http = require('http');
 const os = require('os');
 const { URL } = require('url');
 const { WrekinWordPressManager } = require('./wordpress/manager');
+const { WordPressRegistry } = require('./wordpress/registry');
+const { versionPlan, verifyVersion } = require('./wordpress/operations');
+const { publicSiteDiagnostic, probePath } = require('./wordpress/diagnostics');
+const { planHostAction } = require('./wordpress/host-plan');
+const { assertSafeWordPressUrl } = require('./wordpress/url-safety');
 
 const PORT = Number(process.env.PORT || 3000);
-const VERSION = process.env.WREKIN_VERSION || '0.2.0';
+const VERSION = process.env.WREKIN_VERSION || '0.3.0';
 const STARTED_AT = new Date().toISOString();
 
 const modules = [
@@ -15,12 +20,28 @@ const modules = [
   { name: 'Wrekin Agents', key: 'agents', purpose: 'AI agents, triggers, tools, approvals and runs', status: 'planned', foundation: 'Wrekin orchestration' },
   { name: 'Wrekin Relay', key: 'relay', purpose: 'Authorised workstation and local software bridge', status: 'running', foundation: 'Project Relay' },
   { name: 'Wrekin Monitor', key: 'monitor', purpose: 'Health, logs, uptime, metrics and incidents', status: 'running', foundation: 'Health checks: wrekin-monitor.onrender.com' },
-  { name: 'Wrekin Secrets', key: 'secrets', purpose: 'Scoped secrets, rotation and audit', status: 'planned', foundation: 'Encrypted secret references' },
+  { name: 'Wrekin Secrets', key: 'secrets', purpose: 'Scoped secrets, rotation and audit', status: 'bootstrap', foundation: 'Secret references + protected environment values' },
   { name: 'Wrekin Billing', key: 'billing', purpose: 'Plans, subscriptions, usage and payments', status: 'planned', foundation: 'Provider adapters' },
-  { name: 'Wrekin WordPress', key: 'wordpress', purpose: 'WordPress inspection, safe updates, content edits, checks and rollback', status: 'building', foundation: 'Wrekin WordPress Manager' }
+  { name: 'Wrekin WordPress', key: 'wordpress', purpose: 'WordPress inspection, safe updates, content edits, checks and rollback', status: 'running', foundation: 'Wrekin WordPress Manager' }
 ];
 
-const wordpressManager = new WrekinWordPressManager();
+const registry = new WordPressRegistry();
+const wordpressManager = new WrekinWordPressManager({
+  auditSink: async event => {
+    if (!registry.configured()) return;
+    try {
+      await registry.audit({
+        action: event.type || 'wordpress.event',
+        risk: event.risk || 'read',
+        status: event.status || 'ok',
+        checkpointId: event.checkpointId || null,
+        details: event
+      });
+    } catch (error) {
+      console.warn('wordpress audit sink failed:', error.message);
+    }
+  }
+});
 
 function json(res, status, body) {
   const payload = JSON.stringify(body, null, 2);
@@ -109,24 +130,24 @@ a{color:var(--accent)}
   <div class="meta">
     <span class="pill ok">control plane online</span>
     <span class="pill">v${VERSION}</span>
-    <span class="pill">bootstrap infrastructure</span>
+    <span class="pill ${registry.configured() ? 'ok' : 'warn'}">WP registry ${registry.configured() ? 'online' : 'unconfigured'}</span>
   </div>
 </section>
 
 <section>
   <h2>One project, one operating surface</h2>
   <div class="flow">
-    <div class="step">Code</div><div class="arrow">â†’</div>
-    <div class="step">Database</div><div class="arrow">â†’</div>
-    <div class="step">Build</div><div class="arrow">â†’</div>
+    <div class="step">Code</div><div class="arrow">&rarr;</div>
+    <div class="step">Database</div><div class="arrow">&rarr;</div>
+    <div class="step">Build</div><div class="arrow">&rarr;</div>
     <div class="step">Deploy</div>
   </div>
   <div class="grid">${cards}</div>
 </section>
 
 <footer class="footer">
-  <span>Wrekin Labs â€¢ Wrekin Cloud bootstrap</span>
-  <span><a href="/health">Health</a> Â· <a href="/api/status">Status API</a> Â· <a href="/api/wordpress/capabilities">WordPress API</a></span>
+  <span>Wrekin Labs &bull; Wrekin Cloud</span>
+  <span><a href="/health">Health</a> &middot; <a href="/api/status">Status API</a> &middot; <a href="/api/wordpress/capabilities">WordPress API</a></span>
 </footer>
 </main>
 </body>
@@ -139,12 +160,44 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/wordpress/capabilities') {
     return json(res, 200, {
       service: 'wrekin-wordpress-manager',
-      version: '0.1.0',
+      version: '0.3.0',
+      registry: { configured: registry.configured(), mode: registry.mode() },
       capabilities: wordpressManager.capabilities()
     });
   }
 
-if (req.method === 'POST' && url.pathname === '/api/wordpress/inspect') {
+  if (req.method === 'GET' && url.pathname === '/api/wordpress/registry/status') {
+    return json(res, 200, { configured: registry.configured(), mode: registry.mode() });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/wordpress/sites') {
+    if (!registry.configured()) return json(res, 503, { error: 'registry_not_configured' });
+    try {
+      return json(res, 200, await registry.listSites());
+    } catch (error) {
+      return json(res, 502, { error: error.message || 'registry_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/sites') {
+    if (!registry.configured()) return json(res, 503, { error: 'registry_not_configured' });
+    try {
+      const body = await readJson(req);
+      const baseUrl = assertSafeWordPressUrl(body.baseUrl);
+      const result = await registry.addSite({
+        name: String(body.name || '').trim(),
+        baseUrl,
+        credentialRef: body.credentialRef || null,
+        relayDevice: body.relayDevice || null,
+        metadata: body.metadata || {}
+      });
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'site_registration_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/inspect') {
     try {
       const body = await readJson(req);
       const result = await wordpressManager.inspectSite({ baseUrl: body.site });
@@ -154,12 +207,52 @@ if (req.method === 'POST' && url.pathname === '/api/wordpress/inspect') {
     }
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/check') {
+    try {
+      const body = await readJson(req);
+      const diagnostic = await publicSiteDiagnostic(body.site);
+      const paths = Array.isArray(body.paths) ? body.paths.slice(0, 20) : [];
+      const probes = [];
+      for (const path of paths) probes.push(await probePath(body.site, path));
+      return json(res, 200, { diagnostic, probes });
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'diagnostic_failed' });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/wordpress/plan') {
     try {
       const body = await readJson(req);
       return json(res, 200, wordpressManager.plan(body.action, body.payload || {}));
     } catch (error) {
       return json(res, 400, { error: error.message || 'invalid_request' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/update/plan') {
+    try {
+      const body = await readJson(req);
+      return json(res, 200, versionPlan(body.kind, body.slug, body.fromVersion, body.toVersion));
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'update_plan_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/update/verify') {
+    try {
+      const body = await readJson(req);
+      return json(res, 200, verifyVersion(body.plan, body.actualVersion));
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'verification_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/host/plan') {
+    try {
+      const body = await readJson(req);
+      return json(res, 200, planHostAction(body.action, body.args || {}));
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'host_plan_failed' });
     }
   }
 
@@ -183,7 +276,11 @@ if (req.method === 'POST' && url.pathname === '/api/wordpress/inspect') {
       service: 'wrekin-cloud-control-plane',
       version: VERSION,
       generated_at: new Date().toISOString(),
-      modules
+      modules,
+      wordpress: {
+        registryConfigured: registry.configured(),
+        registryMode: registry.mode()
+      }
     });
   }
 
@@ -197,4 +294,3 @@ if (req.method === 'POST' && url.pathname === '/api/wordpress/inspect') {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wrekin Cloud control plane v${VERSION} listening on ${PORT}`);
 });
-
