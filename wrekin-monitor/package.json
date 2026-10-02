@@ -1,8 +1,8 @@
 {
   "name": "wrekin-monitor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Bootstrap Wrekin Cloud health monitor.",
+  "description": "Wrekin infrastructure and WordPress health monitor.",
   "scripts": {
     "start": "node server.js"
   },
