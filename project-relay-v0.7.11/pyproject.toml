@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-relay"
+version = "0.7.10"
+description = "Safe local hardware and desktop capability layer for ChatGPT/MCP"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "mcp[cli]>=2,<3",
+  "starlette>=0.37",
+  "uvicorn>=0.30",
+  "pyserial>=3.5,<4",
+  "pypdf>=5,<7",
+  "openpyxl>=3.1,<4",
+  "python-docx>=1.1,<2",
+  "reportlab>=4,<5",
+  "regex>=2024.11,<2027",
+  "Pillow>=10,<12",
+  "websockets>=14,<16",
+  "pywinauto==0.6.9; sys_platform == 'win32'"
+]
+
+[project.scripts]
+relay = "project_relay.cli:main"
+relay-mcp = "project_relay.mcp_server:main"
+relay-gui = "project_relay.gui:main"
+relay-bridge = "project_relay.bridge_client:main"
+relay-cloud-dev = "project_relay.cloud_gateway:main"
+relay-pair = "project_relay.enrollment:main"
+relay-bootstrap = "project_relay.bootstrap:main"
+relay-update = "project_relay.updater:main"
+relay-release-upload = "project_relay.release_admin:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["project_relay*"]
+exclude = ["supabase*", "tests*", "scripts*"]
