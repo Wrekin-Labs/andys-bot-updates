@@ -64,14 +64,15 @@ function createKeepGoingPoller(emit, log) {
           project_id: "kg-" + String(row.job_id || "").slice(-20),
           project_name: "KeepGoing job " + String(row.job_id || "").slice(-8),
           status: mapped,
-          stage: "Durable job · " + String(row.status || "unknown"),
+          stage: "Durable job - " + String(row.status || "unknown"),
           message: row.safe_error_message || ("Tool profile: " + String(row.tool_profile || "web")),
           blocker: mapped === "blocked" || mapped === "failed" ? row.safe_error_message || "Job needs review" : null,
           needs_owner: mapped === "needs_owner",
           source: "keepgoing-adapter",
           job_id: row.job_id,
           attempt: row.attempt,
-          max_attempts: row.max_attempts
+          max_attempts: row.max_attempts,
+          progress: Number(row.max_attempts) > 0 ? Math.min(100, Math.round((Number(row.attempt || 0) / Number(row.max_attempts)) * 100)) : null
         });
       }
     } catch (error) {
@@ -186,6 +187,7 @@ function mapKeepGoingStatus(status) {
   if (status === "cancelled") return "paused";
   return "unknown";
 }
+
 
 
 
