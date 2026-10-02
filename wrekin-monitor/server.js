@@ -2,7 +2,7 @@ const http = require('http');
 const { URL } = require('url');
 
 const PORT = Number(process.env.PORT || 3000);
-const VERSION = process.env.WREKIN_MONITOR_VERSION || '0.2.0';
+const VERSION = process.env.WREKIN_MONITOR_VERSION || '0.3.0';
 const STARTED_AT = new Date().toISOString();
 
 const WREKIN_CONTROL_URL = (process.env.WREKIN_CONTROL_URL || 'https://wrekin-cloud.onrender.com').replace(/\/$/, '');
@@ -39,7 +39,7 @@ async function check(target) {
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(),5000);
   try {
-    const response = await fetch(target.url,{signal:controller.signal,headers:{'User-Agent':'Wrekin-Monitor/0.2'}});
+    const response = await fetch(target.url,{signal:controller.signal,headers:{'User-Agent':'Wrekin-Monitor/0.3'}});
     let body=null;
     try { body=await response.json(); } catch {}
     return {
@@ -109,17 +109,42 @@ async function wordpressChecks() {
             connectorResponse.ok;
         } catch {}
 
+        let signed = null;
+        if (site.credential_ref) {
+          try {
+            const connectorBody = JSON.stringify({ baseUrl: site.base_url, credentialRef: site.credential_ref });
+            const [statusInfo, backupInfo, mailInfo] = await Promise.all([
+              controlFetch('/api/wordpress/connector/status', { method:'POST', body:connectorBody }),
+              controlFetch('/api/wordpress/connector/backup-capabilities', { method:'POST', body:connectorBody }),
+              controlFetch('/api/wordpress/connector/mail', { method:'POST', body:connectorBody })
+            ]);
+            signed = {
+              ok:true,
+              connector_version:statusInfo?.connector_version || null,
+              wordpress_version:statusInfo?.wordpress_version || null,
+              php_version:statusInfo?.php_version || null,
+              backup_providers:Array.isArray(backupInfo?.providers) ? backupInfo.providers : [],
+              mailer:mailInfo?.mailer || null,
+              wp_mail_smtp_active:Boolean(mailInfo?.wp_mail_smtp_active),
+              using_php_mail:Boolean(mailInfo?.using_php_mail)
+            };
+          } catch (error) {
+            signed = { ok:false, error:error.message };
+          }
+        }
+
         out.push({
           id:site.id,
           name:site.name,
           url:site.base_url,
-          ok:Boolean(result?.diagnostic?.ok) && (!result?.probes?.length || result.probes.every(x=>x.ok)),
+          ok:Boolean(result?.diagnostic?.ok) && (!result?.probes?.length || result.probes.every(x=>x.ok)) && (!signed || signed.ok),
           status_code:result?.diagnostic?.status ?? null,
           latency_ms:Date.now()-started,
           wp_rest_reachable:Boolean(result?.diagnostic?.wpRestReachable),
           connector_installed:connectorInstalled,
           connector_paired:Boolean(site.credential_ref),
           connector_status_code:connectorStatus,
+          signed_connector:signed,
           checked_at:new Date().toISOString()
         });
       } catch (error) {
@@ -171,6 +196,12 @@ function renderCard(x){
   var extra=x.wp_rest_reachable===undefined?'':('<br>WP REST '+(x.wp_rest_reachable?'reachable':'unreachable'));
   if(x.connector_installed!==undefined){
     extra += '<br>Wrekin Connector '+(x.connector_installed?(x.connector_paired?'paired':'installed / not paired'):'not installed');
+    if(x.signed_connector){
+      extra += '<br>Signed '+(x.signed_connector.ok?'OK':'failed');
+      if(x.signed_connector.connector_version) extra += ' · v'+x.signed_connector.connector_version;
+      if(Array.isArray(x.signed_connector.backup_providers) && x.signed_connector.backup_providers.length) extra += '<br>Backup '+x.signed_connector.backup_providers.map(function(p){return p.provider}).join(', ');
+      if(x.signed_connector.wp_mail_smtp_active) extra += '<br>Mail '+(x.signed_connector.using_php_mail?'PHP mail':'SMTP/provider');
+    }
   }
   return '<article class="card"><div class="k">'+x.name+'</div><div class="state '+cls+'">'+state+'</div><div class="m">HTTP '+code+' | '+x.latency_ms+' ms'+extra+'<br>'+new Date(x.checked_at).toLocaleString()+'</div></article>';
 }
