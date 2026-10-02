@@ -1,5 +1,5 @@
 ﻿import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, rename } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { startAdapters } from "./adapters.mjs";
@@ -11,6 +11,8 @@ const HOST = String(process.env.HOST || "127.0.0.1");
 const LOCAL_VIEW = HOST === "127.0.0.1" || HOST === "::1" || HOST === "localhost";
 const CONTROL_TOKEN = String(process.env.PROJECT_CONTROL_TOKEN || "");
 const MAX_EVENTS = 500;
+const STATE_FILE = String(process.env.PROJECT_CONTROL_STATE_FILE || path.join(ROOT, ".project-control-state.json"));
+let persistTimer = null;
 const clients = new Set();
 
 const projects = new Map();
@@ -93,6 +95,35 @@ function normalizeEvent(raw = {}) {
   };
 }
 
+async function loadPersistedState() {
+  try {
+    const saved = JSON.parse(await readFile(STATE_FILE, "utf8"));
+    for (const row of Array.isArray(saved.projects) ? saved.projects : []) {
+      if (!row?.id || !projects.has(row.id)) continue;
+      projects.set(row.id, { ...projects.get(row.id), ...row });
+    }
+    for (const evt of Array.isArray(saved.events) ? saved.events.slice(0, MAX_EVENTS) : []) events.push(evt);
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("control_center_state_load_error", String(error?.message || error).slice(0,160));
+  }
+}
+
+function schedulePersist() {
+  if (persistTimer) return;
+  persistTimer = setTimeout(async () => {
+    persistTimer = null;
+    const temp = STATE_FILE + ".tmp";
+    try {
+      const body = JSON.stringify({ version: 1, saved_at: new Date().toISOString(), projects: [...projects.values()], events: events.slice(0, MAX_EVENTS) });
+      await writeFile(temp, body, { encoding: "utf8", mode: 0o600 });
+      await rename(temp, STATE_FILE);
+    } catch (error) {
+      console.warn("control_center_state_save_error", String(error?.message || error).slice(0,160));
+    }
+  }, 250);
+}
+
+await loadPersistedState();
 function applyEvent(evt) {
   const old = projects.get(evt.project_id) || {};
   projects.set(evt.project_id, {
@@ -113,6 +144,7 @@ function applyEvent(evt) {
   });
   events.unshift(evt);
   if (events.length > MAX_EVENTS) events.length = MAX_EVENTS;
+  schedulePersist();
   broadcast({ type: "event", event: evt, snapshot: snapshot() });
 }
 
@@ -173,7 +205,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/" && req.method === "GET") return serveFile(res, "index.html", "text/html; charset=utf-8");
   if (url.pathname === "/app.js" && req.method === "GET") return serveFile(res, "app.js", "text/javascript; charset=utf-8");
   if (url.pathname === "/api/health" && req.method === "GET") {
-    return json(res, 200, { ok: true, version: "0.1.1", configured: Boolean(CONTROL_TOKEN), clients: clients.size });
+    return json(res, 200, { ok: true, version: "0.2.0", configured: Boolean(CONTROL_TOKEN), clients: clients.size });
   }
   const viewRequest = req.method === "GET" && (url.pathname === "/api/snapshot" || url.pathname === "/api/stream");
   if (url.pathname.startsWith("/api/") && !(LOCAL_VIEW && viewRequest) && !authorized(req)) {
@@ -212,7 +244,7 @@ server.requestTimeout = 15_000;
 server.headersTimeout = 20_000;
 server.keepAliveTimeout = 5_000;
 server.listen(PORT, HOST, () => {
-  console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.1.1", local_view: LOCAL_VIEW });
+  console.log("project_control_center_listening", { host: HOST, port: PORT, version: "0.2.0", local_view: LOCAL_VIEW });
 });
 
 
@@ -224,6 +256,10 @@ const stopAdapters = startAdapters({
   }
 });
 for (const signal of ["SIGINT","SIGTERM"]) process.once(signal, () => { stopAdapters(); server.close(() => process.exit(0)); });
+
+
+
+
 
 
 
