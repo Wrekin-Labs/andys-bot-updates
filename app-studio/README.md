@@ -41,3 +41,17 @@ npm test
 - `POST /api/preview`
 
 This module is deliberately separated from Wrekin Cloud and Runtime so app product work can evolve without weakening the control plane.
+
+
+## v0.2 builder
+
+App Studio now includes `/builder`, a browser-based tenant builder with:
+
+- app name, slug and website domain
+- brand colour controls
+- standalone/fullscreen mode
+- optional module selection
+- live phone preview
+- validation through the same preview/install-config API
+
+`schema.sql` is a reviewed Supabase schema draft for tenant/version/install/audit persistence. It is server-only by default: RLS is enabled and direct `anon` / `authenticated` table access is revoked. The schema is not applied automatically.
