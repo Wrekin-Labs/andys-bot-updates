@@ -2,7 +2,7 @@ const http = require('http');
 const { URL } = require('url');
 
 const PORT = Number(process.env.PORT || 3300);
-const VERSION = process.env.WREKIN_APP_STUDIO_VERSION || '0.1.0';
+const VERSION = process.env.WREKIN_APP_STUDIO_VERSION || '0.2.0';
 const STARTED_AT = new Date().toISOString();
 
 const MODULE_CATALOG = {
@@ -209,9 +209,70 @@ h1{font-size:clamp(38px,7vw,68px);margin:28px 0 8px;letter-spacing:-.05em}.lead{
 <div class="brand"><div class="mark"></div><span>WREKIN LABS</span></div>
 <h1>App Studio</h1>
 <p class="lead">Multi-tenant app configuration and PWA generation for branded customer apps. The first two demo tenants are connected here as safe read-only configurations.</p>
+<p><a href="/builder" style="display:inline-flex;background:#67e8f9;color:#06111d;text-decoration:none;font-weight:850;padding:11px 14px;border-radius:12px">Create a new app</a></p>
 <div class="grid">${cards}</div>
 <div class="note">v${VERSION} · No production credentials or live payment actions are stored here. Provider connections are added later per tenant.</div>
 </main></body></html>`;
+}
+
+function builderPage() {
+  const moduleOptions = Object.entries(MODULE_CATALOG).map(([key, mod]) =>
+    `<label class="module"><input type="checkbox" name="modules" value="${escapeHtml(key)}" ${['content','customer_accounts','ai_assistant','analytics'].includes(key)?'checked':''}><span><b>${escapeHtml(mod.label)}</b><small>${escapeHtml(mod.description)}</small></span></label>`
+  ).join('');
+
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07111f"><title>Create app · Wrekin App Studio</title>
+<style>
+:root{--bg:#07111f;--panel:#0d1b2d;--line:#203650;--text:#eef5ff;--muted:#9cb0c8;--accent:#67e8f9;--green:#5ee39a}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07111f,#0a1424);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1120px;margin:auto;padding:26px 18px 54px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.brand{font-weight:850;letter-spacing:.08em}.back{color:var(--accent);text-decoration:none}
+h1{font-size:clamp(34px,6vw,58px);letter-spacing:-.045em;margin:34px 0 8px}.lead{color:var(--muted);max-width:760px;line-height:1.6}
+.layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:18px;margin-top:26px}.panel{background:rgba(13,27,45,.92);border:1px solid var(--line);border-radius:20px;padding:20px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:flex;flex-direction:column;gap:7px}.field.full{grid-column:1/-1}label span,.field label{font-size:12px;color:#b8c6d8}
+input[type=text],input[type=color],select{width:100%;border:1px solid var(--line);background:#081523;color:var(--text);border-radius:12px;padding:12px;font:inherit}input[type=color]{height:45px;padding:5px}
+.colors{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.modules{display:grid;grid-template-columns:1fr 1fr;gap:10px}.module{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:14px;padding:12px;background:#0a1727;cursor:pointer}.module input{margin-top:3px}.module b{display:block;font-size:13px}.module small{display:block;color:var(--muted);font-size:10px;line-height:1.4;margin-top:3px}
+button{width:100%;margin-top:16px;border:0;border-radius:13px;padding:14px 16px;background:linear-gradient(135deg,#67e8f9,#7c8cff);color:#06111d;font-weight:900;font-size:15px;cursor:pointer}
+.preview{min-height:560px}.phone{border:7px solid #05080c;border-radius:30px;overflow:hidden;max-width:360px;margin:auto;background:#f7f8fa;box-shadow:0 20px 45px rgba(0,0,0,.24)}.phero{padding:22px;background:#111;color:#fff}.phero small{opacity:.7}.phero h2{font-size:27px;letter-spacing:-.04em;margin:7px 0 18px}.pbutton{padding:12px;border-radius:11px;background:#d71920;text-align:center;font-weight:800}.pbody{padding:15px}.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.ptile{min-height:86px;border:1px solid #e0e5eb;border-radius:13px;padding:11px;background:#fff;color:#111}.ptile b{font-size:12px}.ptile div{font-size:10px;color:#6b7280;margin-top:5px;line-height:1.35}
+.output{margin-top:14px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px}.output strong{color:var(--green)}code{word-break:break-all}
+@media(max-width:820px){.layout{grid-template-columns:1fr}.fields,.modules{grid-template-columns:1fr}.preview{min-height:auto}}
+</style></head><body><main class="wrap">
+<div class="top"><div class="brand">WREKIN LABS · APP STUDIO</div><a class="back" href="/">All apps</a></div>
+<h1>Create a branded app</h1><p class="lead">Configure a tenant, choose modules and preview the customer experience. This builder only generates a safe preview; publishing and live provider connections remain approval-gated.</p>
+<div class="layout"><section class="panel"><form id="builder">
+<div class="fields">
+<div class="field"><label>App name</label><input id="name" type="text" value="My Business" required></div>
+<div class="field"><label>Slug</label><input id="slug" type="text" value="my-business" pattern="[a-z0-9-]+" required></div>
+<div class="field full"><label>Website domain</label><input id="domain" type="text" value="www.example.co.uk" required></div>
+<div class="field"><label>App mode</label><select id="display"><option value="standalone">Standalone</option><option value="fullscreen">Fullscreen</option></select></div>
+<div class="field"><label>Start path</label><input id="startUrl" type="text" value="/" required></div>
+<div class="field full"><label>Brand colours</label><div class="colors"><input id="primary" type="color" value="#111111" title="Primary"><input id="accent" type="color" value="#d71920" title="Accent"><input id="background" type="color" value="#f5f7fa" title="Background"></div></div>
+</div>
+<h3>Modules</h3><div class="modules">${moduleOptions}</div>
+<button type="submit">Generate app preview</button></form><div id="output" class="output">Ready to generate a preview.</div></section>
+<section class="panel preview"><div class="phone"><div id="phero" class="phero"><small>Welcome back</small><h2 id="pname">My Business</h2><div id="pbutton" class="pbutton">Get started</div></div><div class="pbody"><div id="pgrid" class="pgrid"></div></div></div></section></div>
+<script>
+const form=document.getElementById('builder'), output=document.getElementById('output');
+function selected(){return [...document.querySelectorAll('input[name=modules]:checked')].map(x=>x.value)}
+function draw(config){
+  document.getElementById('pname').textContent=config.name;
+  const hero=document.getElementById('phero'),button=document.getElementById('pbutton');
+  hero.style.background=config.theme.primary; button.style.background=config.theme.accent;
+  const labels={bookings:'Book a room',repair_jobs:'Track repair',customer_accounts:'My account',ai_assistant:'Ask AI',payments:'Payments',notifications:'Alerts',content:'Services',analytics:'Insights'};
+  document.getElementById('pgrid').innerHTML=config.modules.slice(0,6).map(k=>'<div class="ptile"><b>'+labels[k]+'</b><div>'+k.replaceAll('_',' ')+'</div></div>').join('');
+  button.textContent=config.modules.includes('bookings')?'Book now':config.modules.includes('repair_jobs')?'Start a repair':'Get started';
+}
+async function generate(e){
+  if(e)e.preventDefault();
+  const config={slug:document.getElementById('slug').value.trim(),name:document.getElementById('name').value.trim(),domain:document.getElementById('domain').value.trim().replace(/^https?:\/\//,''),startUrl:document.getElementById('startUrl').value.trim(),display:document.getElementById('display').value,theme:{primary:document.getElementById('primary').value,accent:document.getElementById('accent').value,background:document.getElementById('background').value},modules:selected()};
+  draw(config); output.textContent='Validating…';
+  try{const r=await fetch('/api/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(config)});const data=await r.json();if(!r.ok)throw new Error((data.details||[data.error]).join(', '));output.innerHTML='<strong>Preview valid.</strong><br>Manifest ready · '+data.install.modules.length+' modules · install config generated.'}
+  catch(err){output.textContent='Fix: '+err.message}
+}
+form.addEventListener('submit',generate);
+[...form.elements].forEach(el=>el.addEventListener('input',()=>{try{draw({name:document.getElementById('name').value||'My Business',theme:{primary:document.getElementById('primary').value,accent:document.getElementById('accent').value},modules:selected()})}catch{}}));
+draw({name:'My Business',theme:{primary:'#111111',accent:'#d71920'},modules:selected()});
+</script></main></body></html>`;
 }
 
 function phonePreviewPage(app) {
@@ -263,6 +324,8 @@ function phonePreviewPage(app) {
 function createServer() {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
+    if (req.method === 'GET' && url.pathname === '/builder') return html(res, builderPage());
 
     const previewMatch = url.pathname.match(/^\/preview\/([a-z0-9-]+)$/);
     if (req.method === 'GET' && previewMatch) {
