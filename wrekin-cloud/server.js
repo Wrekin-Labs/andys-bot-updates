@@ -1,9 +1,10 @@
-const http = require('http');
+﻿const http = require('http');
 const os = require('os');
 const { URL } = require('url');
+const { WrekinWordPressManager } = require('./wordpress/manager');
 
 const PORT = Number(process.env.PORT || 3000);
-const VERSION = process.env.WREKIN_VERSION || '0.1.0';
+const VERSION = process.env.WREKIN_VERSION || '0.2.0';
 const STARTED_AT = new Date().toISOString();
 
 const modules = [
@@ -15,8 +16,11 @@ const modules = [
   { name: 'Wrekin Relay', key: 'relay', purpose: 'Authorised workstation and local software bridge', status: 'running', foundation: 'Project Relay' },
   { name: 'Wrekin Monitor', key: 'monitor', purpose: 'Health, logs, uptime, metrics and incidents', status: 'running', foundation: 'Health checks: wrekin-monitor.onrender.com' },
   { name: 'Wrekin Secrets', key: 'secrets', purpose: 'Scoped secrets, rotation and audit', status: 'planned', foundation: 'Encrypted secret references' },
-  { name: 'Wrekin Billing', key: 'billing', purpose: 'Plans, subscriptions, usage and payments', status: 'planned', foundation: 'Provider adapters' }
+  { name: 'Wrekin Billing', key: 'billing', purpose: 'Plans, subscriptions, usage and payments', status: 'planned', foundation: 'Provider adapters' },
+  { name: 'Wrekin WordPress', key: 'wordpress', purpose: 'WordPress inspection, safe updates, content edits, checks and rollback', status: 'building', foundation: 'Wrekin WordPress Manager' }
 ];
+
+const wordpressManager = new WrekinWordPressManager();
 
 function json(res, status, body) {
   const payload = JSON.stringify(body, null, 2);
@@ -40,6 +44,15 @@ function html(res, body) {
     'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
   });
   res.end(body);
+}
+
+async function readJson(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  if (!chunks.length) return {};
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (raw.length > 100000) throw new Error('body_too_large');
+  return JSON.parse(raw);
 }
 
 function statusClass(status) {
@@ -92,7 +105,7 @@ a{color:var(--accent)}
   <div class="brand"><div class="mark"></div><strong>WREKIN LABS</strong></div>
   <h1>Wrekin Cloud</h1>
   <p class="tag">Build. Deploy. Automate.</p>
-  <p class="lead">A unified control plane for source code, backend services, deployment, runtime infrastructure, AI agents, monitoring, remote execution and commercial operations.</p>
+  <p class="lead">A unified control plane for source code, backend services, deployment, runtime infrastructure, AI agents, WordPress management, monitoring, remote execution and commercial operations.</p>
   <div class="meta">
     <span class="pill ok">control plane online</span>
     <span class="pill">v${VERSION}</span>
@@ -113,15 +126,42 @@ a{color:var(--accent)}
 
 <footer class="footer">
   <span>Wrekin Labs â€¢ Wrekin Cloud bootstrap</span>
-  <span><a href="/health">Health</a> Â· <a href="/api/status">Status API</a></span>
+  <span><a href="/health">Health</a> Â· <a href="/api/status">Status API</a> Â· <a href="/api/wordpress/capabilities">WordPress API</a></span>
 </footer>
 </main>
 </body>
 </html>`;
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
+  if (req.method === 'GET' && url.pathname === '/api/wordpress/capabilities') {
+    return json(res, 200, {
+      service: 'wrekin-wordpress-manager',
+      version: '0.1.0',
+      capabilities: wordpressManager.capabilities()
+    });
+  }
+
+if (req.method === 'POST' && url.pathname === '/api/wordpress/inspect') {
+    try {
+      const body = await readJson(req);
+      const result = await wordpressManager.inspectSite({ baseUrl: body.site });
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'inspection_failed' });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/plan') {
+    try {
+      const body = await readJson(req);
+      return json(res, 200, wordpressManager.plan(body.action, body.payload || {}));
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'invalid_request' });
+    }
+  }
 
   if (req.method !== 'GET') {
     return json(res, 405, { error: 'method_not_allowed' });
@@ -157,3 +197,4 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wrekin Cloud control plane v${VERSION} listening on ${PORT}`);
 });
+

@@ -1,10 +1,11 @@
 {
   "name": "wrekin-cloud-control-plane",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Wrekin Cloud bootstrap control-plane dashboard and health API.",
+  "description": "Wrekin Cloud bootstrap control-plane dashboard, health API and WordPress Manager.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test wordpress/test/*.test.js"
   },
   "engines": {
     "node": ">=20"
