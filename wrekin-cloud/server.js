@@ -1,4 +1,4 @@
-const http = require('http');
+﻿const http = require('http');
 const os = require('os');
 const crypto = require('crypto');
 const { URL } = require('url');
@@ -313,7 +313,12 @@ const server = http.createServer(async (req, res) => {
       else if (action === 'themes') result = await connector.themes();
       else if (action === 'cron') result = await connector.cron();
       else if (action === 'forms') result = await connector.forms();
+      else if (action === 'mail') result = await connector.mail();
+      else if (action === 'backup-capabilities') result = await connector.backupCapabilities();
       else if (action === 'cache-purge') result = await connector.cachePurge(body.approved === true);
+      else if (action === 'mail-test') result = await connector.mailTest(body.to, body.approved === true);
+      else if (action === 'core-update-plan') result = await connector.coreUpdatePlan();
+      else if (action === 'core-update') result = await connector.coreUpdate(body.approved === true);
       else if (action === 'plugin-update-plan') result = await connector.pluginUpdatePlan(body.file);
       else if (action === 'plugin-update') result = await connector.pluginUpdate(body.file, body.approved === true);
       else if (action === 'theme-update-plan') result = await connector.themeUpdatePlan(body.slug);
@@ -376,3 +381,4 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wrekin Cloud control plane v${VERSION} listening on ${PORT}`);
 });
+

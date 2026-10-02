@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Wrekin WordPress Connector
  * Description: Secure connector for Wrekin Cloud WordPress inspection, diagnostics and approved maintenance actions.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Author: Wrekin Labs
  */
 
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Wrekin_WordPress_Connector {
-    const VERSION = '0.1.0';
+    const VERSION = '0.2.0';
     const OPTION_SECRET = 'wrekin_connector_secret';
     const REST_NS = 'wrekin/v1';
     const MAX_CLOCK_SKEW = 300;
@@ -43,6 +43,31 @@ final class Wrekin_WordPress_Connector {
         register_rest_route(self::REST_NS, '/themes', [
             'methods' => 'GET',
             'callback' => [__CLASS__, 'themes'],
+            'permission_callback' => [__CLASS__, 'authorize'],
+        ]);
+        register_rest_route(self::REST_NS, '/core/update-plan', [
+            'methods' => 'POST',
+            'callback' => [__CLASS__, 'core_update_plan'],
+            'permission_callback' => [__CLASS__, 'authorize'],
+        ]);
+        register_rest_route(self::REST_NS, '/core/update', [
+            'methods' => 'POST',
+            'callback' => [__CLASS__, 'core_update'],
+            'permission_callback' => [__CLASS__, 'authorize'],
+        ]);
+        register_rest_route(self::REST_NS, '/mail', [
+            'methods' => 'GET',
+            'callback' => [__CLASS__, 'mail_status'],
+            'permission_callback' => [__CLASS__, 'authorize'],
+        ]);
+        register_rest_route(self::REST_NS, '/mail/test', [
+            'methods' => 'POST',
+            'callback' => [__CLASS__, 'mail_test'],
+            'permission_callback' => [__CLASS__, 'authorize'],
+        ]);
+        register_rest_route(self::REST_NS, '/backup/capabilities', [
+            'methods' => 'GET',
+            'callback' => [__CLASS__, 'backup_capabilities'],
             'permission_callback' => [__CLASS__, 'authorize'],
         ]);
         register_rest_route(self::REST_NS, '/cron', [
@@ -340,6 +365,131 @@ final class Wrekin_WordPress_Connector {
             'from_version' => $plan['from_version'],
             'expected_version' => $plan['to_version'],
             'actual_version' => $after,
+        ]);
+    }
+
+    public static function core_update_plan() {
+        global $wp_version;
+        require_once ABSPATH . 'wp-admin/includes/update.php';
+        $updates = get_core_updates(['dismissed' => false]);
+        $target = null;
+        if (is_array($updates)) {
+            foreach ($updates as $update) {
+                if (isset($update->response) && $update->response === 'upgrade') {
+                    $target = $update;
+                    break;
+                }
+            }
+        }
+        return rest_ensure_response([
+            'from_version' => $wp_version,
+            'to_version' => $target && isset($target->current) ? $target->current : null,
+            'update_available' => (bool)$target,
+            'package_available' => $target && isset($target->packages) && !empty($target->packages->full),
+            'requires_approval' => true,
+        ]);
+    }
+
+    public static function core_update(WP_REST_Request $request) {
+        $params = self::json_params($request);
+        if (empty($params['approved'])) {
+            return new WP_Error('wrekin_approval_required', 'Explicit approval is required.', ['status' => 409]);
+        }
+        $plan_response = self::core_update_plan();
+        if (is_wp_error($plan_response)) return $plan_response;
+        $plan = $plan_response->get_data();
+        if (empty($plan['update_available'])) {
+            return rest_ensure_response(['ok' => true, 'changed' => false, 'plan' => $plan]);
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+        require_once ABSPATH . 'wp-admin/includes/update.php';
+        $updates = get_core_updates(['dismissed' => false]);
+        $target = null;
+        foreach ((array)$updates as $update) {
+            if (isset($update->response) && $update->response === 'upgrade' && isset($update->current) && $update->current === $plan['to_version']) {
+                $target = $update;
+                break;
+            }
+        }
+        if (!$target) {
+            return new WP_Error('wrekin_core_target_missing', 'Core update target changed; create a new plan first.', ['status' => 409]);
+        }
+
+        $skin = new Automatic_Upgrader_Skin();
+        $upgrader = new Core_Upgrader($skin);
+        $result = $upgrader->upgrade($target);
+        if (is_wp_error($result)) return $result;
+        if ($result === false) {
+            return new WP_Error('wrekin_core_update_failed', 'WordPress core update failed.', ['status' => 500]);
+        }
+
+        $after = null;
+        $version_file = ABSPATH . WPINC . '/version.php';
+        if (is_readable($version_file)) {
+            include $version_file;
+            if (isset($wp_version)) $after = $wp_version;
+        }
+
+        return rest_ensure_response([
+            'ok' => $after === $plan['to_version'],
+            'changed' => true,
+            'from_version' => $plan['from_version'],
+            'expected_version' => $plan['to_version'],
+            'actual_version' => $after,
+        ]);
+    }
+
+    public static function mail_status() {
+        $mailer = null;
+        $wpms = get_option('wp_mail_smtp');
+        if (is_array($wpms) && isset($wpms['mail']) && is_array($wpms['mail']) && isset($wpms['mail']['mailer'])) {
+            $mailer = sanitize_text_field($wpms['mail']['mailer']);
+        }
+        return rest_ensure_response([
+            'wp_mail_smtp_active' => defined('WPMS_PLUGIN_VER') || defined('WP_MAIL_SMTP_VERSION'),
+            'mailer' => $mailer,
+        ]);
+    }
+
+    public static function mail_test(WP_REST_Request $request) {
+        $params = self::json_params($request);
+        if (empty($params['approved'])) {
+            return new WP_Error('wrekin_approval_required', 'Explicit approval is required.', ['status' => 409]);
+        }
+        $to = isset($params['to']) ? sanitize_email($params['to']) : '';
+        if (!$to || !is_email($to)) {
+            return new WP_Error('wrekin_invalid_email', 'A valid test recipient is required.', ['status' => 400]);
+        }
+        $subject = 'Wrekin WordPress mail test - ' . wp_parse_url(home_url(), PHP_URL_HOST);
+        $sent = wp_mail($to, $subject, "This is an approved Wrekin WordPress Connector email-delivery test.\n\nSite: " . home_url());
+        return rest_ensure_response(['ok' => (bool)$sent, 'accepted_by_wp_mail' => (bool)$sent]);
+    }
+
+    public static function backup_capabilities() {
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        $plugins = get_plugins();
+        $known = [
+            'updraftplus/updraftplus.php' => 'UpdraftPlus',
+            'all-in-one-wp-migration/master.php' => 'All-in-One WP Migration',
+            'backwpup/backwpup.php' => 'BackWPup',
+            'duplicator/duplicator.php' => 'Duplicator',
+        ];
+        $available = [];
+        foreach ($known as $file => $name) {
+            if (isset($plugins[$file])) {
+                $available[] = [
+                    'provider' => $name,
+                    'file' => $file,
+                    'active' => is_plugin_active($file),
+                ];
+            }
+        }
+        return rest_ensure_response([
+            'providers' => $available,
+            'connector_can_restore_without_provider_adapter' => false,
         ]);
     }
 

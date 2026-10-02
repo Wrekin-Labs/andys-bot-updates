@@ -49,11 +49,64 @@ class WrekinConnectorClient {
   themes() { return this.request('/wp-json/wrekin/v1/themes'); }
   cron() { return this.request('/wp-json/wrekin/v1/cron'); }
   forms() { return this.request('/wp-json/wrekin/v1/forms'); }
-  cachePurge(approved) { return this.request('/wp-json/wrekin/v1/cache/purge', { method: 'POST', body: { approved: approved === true } }); }
-  pluginUpdatePlan(file) { return this.request('/wp-json/wrekin/v1/plugin/update-plan', { method: 'POST', body: { file } }); }
-  pluginUpdate(file, approved) { return this.request('/wp-json/wrekin/v1/plugin/update', { method: 'POST', body: { file, approved: approved === true } }); }
-  themeUpdatePlan(slug) { return this.request('/wp-json/wrekin/v1/theme/update-plan', { method: 'POST', body: { slug } }); }
-  themeUpdate(slug, approved) { return this.request('/wp-json/wrekin/v1/theme/update', { method: 'POST', body: { slug, approved: approved === true } }); }
+  mail() { return this.request('/wp-json/wrekin/v1/mail'); }
+  backupCapabilities() { return this.request('/wp-json/wrekin/v1/backup/capabilities'); }
+
+  cachePurge(approved) {
+    return this.request('/wp-json/wrekin/v1/cache/purge', {
+      method: 'POST',
+      body: { approved: approved === true }
+    });
+  }
+
+  mailTest(to, approved) {
+    return this.request('/wp-json/wrekin/v1/mail/test', {
+      method: 'POST',
+      body: { to, approved: approved === true }
+    });
+  }
+
+  coreUpdatePlan() {
+    return this.request('/wp-json/wrekin/v1/core/update-plan', {
+      method: 'POST',
+      body: {}
+    });
+  }
+
+  coreUpdate(approved) {
+    return this.request('/wp-json/wrekin/v1/core/update', {
+      method: 'POST',
+      body: { approved: approved === true }
+    });
+  }
+
+  pluginUpdatePlan(file) {
+    return this.request('/wp-json/wrekin/v1/plugin/update-plan', {
+      method: 'POST',
+      body: { file }
+    });
+  }
+
+  pluginUpdate(file, approved) {
+    return this.request('/wp-json/wrekin/v1/plugin/update', {
+      method: 'POST',
+      body: { file, approved: approved === true }
+    });
+  }
+
+  themeUpdatePlan(slug) {
+    return this.request('/wp-json/wrekin/v1/theme/update-plan', {
+      method: 'POST',
+      body: { slug }
+    });
+  }
+
+  themeUpdate(slug, approved) {
+    return this.request('/wp-json/wrekin/v1/theme/update', {
+      method: 'POST',
+      body: { slug, approved: approved === true }
+    });
+  }
 }
 
 module.exports = { WrekinConnectorClient };

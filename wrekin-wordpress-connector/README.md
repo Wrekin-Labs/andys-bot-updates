@@ -2,24 +2,36 @@
 
 Secure WordPress-side connector for Wrekin Cloud.
 
-## Security
-- HMAC-SHA256 request signing.
+## Version 0.2.0
+
+### Security
+- HMAC-SHA256 signed requests.
 - 5-minute replay window.
-- Connector secret generated on activation and managed only by WordPress administrators.
-- Update routes require an explicit approved=true flag in addition to a valid signature.
+- Connector token generated on activation and managed by WordPress administrators.
+- Wrekin stores paired connector secrets in Supabase Vault by secret reference.
+- Update routes require an explicit `approved=true` flag in addition to a valid signature.
 - Paid/licensed updates are not bypassed: if WordPress exposes no update package, the connector returns a licence/package-required error.
 - No 2FA, payment, legal or credential bypass features.
 
-## Endpoints
+### Endpoints
 - GET /wp-json/wrekin/v1/status
 - GET /wp-json/wrekin/v1/plugins
 - GET /wp-json/wrekin/v1/themes
 - GET /wp-json/wrekin/v1/cron
 - GET /wp-json/wrekin/v1/forms
+- GET /wp-json/wrekin/v1/mail
+- GET /wp-json/wrekin/v1/backup/capabilities
 - POST /wp-json/wrekin/v1/cache/purge
+- POST /wp-json/wrekin/v1/mail/test
+- POST /wp-json/wrekin/v1/core/update-plan
+- POST /wp-json/wrekin/v1/core/update
 - POST /wp-json/wrekin/v1/plugin/update-plan
 - POST /wp-json/wrekin/v1/plugin/update
 - POST /wp-json/wrekin/v1/theme/update-plan
 - POST /wp-json/wrekin/v1/theme/update
 
-Settings page: Settings -> Wrekin Connector.
+Settings page: **Settings -> Wrekin Connector**.
+
+Release zip: `releases/wrekin-wordpress-connector-0.2.0.zip`
+
+SHA-256: `A272CC3FF2BABEEC5E4FC10E610EDCA1B11219F72BABC11540317AE20616F600`
