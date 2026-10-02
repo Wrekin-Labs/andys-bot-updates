@@ -1,16 +1,20 @@
 const http = require('http');
 const os = require('os');
+const crypto = require('crypto');
 const { URL } = require('url');
 const { WrekinWordPressManager } = require('./wordpress/manager');
 const { WordPressRegistry } = require('./wordpress/registry');
+const { WordPressSecretStore } = require('./wordpress/secret-store');
+const { WrekinConnectorClient } = require('./wordpress/connector-client');
 const { versionPlan, verifyVersion } = require('./wordpress/operations');
 const { publicSiteDiagnostic, probePath } = require('./wordpress/diagnostics');
 const { planHostAction } = require('./wordpress/host-plan');
 const { assertSafeWordPressUrl } = require('./wordpress/url-safety');
 
 const PORT = Number(process.env.PORT || 3000);
-const VERSION = process.env.WREKIN_VERSION || '0.3.0';
+const VERSION = process.env.WREKIN_VERSION || '0.4.0';
 const STARTED_AT = new Date().toISOString();
+const CONTROL_TOKEN = process.env.WREKIN_CONTROL_TOKEN || '';
 
 const modules = [
   { name: 'Wrekin Forge', key: 'forge', purpose: 'Source control, branches, reviews and CI', status: 'planned', foundation: 'Forgejo / Git' },
@@ -20,12 +24,14 @@ const modules = [
   { name: 'Wrekin Agents', key: 'agents', purpose: 'AI agents, triggers, tools, approvals and runs', status: 'planned', foundation: 'Wrekin orchestration' },
   { name: 'Wrekin Relay', key: 'relay', purpose: 'Authorised workstation and local software bridge', status: 'running', foundation: 'Project Relay' },
   { name: 'Wrekin Monitor', key: 'monitor', purpose: 'Health, logs, uptime, metrics and incidents', status: 'running', foundation: 'Health checks: wrekin-monitor.onrender.com' },
-  { name: 'Wrekin Secrets', key: 'secrets', purpose: 'Scoped secrets, rotation and audit', status: 'bootstrap', foundation: 'Secret references + protected environment values' },
+  { name: 'Wrekin Secrets', key: 'secrets', purpose: 'Scoped secrets, rotation and audit', status: 'running', foundation: 'Supabase Vault + secret references' },
   { name: 'Wrekin Billing', key: 'billing', purpose: 'Plans, subscriptions, usage and payments', status: 'planned', foundation: 'Provider adapters' },
-  { name: 'Wrekin WordPress', key: 'wordpress', purpose: 'WordPress inspection, safe updates, content edits, checks and rollback', status: 'running', foundation: 'Wrekin WordPress Manager' }
+  { name: 'Wrekin WordPress', key: 'wordpress', purpose: 'WordPress inspection, safe updates, content edits, checks and rollback', status: 'running', foundation: 'Wrekin WordPress Manager + site connector' }
 ];
 
 const registry = new WordPressRegistry();
+const secretStore = new WordPressSecretStore();
+
 const wordpressManager = new WrekinWordPressManager({
   auditSink: async event => {
     if (!registry.configured()) return;
@@ -74,6 +80,21 @@ async function readJson(req) {
   const raw = Buffer.concat(chunks).toString('utf8');
   if (raw.length > 100000) throw new Error('body_too_large');
   return JSON.parse(raw);
+}
+
+function controlAuthorized(req) {
+  if (!CONTROL_TOKEN) return false;
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return false;
+  const supplied = Buffer.from(auth.slice(7));
+  const expected = Buffer.from(CONTROL_TOKEN);
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
+
+function requireControl(req, res) {
+  if (controlAuthorized(req)) return true;
+  json(res, CONTROL_TOKEN ? 401 : 503, { error: CONTROL_TOKEN ? 'unauthorized' : 'control_auth_not_configured' });
+  return false;
 }
 
 function statusClass(status) {
@@ -131,6 +152,7 @@ a{color:var(--accent)}
     <span class="pill ok">control plane online</span>
     <span class="pill">v${VERSION}</span>
     <span class="pill ${registry.configured() ? 'ok' : 'warn'}">WP registry ${registry.configured() ? 'online' : 'unconfigured'}</span>
+    <span class="pill ${secretStore.configured() ? 'ok' : 'warn'}">WP secrets ${secretStore.configured() ? 'online' : 'unconfigured'}</span>
   </div>
 </section>
 
@@ -154,20 +176,38 @@ a{color:var(--accent)}
 </html>`;
 }
 
+async function connectorFromBody(body) {
+  const baseUrl = assertSafeWordPressUrl(body.baseUrl);
+  const credentialRef = String(body.credentialRef || '');
+  if (!credentialRef.startsWith('wrekin/wp/')) throw new Error('credential_ref_required');
+  const secret = await secretStore.get(credentialRef);
+  return new WrekinConnectorClient({ baseUrl, secret });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   if (req.method === 'GET' && url.pathname === '/api/wordpress/capabilities') {
     return json(res, 200, {
       service: 'wrekin-wordpress-manager',
-      version: '0.3.0',
+      version: '0.4.0',
+      controlAuthConfigured: Boolean(CONTROL_TOKEN),
       registry: { configured: registry.configured(), mode: registry.mode() },
+      secrets: { configured: secretStore.configured() },
       capabilities: wordpressManager.capabilities()
     });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/wordpress/registry/status') {
-    return json(res, 200, { configured: registry.configured(), mode: registry.mode() });
+    return json(res, 200, {
+      configured: registry.configured(),
+      mode: registry.mode(),
+      secretsConfigured: secretStore.configured()
+    });
+  }
+
+  if (url.pathname.startsWith('/api/wordpress/') && !requireControl(req, res)) {
+    return;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/wordpress/sites') {
@@ -184,10 +224,16 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJson(req);
       const baseUrl = assertSafeWordPressUrl(body.baseUrl);
+      let credentialRef = body.credentialRef || null;
+      if (body.connectorSecret) {
+        if (!secretStore.configured()) return json(res, 503, { error: 'secret_store_not_configured' });
+        credentialRef = credentialRef || ('wrekin/wp/' + crypto.randomUUID());
+        await secretStore.set(credentialRef, String(body.connectorSecret));
+      }
       const result = await registry.addSite({
         name: String(body.name || '').trim(),
         baseUrl,
-        credentialRef: body.credentialRef || null,
+        credentialRef,
         relayDevice: body.relayDevice || null,
         metadata: body.metadata || {}
       });
@@ -256,6 +302,40 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && url.pathname.startsWith('/api/wordpress/connector/')) {
+    try {
+      const body = await readJson(req);
+      const connector = await connectorFromBody(body);
+      const action = url.pathname.slice('/api/wordpress/connector/'.length);
+      let result;
+      if (action === 'status') result = await connector.status();
+      else if (action === 'plugins') result = await connector.plugins();
+      else if (action === 'themes') result = await connector.themes();
+      else if (action === 'cron') result = await connector.cron();
+      else if (action === 'forms') result = await connector.forms();
+      else if (action === 'cache-purge') result = await connector.cachePurge(body.approved === true);
+      else if (action === 'plugin-update-plan') result = await connector.pluginUpdatePlan(body.file);
+      else if (action === 'plugin-update') result = await connector.pluginUpdate(body.file, body.approved === true);
+      else if (action === 'theme-update-plan') result = await connector.themeUpdatePlan(body.slug);
+      else if (action === 'theme-update') result = await connector.themeUpdate(body.slug, body.approved === true);
+      else return json(res, 404, { error: 'connector_action_not_found' });
+
+      if (registry.configured()) {
+        try {
+          await registry.audit({
+            action: 'connector.' + action,
+            risk: action.includes('update') || action === 'cache-purge' ? 'write' : 'read',
+            status: 'ok',
+            details: { baseUrl: body.baseUrl, credentialRef: body.credentialRef }
+          });
+        } catch {}
+      }
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, error.status || 400, { error: error.message || 'connector_failed', details: error.data || undefined });
+    }
+  }
+
   if (req.method !== 'GET') {
     return json(res, 405, { error: 'method_not_allowed' });
   }
@@ -278,8 +358,10 @@ const server = http.createServer(async (req, res) => {
       generated_at: new Date().toISOString(),
       modules,
       wordpress: {
+        controlAuthConfigured: Boolean(CONTROL_TOKEN),
         registryConfigured: registry.configured(),
-        registryMode: registry.mode()
+        registryMode: registry.mode(),
+        secretsConfigured: secretStore.configured()
       }
     });
   }
