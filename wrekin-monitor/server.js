@@ -93,6 +93,22 @@ async function wordpressChecks() {
           method:'POST',
           body:JSON.stringify({ site: site.base_url, paths:['/'] })
         });
+        let connectorInstalled = false;
+        let connectorStatus = null;
+        try {
+          const connectorResponse = await fetch(site.base_url.replace(/\/$/, '') + '/wp-json/wrekin/v1/status', {
+            method:'GET',
+            redirect:'manual',
+            headers:{accept:'application/json'}
+          });
+          connectorStatus = connectorResponse.status;
+          let connectorBody = {};
+          try { connectorBody = await connectorResponse.json(); } catch {}
+          connectorInstalled =
+            (connectorResponse.status === 401 && connectorBody?.code === 'wrekin_unauthorized') ||
+            connectorResponse.ok;
+        } catch {}
+
         out.push({
           id:site.id,
           name:site.name,
@@ -101,6 +117,9 @@ async function wordpressChecks() {
           status_code:result?.diagnostic?.status ?? null,
           latency_ms:Date.now()-started,
           wp_rest_reachable:Boolean(result?.diagnostic?.wpRestReachable),
+          connector_installed:connectorInstalled,
+          connector_paired:Boolean(site.credential_ref),
+          connector_status_code:connectorStatus,
           checked_at:new Date().toISOString()
         });
       } catch (error) {
@@ -150,6 +169,9 @@ function renderCard(x){
   var state=x.ok?'Healthy':'Degraded';
   var code=(x.status_code===null||x.status_code===undefined)?'-':x.status_code;
   var extra=x.wp_rest_reachable===undefined?'':('<br>WP REST '+(x.wp_rest_reachable?'reachable':'unreachable'));
+  if(x.connector_installed!==undefined){
+    extra += '<br>Wrekin Connector '+(x.connector_installed?(x.connector_paired?'paired':'installed / not paired'):'not installed');
+  }
   return '<article class="card"><div class="k">'+x.name+'</div><div class="state '+cls+'">'+state+'</div><div class="m">HTTP '+code+' | '+x.latency_ms+' ms'+extra+'<br>'+new Date(x.checked_at).toLocaleString()+'</div></article>';
 }
 async function refresh(){

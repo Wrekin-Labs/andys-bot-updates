@@ -1,4 +1,4 @@
-# Wrekin WordPress Connector
+﻿# Wrekin WordPress Connector
 
 Secure WordPress-side connector for Wrekin Cloud.
 
@@ -32,6 +32,7 @@ Secure WordPress-side connector for Wrekin Cloud.
 
 Settings page: **Settings -> Wrekin Connector**.
 
-Release zip: `releases/wrekin-wordpress-connector-0.2.0.zip`
+Release zip: `releases/wrekin-wordpress-connector.zip`
 
-SHA-256: `A272CC3FF2BABEEC5E4FC10E610EDCA1B11219F72BABC11540317AE20616F600`
+SHA-256: `B72271D8629C1819BE2B65C4378B6C86F939F91C3178636E641B6BC07B37CB06`
+

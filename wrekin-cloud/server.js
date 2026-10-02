@@ -127,6 +127,9 @@ async function page() {
       if (sites.length) {
         wpSiteCards = sites.map(site => {
           const paired = Boolean(site.credential_ref);
+          const installed = Boolean(site.metadata && site.metadata.connector_installed);
+          const label = paired ? 'paired' : (installed ? 'connector installed' : 'monitor-only');
+          const cls = paired ? 'ok' : 'warn';
           return `
             <article class="card">
               <div class="row">
@@ -134,7 +137,7 @@ async function page() {
                   <div class="eyebrow">WORDPRESS SITE</div>
                   <h3>${site.name}</h3>
                 </div>
-                <span class="pill ${paired ? 'ok' : 'warn'}">${paired ? 'paired' : 'monitor-only'}</span>
+                <span class="pill ${cls}">${label}</span>
               </div>
               <p>${site.base_url}</p>
               <div class="foundation">Relay: ${site.relay_device || 'not assigned'} &middot; Status: ${site.status || 'unknown'}</div>
