@@ -10,6 +10,21 @@
     "type": "Remote control"
   },
   {
+    "id": "relay-gateway",
+    "name": "Relay Gateway",
+    "type": "Relay infrastructure"
+  },
+  {
+    "id": "relay-home",
+    "name": "Andy Home",
+    "type": "Relay workstation"
+  },
+  {
+    "id": "relay-studio",
+    "name": "Smashroom Studio",
+    "type": "Relay workstation"
+  },
+  {
     "id": "github-ci",
     "name": "GitHub / CI",
     "type": "Source control"

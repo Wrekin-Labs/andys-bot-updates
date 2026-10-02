@@ -110,8 +110,8 @@ function createRelayPoller(emit, log) {
       if (!res.ok) throw new Error("Relay health returned " + res.status);
       const body = await res.json().catch(() => ({}));
       emit({
-        project_id: "project-relay",
-        project_name: "Project Relay",
+        project_id: "relay-gateway",
+        project_name: "Relay Gateway",
         status: body.ok === false ? "blocked" : "healthy",
         stage: "Gateway health",
         message: body.version ? "Relay " + body.version + " responding" : "Relay gateway responding",
@@ -120,8 +120,8 @@ function createRelayPoller(emit, log) {
     } catch (error) {
       log.warn?.("control_center_relay_poll_error", String(error?.message || error).slice(0,180));
       emit({
-        project_id: "project-relay",
-        project_name: "Project Relay",
+        project_id: "relay-gateway",
+        project_name: "Relay Gateway",
         status: "blocked",
         stage: "Relay health unavailable",
         blocker: "No healthy response from configured Relay endpoint",
@@ -186,5 +186,6 @@ function mapKeepGoingStatus(status) {
   if (status === "cancelled") return "paused";
   return "unknown";
 }
+
 
 
