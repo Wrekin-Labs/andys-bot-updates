@@ -1,0 +1,33 @@
+name: Wrekin App Studio
+
+on:
+  pull_request:
+    paths:
+      - 'app-studio/**'
+      - '.github/workflows/wrekin-app-studio.yml'
+  push:
+    branches:
+      - wrekin-app-studio-v0.1
+    paths:
+      - 'app-studio/**'
+      - '.github/workflows/wrekin-app-studio.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app-studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax check
+        run: node --check server.js
+      - name: App Studio tests
+        run: npm test
