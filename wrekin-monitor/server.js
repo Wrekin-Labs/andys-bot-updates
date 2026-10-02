@@ -10,7 +10,8 @@ const WREKIN_CONTROL_TOKEN = process.env.WREKIN_CONTROL_TOKEN || '';
 
 const targets = [
   { key: 'control-plane', name: 'Wrekin Cloud', url: process.env.WREKIN_CLOUD_HEALTH || 'https://wrekin-cloud.onrender.com/health' },
-  { key: 'runtime', name: 'Wrekin Runtime', url: process.env.WREKIN_RUNTIME_HEALTH || 'https://wrekin-runtime.onrender.com/health' }
+  { key: 'runtime', name: 'Wrekin Runtime', url: process.env.WREKIN_RUNTIME_HEALTH || 'https://wrekin-runtime.onrender.com/health' },
+  ...(process.env.WREKIN_APP_STUDIO_HEALTH ? [{ key: 'app-studio', name: 'Wrekin App Studio', url: process.env.WREKIN_APP_STUDIO_HEALTH }] : [])
 ];
 
 function secureHeaders(type) {

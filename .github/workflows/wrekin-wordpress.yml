@@ -36,7 +36,7 @@ jobs:
       - name: Verify connector release checksum
         working-directory: .
         run: |
-          echo "B72271D8629C1819BE2B65C4378B6C86F939F91C3178636E641B6BC07B37CB06  releases/wrekin-wordpress-connector.zip" | sha256sum -c -
+          echo "1FF517404977F019D90D72E583924C34E09AE6AE8E5A66CB2939A742AC2E7BA4  releases/wrekin-wordpress-connector.zip" | sha256sum -c -
 
 
 

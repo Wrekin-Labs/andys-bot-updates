@@ -23,6 +23,7 @@ const modules = [
   { name: 'Wrekin Base', key: 'base', purpose: 'PostgreSQL, auth, storage, realtime and APIs', status: 'bootstrap', foundation: 'PostgreSQL / Supabase-compatible services' },
   { name: 'Wrekin Deploy', key: 'deploy', purpose: 'Builds, previews, releases, domains and TLS', status: 'running', foundation: 'Render bootstrap; Wrekin deploy control plane online' },
   { name: 'Wrekin Runtime', key: 'runtime', purpose: 'Web services, workers, cron and containers', status: 'running', foundation: 'Bootstrap node: wrekin-runtime.onrender.com' },
+  { name: 'Wrekin App Studio', key: 'app-studio', purpose: 'Multi-tenant branded apps, PWA generation and module configuration', status: 'building', foundation: 'App Studio v0.1 with Smashroom and ERUK demo tenants' },
   { name: 'Wrekin Agents', key: 'agents', purpose: 'AI agents, triggers, tools, approvals and runs', status: 'planned', foundation: 'Wrekin orchestration' },
   { name: 'Wrekin Relay', key: 'relay', purpose: 'Authorised workstation and local software bridge', status: 'running', foundation: 'Project Relay' },
   { name: 'Wrekin Monitor', key: 'monitor', purpose: 'Health, logs, uptime, metrics and incidents', status: 'running', foundation: 'Health checks: wrekin-monitor.onrender.com' },
