@@ -1,4 +1,4 @@
-const http = require('http');
+﻿const http = require('http');
 const os = require('os');
 const crypto = require('crypto');
 const { URL } = require('url');
@@ -14,7 +14,7 @@ const { planHostAction } = require('./wordpress/host-plan');
 const { assertSafeWordPressUrl } = require('./wordpress/url-safety');
 
 const PORT = Number(process.env.PORT || 3000);
-const VERSION = process.env.WREKIN_VERSION || '0.4.0';
+const VERSION = process.env.WREKIN_VERSION || '0.5.0';
 const STARTED_AT = new Date().toISOString();
 const CONTROL_TOKEN = process.env.WREKIN_CONTROL_TOKEN || '';
 
@@ -228,7 +228,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/wordpress/capabilities') {
     return json(res, 200, {
       service: 'wrekin-wordpress-manager',
-      version: '0.4.0',
+      version: '0.5.0',
       controlAuthConfigured: Boolean(CONTROL_TOKEN),
       registry: { configured: registry.configured(), mode: registry.mode() },
       secrets: { configured: secretStore.configured() },
@@ -244,8 +244,65 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/pairing/complete') {
+    try {
+      const body = await readJson(req);
+      const baseUrl = assertSafeWordPressUrl(body.baseUrl);
+      const code = String(body.code || '').trim().toUpperCase();
+      const connectorSecret = String(body.connectorSecret || '');
+      if (!code || code.length < 6) return json(res, 400, { error: 'invalid_pairing_code' });
+      if (connectorSecret.length < 20) return json(res, 400, { error: 'invalid_connector_secret' });
+      const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+      await registry.consumePairing(baseUrl, codeHash);
+      const credentialRef = 'wrekin/wp/' + crypto.createHash('sha256').update(baseUrl).digest('hex').slice(0, 32);
+      await secretStore.set(credentialRef, connectorSecret);
+      const siteResult = await registry.addSite({
+        name: String(body.name || new URL(baseUrl).hostname),
+        baseUrl,
+        credentialRef,
+        relayDevice: body.relayDevice || null,
+        metadata: { ...(body.metadata || {}), mode: 'paired', pairedAt: new Date().toISOString() }
+      });
+      try {
+        await registry.audit({
+          action: 'connector.paired',
+          risk: 'write',
+          status: 'ok',
+          details: { baseUrl, credentialRef }
+        });
+      } catch {}
+      return json(res, 200, {
+        ok: true,
+        paired: true,
+        site: siteResult && siteResult.site ? siteResult.site : siteResult,
+        credentialRef
+      });
+    } catch (error) {
+      return json(res, error.status || 400, { error: error.message || 'pairing_failed' });
+    }
+  }
+
   if (url.pathname.startsWith('/api/wordpress/') && !requireControl(req, res)) {
     return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wordpress/pairing/start') {
+    try {
+      if (!registry.configured()) return json(res, 503, { error: 'registry_not_configured' });
+      const body = await readJson(req);
+      const baseUrl = assertSafeWordPressUrl(body.baseUrl);
+      const code = crypto.randomBytes(6).toString('base64url').replace(/[^A-Za-z0-9]/g, '').slice(0, 8).toUpperCase();
+      const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+      const result = await registry.createPairing(baseUrl, codeHash);
+      return json(res, 200, {
+        ok: true,
+        code,
+        baseUrl,
+        expiresAt: result.expires_at || result.expiresAt || null
+      });
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'pairing_start_failed' });
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/wordpress/audit') {
@@ -465,4 +522,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wrekin Cloud control plane v${VERSION} listening on ${PORT}`);
 });
+
 

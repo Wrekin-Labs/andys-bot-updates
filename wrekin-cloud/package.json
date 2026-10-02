@@ -1,8 +1,8 @@
 ﻿{
     "name":  "wrekin-cloud-control-plane",
-    "version":  "0.4.0",
+    "version":  "0.5.0",
     "private":  true,
-    "description":  "Wrekin Cloud control plane with secure WordPress Manager, registry, Vault-backed credentials and connector execution.",
+    "description":  "Wrekin Cloud control plane with secure WordPress pairing, registry, Vault credentials, performance and maintenance APIs.",
     "scripts":  {
                     "start":  "node server.js",
                     "test":  "node --test wordpress/test/*.test.js"

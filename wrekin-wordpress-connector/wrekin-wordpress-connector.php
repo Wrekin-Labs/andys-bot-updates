@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Wrekin WordPress Connector
  * Description: Secure connector for Wrekin Cloud WordPress inspection, diagnostics and approved maintenance actions.
- * Version: 0.2.0
+ * Version: 0.3.0
  * Author: Wrekin Labs
  */
 
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Wrekin_WordPress_Connector {
-    const VERSION = '0.2.0';
+    const VERSION = '0.3.0';
     const OPTION_SECRET = 'wrekin_connector_secret';
     const REST_NS = 'wrekin/v1';
     const MAX_CLOCK_SKEW = 300;
@@ -21,6 +21,7 @@ final class Wrekin_WordPress_Connector {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_post_wrekin_regenerate_secret', [__CLASS__, 'regenerate_secret']);
+        add_action('admin_post_wrekin_pair_cloud', [__CLASS__, 'pair_cloud']);
     }
 
     public static function activate() {
@@ -534,8 +535,80 @@ final class Wrekin_WordPress_Connector {
                 <?php wp_nonce_field('wrekin_regenerate_secret'); ?>
                 <?php submit_button('Regenerate connector token', 'secondary'); ?>
             </form>
+            <hr style="margin:28px 0" />
+            <h2>Pair with Wrekin Cloud</h2>
+            <?php $paired = get_option('wrekin_connector_paired'); ?>
+            <?php if (is_array($paired) && !empty($paired['credential_ref'])): ?>
+                <p><strong>Status:</strong> Paired</p>
+                <p><code><?php echo esc_html($paired['credential_ref']); ?></code></p>
+            <?php else: ?>
+                <p>Generate a one-time pairing code in Wrekin Cloud, then enter it here. Your connector token is sent directly from this site to Wrekin Cloud and stored in Vault; it is not shown in the pairing response.</p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="wrekin_pair_cloud" />
+                    <?php wp_nonce_field('wrekin_pair_cloud'); ?>
+                    <label for="wrekin-pair-code"><strong>Pairing code</strong></label><br />
+                    <input id="wrekin-pair-code" name="pairing_code" type="text" minlength="6" maxlength="20" autocomplete="off" style="width:260px;text-transform:uppercase" required />
+                    <?php submit_button('Pair with Wrekin Cloud', 'primary', 'submit', false); ?>
+                </form>
+            <?php endif; ?>
         </div>
         <?php
+    }
+
+    public static function pair_cloud() {
+        if (!current_user_can('manage_options')) wp_die('Forbidden');
+        check_admin_referer('wrekin_pair_cloud');
+
+        $code = isset($_POST['pairing_code']) ? strtoupper(sanitize_text_field(wp_unslash($_POST['pairing_code']))) : '';
+        if (strlen($code) < 6) {
+            wp_safe_redirect(admin_url('options-general.php?page=wrekin-connector&pair_error=invalid_code'));
+            exit;
+        }
+
+        $secret = get_option(self::OPTION_SECRET);
+        if (!$secret || !is_string($secret)) {
+            wp_safe_redirect(admin_url('options-general.php?page=wrekin-connector&pair_error=no_secret'));
+            exit;
+        }
+
+        $payload = [
+            'code' => $code,
+            'baseUrl' => home_url(),
+            'name' => get_bloginfo('name'),
+            'connectorSecret' => $secret,
+            'metadata' => [
+                'wordpressVersion' => get_bloginfo('version'),
+                'connectorVersion' => self::VERSION,
+            ],
+        ];
+
+        $response = wp_remote_post('https://wrekin-cloud.onrender.com/api/wordpress/pairing/complete', [
+            'timeout' => 20,
+            'redirection' => 0,
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => wp_json_encode($payload),
+            'data_format' => 'body',
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_safe_redirect(admin_url('options-general.php?page=wrekin-connector&pair_error=request_failed'));
+            exit;
+        }
+
+        $status = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if ($status !== 200 || !is_array($body) || empty($body['paired'])) {
+            wp_safe_redirect(admin_url('options-general.php?page=wrekin-connector&pair_error=pairing_failed'));
+            exit;
+        }
+
+        update_option('wrekin_connector_paired', [
+            'credential_ref' => isset($body['credentialRef']) ? sanitize_text_field($body['credentialRef']) : '',
+            'paired_at' => current_time('mysql', true),
+        ], false);
+
+        wp_safe_redirect(admin_url('options-general.php?page=wrekin-connector&paired=1'));
+        exit;
     }
 
     public static function regenerate_secret() {

@@ -38,3 +38,4 @@ jobs:
         run: |
           echo "B72271D8629C1819BE2B65C4378B6C86F939F91C3178636E641B6BC07B37CB06  releases/wrekin-wordpress-connector.zip" | sha256sum -c -
 
+

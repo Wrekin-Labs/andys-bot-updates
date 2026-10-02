@@ -1,4 +1,4 @@
-﻿class WordPressRegistry {
+class WordPressRegistry {
   constructor({
     registryUrl,
     registryToken,
@@ -88,14 +88,13 @@
   async call(action, payload = {}) {
     if (this.mode() === 'gateway') return this.requestGateway(action, payload);
     if (this.mode() === 'rpc') return this.requestRpc(action, payload);
-    if (this.mode() === 'direct') return null;
     throw new Error('registry_not_configured');
   }
 
   async listSites() {
     if (this.mode() === 'gateway' || this.mode() === 'rpc') return this.call('list_sites');
     if (this.mode() === 'direct') {
-      return this.requestDirect('wrekin_wordpress_sites?select=id,name,base_url,relay_device,status,metadata,created_at,updated_at&order=name.asc');
+      return this.requestDirect('wrekin_wordpress_sites?select=id,name,base_url,relay_device,status,metadata,credential_ref,created_at,updated_at&order=name.asc');
     }
     throw new Error('registry_not_configured');
   }
@@ -120,13 +119,31 @@
     throw new Error('registry_not_configured');
   }
 
-async listAudit({ siteId = null, limit = 50 } = {}) {
+  async createPairing(baseUrl, codeHash) {
+    if (this.mode() === 'gateway' || this.mode() === 'rpc') {
+      return this.call('create_pairing', { baseUrl, codeHash });
+    }
+    throw new Error('pairing_requires_rpc_registry');
+  }
+
+  async consumePairing(baseUrl, codeHash) {
+    if (this.mode() === 'gateway' || this.mode() === 'rpc') {
+      return this.call('consume_pairing', { baseUrl, codeHash });
+    }
+    throw new Error('pairing_requires_rpc_registry');
+  }
+
+  async listAudit({ siteId = null, limit = 50 } = {}) {
     if (this.mode() === 'gateway' || this.mode() === 'rpc') {
       return this.call('list_audit', { siteId, limit });
     }
     if (this.mode() === 'direct') {
       const filter = siteId ? ('&site_id=eq.' + encodeURIComponent(siteId)) : '';
-      return this.requestDirect('wrekin_wordpress_audit?select=id,site_id,action,risk,status,checkpoint_id,details,created_at&order=created_at.desc&limit=' + Math.min(Math.max(Number(limit)||50,1),200) + filter);
+      return this.requestDirect(
+        'wrekin_wordpress_audit?select=id,site_id,action,risk,status,checkpoint_id,details,created_at&order=created_at.desc&limit=' +
+        Math.min(Math.max(Number(limit) || 50, 1), 200) +
+        filter
+      );
     }
     throw new Error('registry_not_configured');
   }
@@ -152,4 +169,3 @@ async listAudit({ siteId = null, limit = 50 } = {}) {
 }
 
 module.exports = { WordPressRegistry };
-
