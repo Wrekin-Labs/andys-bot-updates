@@ -14,7 +14,10 @@ Updated 3 October 2026. **Not approved for general commercial launch.**
 - Post-migration database regression passed in a transaction that was rolled back. Synthetic tests cover reply idempotency, private notes and mentions, workspace/role boundaries, unsupported-channel rejection, cross-org message foreign keys, analytics scope, team lookup and published-only anonymous help.
 - Fixed form action buttons accidentally submitting replies, added submission guards, discarded stale workspace/session responses and cleared local auth before waiting for logout.
 - Built a synthetic `/qa/` demo for preview only. Its API adapter makes no network calls and CSP blocks network connections. Demo mutations remain in memory.
-- CI source checks and a preview artifact workflow added.
+- Source pushed to GitHub release branch at `b07edb6`. GitHub Actions run `37112388854` completed successfully and produced the preview artifact.
+- Live HTTP smoke checks passed: unknown public help key returns 200/null; anonymous website-reply RPC returns 401.
+- Existing production widget JavaScript is byte-for-byte identical to the repository snapshot.
+- Confirmed zero regression fixture workspaces remain in the database.
 
 ## Verification still required
 

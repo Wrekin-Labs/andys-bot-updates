@@ -1,0 +1,18 @@
+{
+  "release": "6.1.0-rc.1",
+  "date": "2026-10-03",
+  "source_commit": "b07edb6efb1735dbb091d0c4e3ed37bc15ba1b05",
+  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37112388854",
+  "ci_conclusion": "success",
+  "api_unit_tests": 10,
+  "database_regression": "passed after migration, transaction rolled back",
+  "fixture_workspaces_remaining": 0,
+  "http_smoke": {
+    "unknown_public_help": 200,
+    "anonymous_reply": 401,
+    "production_widget_matches_snapshot": true
+  },
+  "browser_tests": "prepared, not run; permission for Product Design Playwright fallback required",
+  "deployment": "not performed; existing preview configuration requires Render dashboard sign-in",
+  "release_ready": false
+}
