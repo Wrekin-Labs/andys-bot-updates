@@ -1,8 +1,8 @@
 {
   "release": "6.1.0-rc.1",
   "date": "2026-10-03",
-  "source_commit": "edbde5528cb35bf7ec7dfb35fa496aab4924a13f",
-  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37121684879",
+  "source_commit": "c68f5addeab808430e2339875dda1fef244ff254",
+  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37133522565",
   "ci_conclusion": "success",
   "api_unit_tests": 12,
   "database_regression": "passed after migration, transaction rolled back",
@@ -50,8 +50,8 @@
     "synthetic_status_retains_draft": "passed",
     "synthetic_public_reply": "passed",
     "synthetic_internal_note": "passed",
-    "authenticated_staff": "Not verified; latest hosted attempt showed a sign-in service connection error, not an invalid-credentials response.",
-    "owner_access": "Recovery email delivered. Private password update and actual staff sign-in remain unverified.",
+    "authenticated_staff": "Hosted workspace not yet verified. Owner account authentication and membership confirmed; erroneous workspace 401 fixed in cxroute-onboard v14.",
+    "owner_access": "Confirmed account and owner membership; deployed verified user-ID fix. User must retry hosted workspace to confirm end-to-end access.",
     "screenshots": [
       "screenshots/08-hosted-website.jpg",
       "screenshots/09-hosted-inbox.jpg"
@@ -66,7 +66,7 @@
     "password_changed": null,
     "password_update_verification": "Unverified; no credential or private recovery link was inspected.",
     "live_delivery": "delivered",
-    "configuration_gate": "User completes private password update; verify actual staff sign-in and authenticated live core flows.",
+    "configuration_gate": "Recovery delivery works and owner account authentication is confirmed; verify hosted workspace after the deployed identity fix.",
     "callback_allowlisted": true,
     "callback": "https://deskroute-ai-v6-preview.onrender.com/password.html",
     "custom_smtp_enabled": true,
@@ -87,19 +87,25 @@
     "delivery_evidence": "Resend list-emails metadata reports delivered; hosted form shows the expected recovery acknowledgement. Email contents and credential link were not read."
   },
   "dated_knowledge_tests": 8,
-  "total_api_policy_handler_tests": 42,
+  "total_api_policy_handler_tests": 47,
   "dated_knowledge_fix": "dated-knowledge-evidence.json",
   "staff_sign_in_followup": {
     "date": "2026-10-03",
     "secure_request_result": "submitted",
     "visible_result": "We could not reach the sign-in service. Check your connection and try again.",
     "authenticated": false,
-    "auth_log_window_utc": ["2026-10-03T14:45:00Z", "2026-10-03T14:55:30Z"],
+    "auth_log_window_utc": [
+      "2026-10-03T14:45:00Z",
+      "2026-10-03T14:55:30Z"
+    ],
     "matching_auth_log_events": 0,
     "log_filter": "auth_logs paths /token, /user, /verify; no matching rows. This does not establish the root cause.",
     "last_sign_in_at_utc": "2026-10-03T14:10:41.944947Z",
     "last_sign_in_interpretation": "Earlier account activity does not prove the current hosted staff UI is signed in.",
     "inspection_limit": "Browser native credential protection blocked console inspection, including after one canonical-origin navigation. No credential retry or alternative transport was used.",
-    "next_gate": "Private manual sign-in, followed by positive staff workspace verification and the isolated staff-to-widget flow."
-  }
+    "next_gate": "Private manual sign-in, followed by positive staff workspace verification and the isolated staff-to-widget flow.",
+    "later_diagnosis": "See owner-access-fix.json: external user sign-in succeeded; cxroute-onboard identity-field bug found, regression tested and deployed as v14."
+  },
+  "onboard_handler_tests": 5,
+  "owner_access_fix": "owner-access-fix.json"
 }

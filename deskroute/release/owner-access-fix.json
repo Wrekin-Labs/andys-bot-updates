@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-03",
+  "source_commit": "c68f5addeab808430e2339875dda1fef244ff254",
+  "symptom": "User reports Unauthorised after signing in to the hosted workspace.",
+  "account_evidence": {
+    "email": "info@thesmashroom.co.uk",
+    "last_sign_in_at_utc": "2026-10-03T15:24:54.097291Z",
+    "role": "owner",
+    "organisation_id": "4f71f52a-e0cd-4316-979c-437ef8ba5374"
+  },
+  "root_cause": "cxroute-onboard v13 reads ctx.userClaims.sub. The verified withSupabase context exposes the user ID as ctx.userClaims.id, so the handler returns 401 before loading memberships.",
+  "contract_reference": "https://github.com/supabase/server/blob/main/docs/auth-modes.md",
+  "fix": "Read ctx.userClaims.id. Preserve user authentication middleware, caller-scoped database queries and membership permissions.",
+  "baseline": {
+    "version": 13,
+    "source_matches_repository": true,
+    "commit": "0b7391387ea0e11aad18cfb3c9d8b13d65f5ec27",
+    "verify_jwt": false,
+    "application_auth_mode": "user"
+  },
+  "tests": {
+    "regression_before_fix": "4 failures and 1 pass; valid verified identities incorrectly receive 401.",
+    "regression_after_fix": "5 passed",
+    "scope": "Actual handler with documented verified-context and in-memory database adapters. Covers owner workspace, request identity spoofing, missing identity, nonmembership and per-user notification isolation. Does not claim an end-to-end middleware or live browser test.",
+    "local_api_policy_handler_total": 47,
+    "ci_run_id": 37133522565,
+    "ci_job_id": 111233241244,
+    "ci_url": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37133522565",
+    "ci_status": "success",
+    "ci_backend_cases": 47,
+    "ci_browser_checks": 46,
+    "ci_html_asset_link_pages": 18
+  },
+  "deployment": {
+    "function": "cxroute-onboard",
+    "version": 14,
+    "status": "ACTIVE",
+    "deployed_at_utc": "2026-10-03T15:40:22.168Z",
+    "retrieved_source_matches_tested_source": true,
+    "verify_jwt": false,
+    "application_auth_mode": "user",
+    "source_commit": "c68f5addeab808430e2339875dda1fef244ff254"
+  },
+  "live_staff_workspace_verified": false,
+  "remaining_gate": "Verify hosted owner workspace and isolated staff-to-widget reply/internal-note flow after deployment."
+}

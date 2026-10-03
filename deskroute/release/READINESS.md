@@ -132,3 +132,11 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - Read-only auth logs for 3 October, 14:45–14:55:30 UTC returned no events for `/token`, `/user` or `/verify`. This does not establish whether the cause is the browser connection or the app. Earlier account activity at 14:10:41 UTC does not prove successful access in the current hosted UI.
 - Native credential protection blocked console inspection even after the permitted canonical-origin navigation. Automated credential attempts stopped. The next step is private manual sign-in and positive workspace verification, then the isolated staff-to-widget reply/internal-note tests.
 - No new recovery email was sent, no credentials were read, and no production setting or release asset was changed. The password update remains unverified. Previous 42 API/policy/handler and 46 browser results remain the latest completed automated tests; release readiness is still false.
+
+## Owner workspace authorization fix
+
+- The owner account authenticated at **15:24:54 UTC / 16:24:54 Europe/London**, and its existing owner membership is confirmed. The user then reported **Unauthorised**.
+- Root cause reproduced in the actual `cxroute-onboard` handler: v13 reads `ctx.userClaims.sub`, but the middleware exposes the verified user ID as `ctx.userClaims.id`. That returned 401 before any membership lookup. The fix changes this field only; authentication middleware, caller-scoped database queries and permissions remain in place.
+- Five new regression cases cover the owner workspace, request-body identity spoofing, missing verified identity, no membership, and notification isolation. Four failed before the fix; all five pass after it. CI **37133522565** passes **47 backend cases, 46 browser checks and 18 HTML link/asset checks** on `c68f5ad`.
+- **Deployed `cxroute-onboard` v14 ACTIVE.** Retrieved deployed source matches the tested source exactly. Existing platform JWT setting and application `auth: user` gate are preserved. No credential reset, new account or permission grant was made.
+- This fixes the reproduced authorization defect. Positive hosted workspace UI and the isolated staff-to-widget reply/internal-note test are still required; neither is claimed complete. The user can refresh and sign in with the existing password. See `owner-access-fix.json`.
