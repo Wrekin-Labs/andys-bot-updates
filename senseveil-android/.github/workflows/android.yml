@@ -27,6 +27,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '15859902'
+          packages: platform-tools
+          accept-android-sdk-licenses: false
       - name: Install pinned Android platform
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
@@ -64,6 +68,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '15859902'
+          packages: platform-tools
+          accept-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - name: Enable emulator acceleration
@@ -79,7 +87,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -camera-back emulated
-          script: ./gradlew connectedDebugAndroidTest --no-daemon
+          script: ./tools/run-device-tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -87,4 +95,5 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            app/build/device-audit/
           retention-days: 14
