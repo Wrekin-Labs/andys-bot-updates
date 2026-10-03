@@ -497,7 +497,7 @@ Deno.serve(withSupabase({auth:"user"},async(req,ctx)=>{
 
     await ctx.supabaseAdmin.from("cxroute_audit_log").insert({
       organisation_id:organisationId,
-      actor_user_id:ctx.userClaims?.sub??null,
+      actor_user_id:ctx.userClaims?.id??null,
       actor_type:"user",
       action:"website_autosetup_scan",
       entity_type:"source_item",
