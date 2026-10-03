@@ -45,5 +45,49 @@ class RescueHostTests(unittest.TestCase):
         self.assertEqual(commands[1], ['schtasks.exe', '/Run', '/TN', 'Project Relay Cloud Watchdog'])
 
 
+    def test_heartbeat_health(self):
+        with tempfile.TemporaryDirectory() as td:
+            heartbeat = Path(td) / 'heartbeat.json'
+            missing = rescue_host.relay_heartbeat_status(heartbeat)
+            self.assertFalse(missing['healthy'])
+            self.assertFalse(missing['present'])
+
+            heartbeat.write_text('{}', encoding='utf-8')
+            fresh = rescue_host.relay_heartbeat_status(heartbeat, stale_after=180)
+            self.assertTrue(fresh['healthy'])
+            self.assertTrue(fresh['present'])
+
+            import os
+            import time
+            old = time.time() - 600
+            os.utime(heartbeat, (old, old))
+            stale = rescue_host.relay_heartbeat_status(heartbeat, stale_after=180)
+            self.assertFalse(stale['healthy'])
+            self.assertGreaterEqual(stale['age_seconds'], 590)
+
+    def test_auto_recovery_tick_uses_cooldown(self):
+        with tempfile.TemporaryDirectory() as td:
+            heartbeat = Path(td) / 'missing-heartbeat.json'
+            with patch('rescue_host.recover_project_relay', return_value={'ok': True, 'tasks': []}) as recover:
+                first, result = rescue_host.auto_recovery_tick(
+                    heartbeat_path=heartbeat,
+                    last_attempt=0.0,
+                    now_monotonic=1000.0,
+                )
+                self.assertEqual(first, 1000.0)
+                self.assertIsNotNone(result)
+                self.assertEqual(recover.call_count, 1)
+
+                second, result2 = rescue_host.auto_recovery_tick(
+                    heartbeat_path=heartbeat,
+                    last_attempt=first,
+                    now_monotonic=1050.0,
+                )
+                self.assertEqual(second, first)
+                self.assertIsNone(result2)
+                self.assertEqual(recover.call_count, 1)
+
+
+
 if __name__ == '__main__':
     unittest.main()

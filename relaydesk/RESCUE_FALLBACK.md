@@ -10,6 +10,7 @@ This feature branch adds a narrow emergency fallback for owner-controlled Window
 - screen snapshots
 - native Windows mouse, key and Unicode text injection
 - one fixed Recover Project Relay action
+- automatic stale-heartbeat recovery every minute with a two-minute restart cooldown
 
 The recovery action can only start these pre-existing scheduled tasks:
 
@@ -21,7 +22,7 @@ There is deliberately no arbitrary shell, command, task name or file-execution e
 ## Recovery layers
 
 1. Project Relay 0.7.12 unattended recovery is the boot/no-login path.
-2. RelayDesk Rescue is the logged-in-session fallback for screen/control and exact Relay recovery.
+2. RelayDesk Rescue is the logged-in-session fallback for screen/control and exact Relay recovery; it also self-heals a missing/stale normal Relay agent.
 3. Normal RelayDesk attended sessions remain the primary TeamViewer/AnyDesk-style support path.
 
 ## Security

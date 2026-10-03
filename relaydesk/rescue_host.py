@@ -19,6 +19,9 @@ from typing import Any
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
 CONTROL_TTL_SECONDS = 600
 MAX_TEXT_CHARS = 4096
+HEARTBEAT_STALE_SECONDS = 180
+AUTO_RECOVERY_INTERVAL_SECONDS = 60
+AUTO_RECOVERY_COOLDOWN_SECONDS = 120
 RECOVERY_TASKS = (
     "Project Relay Cloud Agent",
     "Project Relay Cloud Watchdog",
@@ -260,6 +263,57 @@ def recover_project_relay() -> dict[str, Any]:
     return {"ok": any(item["ok"] for item in results), "tasks": results}
 
 
+def relay_heartbeat_status(path: Path | None = None, stale_after: int = HEARTBEAT_STALE_SECONDS) -> dict[str, Any]:
+    heartbeat = path or (Path(os.getenv("LOCALAPPDATA", Path.home())) / "ProjectRelay" / "heartbeat.json")
+    if not heartbeat.is_file():
+        return {"healthy": False, "present": False, "age_seconds": None, "path": str(heartbeat)}
+    try:
+        age = max(0, int(time.time() - heartbeat.stat().st_mtime))
+    except OSError:
+        return {"healthy": False, "present": False, "age_seconds": None, "path": str(heartbeat)}
+    return {
+        "healthy": age <= max(30, int(stale_after)),
+        "present": True,
+        "age_seconds": age,
+        "path": str(heartbeat),
+    }
+
+
+def auto_recovery_tick(
+    *,
+    heartbeat_path: Path | None = None,
+    last_attempt: float = 0.0,
+    now_monotonic: float | None = None,
+) -> tuple[float, dict[str, Any] | None]:
+    health = relay_heartbeat_status(heartbeat_path)
+    if health["healthy"]:
+        return last_attempt, None
+    now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+    if last_attempt and now - last_attempt < AUTO_RECOVERY_COOLDOWN_SECONDS:
+        return last_attempt, None
+    result = recover_project_relay()
+    return now, result
+
+
+def auto_recovery_loop(state: "RescueState", stop: threading.Event) -> None:
+    last_attempt = 0.0
+    while not stop.is_set():
+        try:
+            last_attempt, result = auto_recovery_tick(last_attempt=last_attempt)
+            if result is not None:
+                state.last_auto_recovery = {
+                    "at": time.time(),
+                    "ok": bool(result.get("ok")),
+                    "tasks": [
+                        {"task": item.get("task"), "ok": bool(item.get("ok"))}
+                        for item in result.get("tasks", [])
+                    ],
+                }
+        except Exception as exc:
+            state.last_auto_recovery = {"at": time.time(), "ok": False, "error": str(exc)[:300]}
+        stop.wait(AUTO_RECOVERY_INTERVAL_SECONDS)
+
+
 INDEX_HTML = r'''<!doctype html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>RelayDesk Rescue</title><style>
@@ -281,10 +335,11 @@ class RescueState:
     def __init__(self, token: str) -> None:
         self.token = token
         self.lease = ControlLease()
+        self.last_auto_recovery: dict[str, Any] | None = None
 
 
 class RescueHandler(BaseHTTPRequestHandler):
-    server_version = "RelayDeskRescue/0.4"
+    server_version = "RelayDeskRescue/0.5"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return
@@ -354,7 +409,21 @@ class RescueHandler(BaseHTTPRequestHandler):
                 left, top, sw, sh = _screen_metrics()
             except Exception:
                 left, top, sw, sh = 0, 0, 0, 0
-            self._json(HTTPStatus.OK, {"ok": True, "sw": sw, "sh": sh, "left": left, "top": top, "control": self.state.lease.active(), "control_ttl": self.state.lease.remaining(), "tailnet_only": True, "version": "0.4"})
+            heartbeat = relay_heartbeat_status()
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "sw": sw,
+                "sh": sh,
+                "left": left,
+                "top": top,
+                "control": self.state.lease.active(),
+                "control_ttl": self.state.lease.remaining(),
+                "tailnet_only": True,
+                "version": "0.5",
+                "relay_healthy": heartbeat["healthy"],
+                "relay_heartbeat_age": heartbeat["age_seconds"],
+                "last_auto_recovery": self.state.last_auto_recovery,
+            })
             return
         if path == "/screen.jpg":
             if not self._require():
@@ -433,9 +502,19 @@ def main() -> int:
     parser.add_argument("--token-file", default=str(Path(os.getenv("LOCALAPPDATA", Path.home())) / "RelayDesk" / "rescue.token"))
     args = parser.parse_args()
     token = load_or_create_token(Path(args.token_file))
-    print(f"RelayDesk Rescue 0.4 listening on {args.bind}:{args.port}")
+    state = RescueState(token)
+    stop = threading.Event()
+    healer = threading.Thread(target=auto_recovery_loop, args=(state, stop), name="relaydesk-auto-recovery", daemon=True)
+    healer.start()
+    print(f"RelayDesk Rescue 0.5 listening on {args.bind}:{args.port}")
     print("Tailnet/loopback only. API mutations require the rescue token and a time-limited control lease.")
-    RescueServer((args.bind, args.port), RescueState(token)).serve_forever()
+    print("Automatic Project Relay recovery is enabled for missing/stale heartbeats with a cooldown.")
+    server = RescueServer((args.bind, args.port), state)
+    try:
+        server.serve_forever()
+    finally:
+        stop.set()
+        server.server_close()
     return 0
 
 
