@@ -443,6 +443,8 @@ Deno.serve(async(req:Request)=>{
   }
 
   try{
+    const requestStartedAt=Date.now();
+    const requestId=crypto.randomUUID();
     const body=await req.json() as Body;
 
     const widgetKey=
@@ -1233,6 +1235,55 @@ Deno.serve(async(req:Request)=>{
             humanAssigneeId
         }
       });
+
+    try{
+      const secondRelevance=Number(evidence[1]?.relevance||0);
+      const failedGate=
+        llmError==="literal_grounding_failed"
+          ?"literal_grounding"
+          :dateContext.requiresHuman
+            ?"dated_review"
+            :!evidence.length
+              ?"no_evidence"
+              :relevance<0.015
+                ?"retrieval_low"
+                :llm?.needs_human
+                  ?"model_requested_human"
+                  :llm&&Number(llm.confidence)<Math.max(0.9,minConfidence)
+                    ?"confidence"
+                    :aiMode!=="automatic"
+                      ?"review_mode"
+                      :null;
+      const outcome=
+        modelAutomaticAllowed
+          ?"auto_answered"
+          :directAutomaticAllowed
+            ?"direct_fact_fallback"
+            :draftId
+              ?"drafted"
+              :"handoff";
+
+      await admin
+        .from("cxroute_ai_events")
+        .insert({
+          request_id:requestId,
+          organisation_id:config.organisation_id,
+          brand_id:config.brand_id||null,
+          conversation_id:conversationId,
+          outcome,
+          failed_gate:failedGate,
+          retrieval_top_score:relevance||null,
+          retrieval_margin:evidence.length>1?Math.max(0,relevance-secondRelevance):relevance||null,
+          facts_returned:evidence.length,
+          used_fact_ids:usedFactIds,
+          model:llm?.model||null,
+          model_confidence:llm?.confidence??null,
+          latency_total_ms:Math.max(0,Date.now()-requestStartedAt),
+          error_code:llmError||null
+        });
+    }catch(error){
+      console.error("cxroute-ai-event-log",error);
+    }
 
     return json(
       {
