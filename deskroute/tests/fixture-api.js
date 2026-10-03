@@ -2,7 +2,7 @@
 export const VERSION='6.1.0-rc.1 · DEMO';
 const id=n=>`e6100000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const org=id(10),brand=id(20),owner=id(1),agent=id(2),now=new Date().toISOString();
-const row=(n,data)=>({id:id(n),organisation_id:org,brand_id:brand,created_at:now,updated_at:now,...data});
+const row=(n,data)=>({id:id(n),organisation_id:org,brand_id:brand,created_at:new Date(Date.now()+n).toISOString(),updated_at:now,...data});
 const db={
  brands:[row(20,{name:'North & Co · Demo',enabled:true,is_default:true,website_url:'https://example.com',support_email:'team@example.com'})],
  contacts:[row(31,{name:'Alex Morgan',email:'alex@example.com'}),row(32,{name:'Sam Patel',email:'sam@example.com'}),row(33,{name:'Taylor Green',email:'taylor@example.com'})],
@@ -31,7 +31,7 @@ export class DeskRouteAPI {
  clear(){this.session=null;}changeContext(){}
  async login(){this.session={user:{id:owner}};return this.session;}
  async logout(){this.clear();}
- async table(name,filters={},options={}){const key=name.replace('cxroute_','');db[key]??=[];if(options.method==='POST'){db[key].push(row(Math.floor(Math.random()*100000)+100,options.body));return null;}return copy(select(name,filters));}
+ async table(name,filters={},options={}){const key=name.replace('cxroute_','');db[key]??=[];if(options.method==='POST'){db[key].push(row(Math.floor(Math.random()*100000)+100,options.body));return null;}let result=select(name,filters);if(filters.order){const [field,direction]=filters.order.split(',')[0].split('.');result=[...result].sort((a,b)=>String(a[field]??'').localeCompare(String(b[field]??''))*(direction==='desc'?-1:1));}if(filters.limit)result=result.slice(0,Number(filters.limit));return copy(result);}
  async patch(name,organisationId,itemId,body,extra={}){const matches=select(name,{organisation_id:'eq.'+organisationId,...(itemId?{id:'eq.'+itemId}:{}),...extra});if(!matches.length)throw new Error('Nothing was changed. Refresh and try again.');matches.forEach(r=>Object.assign(r,body));return copy(matches);}
  async rpc(name,p){if(name==='cxroute_has_permission')return true;if(name==='cxroute_team_directory')return {members:copy(members)};if(name==='cxroute_business_brain_readiness')return {readiness_score:75,coverage_score:80,open_gaps:1,required_topics:['hours','pricing','services','policy','contact'],present_topics:['hours','services','policy','contact']};
  if(name==='cxroute_approve_learning_suggestion'){const s=db.learning_suggestions.find(s=>s.id===p.p_suggestion_id);s.status='approved';return {ok:true};}
@@ -42,3 +42,5 @@ export class DeskRouteAPI {
  async edge(name,p){if(name==='cxroute-website-scan'){db.knowledge_facts.push(row(90,{fact_key:'Scanned demo fact',fact_value:'Synthetic information for interface testing only.',category:'faq',confidence:.95,review_status:'pending',source_label:'Demo scan'}));return {factsProposed:1};}throw new Error('Demo makes no network requests');}
  async request(){return {title:'North & Co Help · DEMO',articles:copy(db.help_articles.filter(a=>a.published))};}
 }
+
+export function injectDemoMessage(body){db.messages.push(row(500,{conversation_id:id(41),body,direction:"inbound",author_type:"customer"}));}

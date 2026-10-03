@@ -10,9 +10,27 @@
   "http_smoke": {
     "unknown_public_help": 200,
     "anonymous_reply": 401,
-    "production_widget_matches_snapshot": true
+    "production_widget_matches_snapshot": "Matched baseline before pending widget UI changes"
   },
-  "browser_tests": "prepared, not run; permission for Product Design Playwright fallback required",
+  "browser_tests": {
+    "passed": 41,
+    "scope": "synthetic preview and widget adapter",
+    "results": "browser-results.json"
+  },
   "deployment": "not performed; existing preview configuration requires Render dashboard sign-in",
-  "release_ready": false
+  "release_ready": false,
+  "answer_policy_tests": 7,
+  "edge_handler_tests": 5,
+  "live_safety_fix": {
+    "function": "cxroute-widget-chat",
+    "version": 16,
+    "status": "ACTIVE",
+    "retested_on": "https://www.thesmashroom.co.uk/",
+    "questions_retested": 2,
+    "assigned": true,
+    "matching_gaps": 2,
+    "notifications": 2,
+    "grounding_status": "grounding_not_available"
+  },
+  "live_installations": "live-installations.json"
 }

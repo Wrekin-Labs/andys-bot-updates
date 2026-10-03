@@ -21,9 +21,21 @@ jobs:
           python-version: '3.12'
       - run: npm --prefix deskroute run check
       - run: node deskroute/tests/api.test.mjs
+      - run: node deskroute/tests/answer-policy.test.mjs
+      - run: node deskroute/tests/widget-handler.test.mjs
       - run: python deskroute/scripts/build_site.py
       - run: python deskroute/scripts/check_links.py
       - run: python deskroute/scripts/build_preview.py
+      - run: npm ci --prefix deskroute
+      - run: cd deskroute && npx playwright install --with-deps chromium
+      - run: node deskroute/tests/browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deskroute-browser-evidence
+          path: |
+            deskroute/release/browser-results.json
+            deskroute/release/screenshots
       - uses: actions/upload-artifact@v4
         with:
           name: deskroute-6.1-preview

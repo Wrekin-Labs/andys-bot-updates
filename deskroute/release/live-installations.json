@@ -1,0 +1,30 @@
+{
+  "time": "2026-10-03T09:47:46.096922+00:00",
+  "scope": "Public homepage HTML installation check only. Absence of script is not a full site crawl.",
+  "results": [
+    {
+      "requested_url": "https://www.thesmashroom.co.uk/",
+      "final_url": "https://www.thesmashroom.co.uk/",
+      "status": 200,
+      "deskroute_scripts": [
+        "https://deskroute-widget-v6-0-1.onrender.com/deskroute-widget.js"
+      ]
+    },
+    {
+      "requested_url": "https://www.electronicrepairsuk.com/",
+      "final_url": "https://www.electronicrepairsuk.com/",
+      "status": 200,
+      "deskroute_scripts": []
+    },
+    {
+      "requested_url": "https://smashroomwellbeing.co.uk/",
+      "final_url": "https://smashroomwellbeing.co.uk/",
+      "status": 200,
+      "deskroute_scripts": []
+    },
+    {
+      "requested_url": "https://www.giglink.uk/",
+      "error": "HTTP Error 403: Forbidden"
+    }
+  ]
+}

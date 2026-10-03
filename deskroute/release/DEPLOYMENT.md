@@ -17,6 +17,14 @@ Save the current service configuration and last successful deployment ID before 
 
 Production panel `srv-db01no1srm7s73dopngg` and production widget `srv-db02b0p42hec73ekr4cg` are separate and must stay unchanged while the preview is tested.
 
+## Deployed answer safety patch
+
+On 3 October, `cxroute-widget-chat` was updated from v15 to v16 after 12 answer-policy/handler regressions passed. Live website retests confirmed the review fallback, human assignment, gaps and notifications. This is separate from the still-pending control-panel/widget-asset deployment.
+
+Deploy files for this function must include `cxroute-widget-chat.ts` as `index.ts`, its relative `answer-policy.js`, and the existing `deno.json`. Keep the existing JWT setting and custom widget origin/rate checks. The old function source is retained in git parent `7993a80`; restoring it would reintroduce the unsafe top-fact fallback and should not be a routine rollback. Roll forward with the validated policy intact.
+
+When no grounded provider is available, all automatic answers require human review. Do not silently restore raw search-result sending to make the bot appear autonomous. Configure and verify the provider, future-date retrieval and unknown-question handling before general release.
+
 To roll back the preview, redeploy its prior successful deployment and restore the saved prior configuration. The additive database functions can remain in place for an interface rollback; do not drop schema/functions during an incident. Restoring the old panel does not require deleting customer data.
 
 Before public release: complete READINESS.md gates, confirm commercial terms/contact, verify staff/visitor flows with isolated test data, record the release commit and keep the last working panel/widget URLs available. Publish the production panel from `deskroute/control-panel`, not the synthetic preview directory.
