@@ -35,6 +35,7 @@ async function openRecovery() {
   if (!hash) return;
   // Strip credentials before displaying the form or making an API request.
   history.replaceState(null,'',location.pathname);
+  api.clear(); resetFields(); passwordForm.classList.add('hidden');
   requestForm.classList.add('hidden'); setBusy(true); message('Checking your recovery link…');
   try {
     const token=recoveryToken(hash), email=await api.acceptToken(token);
@@ -44,4 +45,5 @@ async function openRecovery() {
 }
 window.addEventListener('pagehide',()=>{api.clear();resetFields();});
 window.addEventListener('pageshow',event=>{if(event.persisted){passwordForm.classList.add('hidden');requestForm.classList.remove('hidden');message('Request a fresh recovery link to continue.');}});
+window.addEventListener('hashchange',openRecovery);
 openRecovery();
