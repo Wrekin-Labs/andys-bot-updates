@@ -24,6 +24,7 @@ jobs:
       - run: node deskroute/tests/recovery.test.mjs
       - run: node deskroute/tests/answer-policy.test.mjs
       - run: node deskroute/tests/widget-handler.test.mjs
+      - run: node deskroute/tests/dated-knowledge.test.mjs
       - run: python deskroute/scripts/build_site.py
       - run: python deskroute/scripts/check_links.py
       - run: python deskroute/scripts/build_preview.py

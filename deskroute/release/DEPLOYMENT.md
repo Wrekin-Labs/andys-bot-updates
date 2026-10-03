@@ -23,7 +23,7 @@ Production panel `srv-db01no1srm7s73dopngg` and production widget `srv-db02b0p42
 
 On 3 October, `cxroute-widget-chat` was updated from v15 to v16 after 12 answer-policy/handler regressions passed. Live website retests confirmed the review fallback, human assignment, gaps and notifications. This is separate from the still-pending control-panel/widget-asset deployment.
 
-Deploy files for this function must include `cxroute-widget-chat.ts` as `index.ts`, its relative `answer-policy.js`, and the existing `deno.json`. Keep the existing JWT setting and custom widget origin/rate checks. The old function source is retained in git parent `7993a80`; restoring it would reintroduce the unsafe top-fact fallback and should not be a routine rollback. Roll forward with the validated policy intact.
+Deploy files for this function must include `cxroute-widget-chat.ts` as `index.ts`, its relative `answer-policy.js` and `dated-knowledge.js`, and the existing `deno.json`. Keep the existing JWT setting and custom widget origin/rate checks. The old function source is retained in git parent `7993a80`; restoring it would reintroduce the unsafe top-fact fallback and should not be a routine rollback. Roll forward with the validated policy intact.
 
 When no grounded provider is available, all automatic answers require human review. Do not silently restore raw search-result sending to make the bot appear autonomous. Configure and verify the provider, future-date retrieval and unknown-question handling before general release.
 
@@ -38,3 +38,5 @@ The dedicated callback is `https://deskroute-ai-v6-preview.onrender.com/password
 The account owner must choose and enter their own new password. Do not place recovery URLs, access tokens or passwords in source, reports or chat. A generic successful recovery request does not prove delivery or that an account exists. Record the real desktop/phone sign-in and staff-to-widget tests separately after recovery.
 
 Latest preview update: `dep-db0ea6lg1s2s73dn083g`, source `d50029e`, live on 3 October after CI `37119293218` passed. The immediately prior stable preview is `dep-db0did1srm7s73f4jrt0` (`d188f85`) with the same build settings. Prefer that deployment for a preview UI rollback; the original legacy configuration remains in `preview-rollback.json`.
+
+Dated-knowledge source follow-up is locally verified with 42 API/policy/handler cases. Its new relative dependency `dated-knowledge.js` must be included with any Edge deployment. Keep dated replies in human review until business time-zone handling and actual staff delivery are verified. No new migration, secret, membership or stored fact change is required.

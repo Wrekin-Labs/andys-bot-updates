@@ -29,7 +29,7 @@ Updated 3 October 2026. **Not approved for general commercial launch.**
 - Live Smash Room test used the explicitly named **DeskRoute release QA** visitor. Chat opening, sending, receiving and close/reopen passed. Initial pricing and unknown-access questions exposed unsafe top-fact fallback replies.
 - **Deployed `cxroute-widget-chat` v16** with the reviewed safety patch. Retrieval rank alone can no longer authorize automatic replies. When grounded AI is unavailable, drafts require a human and the handler records a gap/assignment/notification. JWT verification setting is unchanged; the existing public widget authentication/origin/rate checks remain.
 - Retested both failure questions through the live website. Both returned a review holding message. Database confirmation: assigned human, `ai-needs-human` tag, two matching knowledge gaps, two notifications. No booking, payment or customer email was created.
-- The current live audit reports `grounding_not_available`. Successful autonomous answering in production remains blocked until a grounded provider is configured and verified. The safe fallback does **not** solve future-dated knowledge retrieval; the November price fact is currently filtered out before its start date.
+- The current live audit reports `grounding_not_available`. Successful autonomous answering in production remains blocked until a grounded provider is configured and verified. At v16, future-dated knowledge retrieval still filtered out the November price fact before its start date; see the dated-knowledge follow-up below.
 - ERUK and Wellbeing homepages return 200 with no DeskRoute script. ERUK remains staged/off. GigLink returned 403 to the HTTP installation check; its installation is unverified.
 
 ## Verification still required
@@ -78,3 +78,12 @@ The existing Smash Room widget asset and WordPress installation are unchanged; i
 The original 41-check local evidence remains in `browser-results.json`; the expanded 46-check run is recorded in `ci-evidence.json` and its GitHub Actions browser artifact. No real recovery email or password update occurred.
 
 Latest preview deploy `dep-db0ea6lg1s2s73dn083g` is **live** on tested source `d50029e`. It includes account recovery and the offline-cache repair. Hosted recovery delivery and authenticated staff access are still unverified; no claim of owner access restoration is made.
+
+## Dated-knowledge follow-up
+
+- Added bounded, organisation/brand-scoped retrieval for explicit ISO and full English dates. It selects only approved facts valid during the requested UTC day and includes validity timestamps in model evidence. It does not alter stored business facts or database schema.
+- Read-only production query for 1 November 2026 returns the approved £16 rehearsal fact and excludes the expired £15 fact. Actual handler regressions confirm the future-price draft reaches the staff review path, never an automatic visitor answer.
+- Unsupported/ambiguous dates do not fall back to today's prices. More than 200 candidates or eight relevant facts returns no proposed answer rather than hiding potentially conflicting evidence. Brandless widgets use only unbranded facts on this path.
+- **42 local API/policy/handler cases pass**: 12 API, eight recovery, seven answer-policy, seven actual-handler, eight dated-knowledge cases. UI source is unchanged; the latest completed browser CI evidence remains the 46-check run on `d50029e`.
+- Every dated answer still requires human review, including a confident provider response. Business time-zone interpretation, autonomous dated answers and live staff-to-widget delivery remain release gates. The grounded provider is still unverified.
+- KeepGoing retry `kgj_d0f71afa9d1742a287075173af5025d5` also failed with “The model run failed.” No background job is running.

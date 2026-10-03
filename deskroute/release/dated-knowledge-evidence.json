@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-03",
+  "local_tests": {
+    "api": 12,
+    "recovery": 8,
+    "answer_policy": 7,
+    "edge_handler": 7,
+    "dated_knowledge": 8,
+    "total": 42,
+    "status": "passed"
+  },
+  "read_only_production_query": {
+    "requested_day_utc": "2026-11-01",
+    "matching_pricing_fact": "rehearsal_price_from_2026_11_01",
+    "price_gbp_per_hour": 16,
+    "expired_price_excluded": true
+  },
+  "database_mutations": false,
+  "live_widget_round_trip": "not rerun in this follow-up",
+  "dated_answers": "human review required",
+  "edge_deployment": "pending"
+}
