@@ -62,4 +62,36 @@ class ReleaseDeviceTest {
             assertTrue(DiagnosticsBundle.create(context,OperatorPreferences(context),SecurityPreferences(context)).length() > 0)
         }
     }
+
+    @Test fun captureSealsAfterActivityRotation() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val events = EventRepository(context).eventRoot
+        val existing = events.listFiles().orEmpty().map { it.name }.toSet()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val capture = device.findObject(UiSelector().text("CAPTURE").enabled(true))
+            assertTrue("Camera becomes ready", capture.waitForExists(45_000))
+            capture.click()
+            val imageDeadline = android.os.SystemClock.elapsedRealtime() + 20_000
+            var bundle: File? = null
+            while (android.os.SystemClock.elapsedRealtime() < imageDeadline && bundle == null) {
+                bundle = events.listFiles().orEmpty().firstOrNull { dir ->
+                    dir.isDirectory && dir.name !in existing && File(dir, "explanation.json").exists()
+                }
+                if (bundle == null) android.os.SystemClock.sleep(200)
+            }
+            assertNotNull("Camera capture writes event metadata", bundle)
+            scenario.onActivity { activity ->
+                activity.requestedOrientation = if (activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            val sealDeadline = android.os.SystemClock.elapsedRealtime() + 40_000
+            val signature = File(bundle!!, "integrity.sig.json")
+            while (!signature.exists() && android.os.SystemClock.elapsedRealtime() < sealDeadline) android.os.SystemClock.sleep(200)
+            assertTrue("Interrupted capture finishes signing", signature.exists())
+            val result = EvidenceVerifier.verifyBundle(bundle!!, true)
+            assertTrue("All captured media is signed: ${result.message}", result.valid)
+            assertTrue(File(bundle, "telemetry_window.csv").exists())
+            assertTrue(File(bundle, "detections_window.jsonl").exists())
+        }
+    }
 }

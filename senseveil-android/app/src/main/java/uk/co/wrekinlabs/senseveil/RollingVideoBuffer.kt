@@ -23,7 +23,7 @@ class RollingVideoBuffer(
     private var activeFile: File? = null
     private var recording: Recording? = null
     private var enabled = false
-    private val preserveNextSegmentInto = linkedSetOf<File>()
+    private val preserveNextSegmentInto = linkedMapOf<File, (String) -> Unit>()
     private var performanceMode: PerformanceMode = PerformanceMode.BALANCED
 
     private val rotate = Runnable {
@@ -49,11 +49,18 @@ class RollingVideoBuffer(
         onStatus("BUFFER OFF")
     }
 
-    fun markEvent(bundle: File): File {
+    fun markEvent(bundle: File, onReady: (String) -> Unit = {}): File {
         segments.takeLastCompat(maxSegments()).forEachIndexed { index, file ->
             copySafely(file, File(bundle, "pre_${index + 1}_${file.name}"))
         }
-        preserveNextSegmentInto += bundle
+        if (!enabled || recording == null) {
+            onReady("unavailable")
+            return bundle
+        }
+        preserveNextSegmentInto[bundle] = onReady
+        // Remove the producer before reporting timeout: a late Finalize must not
+        // append unsigned media to an already sealed bundle.
+        main.postDelayed({ preserveNextSegmentInto.remove(bundle)?.invoke("timeout") }, 30_000L)
         onStatus("BUFFER SAVING EVENT")
         return bundle
     }
@@ -82,15 +89,18 @@ class RollingVideoBuffer(
                         val finished = file
                         activeFile = null
 
-                        if (finished != null && finished.exists() && finished.length() > 0L) {
+                        if (finished.exists() && finished.length() > 0L) {
                             segments.addLast(finished)
                             trimSegments()
-                            preserveNextSegmentInto.forEach { bundle ->
-                                copySafely(finished, File(bundle, "post_${finished.name}"))
+                            preserveNextSegmentInto.forEach { (bundle, ready) ->
+                                val copied = copySafely(finished, File(bundle, "post_${finished.name}"))
+                                ready(if (!copied) "copy_failed" else if (event.hasError()) "partial" else "saved")
                             }
                             preserveNextSegmentInto.clear()
                         } else {
-                            finished?.delete()
+                            finished.delete()
+                            preserveNextSegmentInto.values.forEach { it("unavailable") }
+                            preserveNextSegmentInto.clear()
                         }
 
                         if (event.hasError()) {
@@ -123,11 +133,10 @@ class RollingVideoBuffer(
         }
     }
 
-    private fun copySafely(source: File, target: File) {
-        try {
-            if (source.exists()) source.copyTo(target, overwrite = true)
-        } catch (_: Throwable) { }
-    }
+    private fun copySafely(source: File, target: File): Boolean = try {
+        source.copyTo(target, overwrite = true)
+        true
+    } catch (_: Exception) { false }
 
     private fun <T> ArrayDeque<T>.takeLastCompat(count: Int): List<T> =
         toList().takeLast(count)

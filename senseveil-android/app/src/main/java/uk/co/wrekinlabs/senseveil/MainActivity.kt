@@ -64,13 +64,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bufferText: TextView
     private lateinit var modeButton: Button
     private lateinit var lightButton: Button
+    private lateinit var captureButton: Button
 
     private lateinit var poseDetector: PoseDetector
     private lateinit var faceDetector: FaceDetector
     private lateinit var objectDetector: ObjectDetector
 
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-    private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val ioExecutor = EvidenceWork.executor
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var eventRepository: EventRepository
@@ -104,6 +105,7 @@ class MainActivity : AppCompatActivity() {
     private var audioMonitoringEnabled = false
     private var lastAutoCaptureAt = 0L
     private var anomalyEpisodeLatched = false
+    @Volatile private var captureInterruptionGeneration = 0L
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -114,7 +116,7 @@ class MainActivity : AppCompatActivity() {
                 startRuntimeSensors()
             } else {
                 statusText.text = "CAMERA PERMISSION REQUIRED"
-                detailText.text = "SenseVeil AI requires camera access for live vision analysis."
+                detailText.text = "Tap CAPTURE to retry camera permission, or enable it in Android Settings."
             }
         }
 
@@ -263,9 +265,9 @@ class MainActivity : AppCompatActivity() {
         brandBar.addView(brandCopy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         modeButton = compactButton("FIELD") { toggleLabMode() }
-        brandBar.addView(modeButton, LinearLayout.LayoutParams(dp(70), dp(42)).apply { setMargins(0, 0, dp(4), 0) })
+        brandBar.addView(modeButton, LinearLayout.LayoutParams(dp(70), dp(48)).apply { setMargins(0, 0, dp(4), 0) })
         val toolsButton = compactButton("TOOLS") { showToolsPanel() }
-        brandBar.addView(toolsButton, LinearLayout.LayoutParams(dp(70), dp(42)))
+        brandBar.addView(toolsButton, LinearLayout.LayoutParams(dp(70), dp(48)))
 
         root.addView(
             brandBar,
@@ -299,7 +301,7 @@ class MainActivity : AppCompatActivity() {
             statusPanel,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.TOP
-                setMargins(dp(10), dp(70), dp(10), 0)
+                setMargins(dp(10), dp(78), dp(10), 0)
             }
         )
 
@@ -335,13 +337,16 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val save = compactButton("CAPTURE") { captureEvent("manual", latestDetection, false) }
+        captureButton = compactButton("CAPTURE") {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestNeededPermissions()
+            else captureEvent("manual", latestDetection, false)
+        }
         val events = compactButton("EVENTS") { showHistory() }
         lightButton = compactButton("LIGHT") { toggleTorch() }
         val wall = compactButton("RADAR") { showRadarInfo() }
 
-        listOf(save, events, lightButton, wall).forEach {
-            buttonRow.addView(it, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+        listOf(captureButton, events, lightButton, wall).forEach {
+            buttonRow.addView(it, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
         }
 
         val disclaimer = TextView(this).apply {
@@ -530,7 +535,9 @@ class MainActivity : AppCompatActivity() {
                 )
                 latestDetection = state
                 detectionTimeline.add(state)
-                sessionRecorder.append(state, sensorSnapshot, ext)
+                runCatching { sessionRecorder.append(state, sensorSnapshot, ext) }.onFailure { error ->
+                    runOnUiThread { if (!isDestroyed) bufferText.text = "SESSION WRITE FAILED: ${error.message}" }
+                }
 
                 runOnUiThread {
                     renderDetection(state)
@@ -561,19 +568,34 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        statusText.text = "SCANNING"
-        detailText.text = "VISION ONLINE • SENSOR BASELINE LEARNING"
-
-        if (videoEnabled) {
-            rollingBuffer = RollingVideoBuffer(this, cameraController, eventRepository) { status ->
-                runOnUiThread { bufferText.text = "EVENT BUFFER: $status" }
-            }.also {
-                it.setPerformanceMode(operatorPreferences.performanceMode)
-                it.start()
+        statusText.text = "CAMERA STARTING…"
+        captureButton.isEnabled = false
+        cameraController.initializationFuture.addListener({
+            if (isDestroyed) return@addListener
+            try {
+                try { cameraController.initializationFuture.get() } catch (_: Exception) {
+                    videoEnabled = false
+                    cameraController.setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.IMAGE_ANALYSIS)
+                    cameraController.bindToLifecycle(this)
+                }
+                check(cameraController.cameraInfo != null) { "Camera provider is unavailable" }
+                captureButton.isEnabled = true
+                statusText.text = "SCANNING"
+                detailText.text = "VISION ONLINE • SENSOR BASELINE LEARNING"
+                if (videoEnabled) {
+                    rollingBuffer = RollingVideoBuffer(this, cameraController, eventRepository) { status ->
+                        runOnUiThread { if (!isDestroyed) bufferText.text = "EVENT BUFFER: $status" }
+                    }.also {
+                        it.setPerformanceMode(operatorPreferences.performanceMode)
+                        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) it.start()
+                    }
+                } else bufferText.text = "EVENT BUFFER: DEVICE COMBINATION UNSUPPORTED"
+            } catch (error: Exception) {
+                statusText.text = "CAMERA UNAVAILABLE"
+                detailText.text = "Close other camera apps and reopen SenseVeil."
+                bufferText.text = error.message ?: "Camera could not start"
             }
-        } else {
-            bufferText.text = "EVENT BUFFER: DEVICE COMBINATION UNSUPPORTED"
-        }
+        }, ContextCompat.getMainExecutor(this))
     }
 
     private fun renderDetection(state: DetectionState) {
@@ -641,68 +663,96 @@ class MainActivity : AppCompatActivity() {
     private fun captureEvent(reason: String, state: DetectionState, automatic: Boolean) {
         if (!::cameraController.isInitialized) return
 
-        val eventElapsed = SystemClock.elapsedRealtime()
-        val bundle = eventRepository.createEventBundle(reason)
-        rollingBuffer?.markEvent(bundle)
-        val file = eventRepository.newImageFile(reason, bundle)
-        val preTelemetry = sensorTimeline.window(eventElapsed, 30_000L, 0L)
-        sensorTimeline.writeCsv(java.io.File(bundle, "telemetry_pre.csv"), preTelemetry)
-        val preDetections = detectionTimeline.window(eventElapsed, 30_000L, 0L)
-        detectionTimeline.writeJsonl(java.io.File(bundle, "detections_pre.jsonl"), preDetections)
-
-        val options = ImageCapture.OutputFileOptions.Builder(file).build()
-        cameraController.takePicture(
-            options,
-            ioExecutor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    val s = sensorSnapshot
-                    val event = ScanEvent(
-                        timestampEpochMs = System.currentTimeMillis(),
-                        type = reason,
-                        confidence = (state.fusedScore * 100f).roundToInt(),
-                        trackLabel = state.trackLabel,
-                        estimatedDistanceMetres = state.estimatedDistanceMetres,
-                        magneticMicroTesla = s.magneticMicroTesla,
-                        lightLux = s.lightLux,
-                        pressureHpa = s.pressureHpa,
-                        audioDbfs = s.audioDbfs,
-                        note = if (automatic) "automatic detector-disagreement capture" else "manual capture",
-                        anomalyReason = state.anomalyReason,
-                        profile = currentProfile.label,
-                        bundleName = bundle.name,
-                        sceneQualityPercent = (state.sceneQuality.score * 100f).roundToInt(),
-                        consensusRatio = state.consensusRatio,
-                        consensusAgeMs = state.consensusAgeMs,
-                        explanationSummary = state.explanation.summary,
-                        sessionId = sessionRecorder.currentSessionId
-                    )
-                    eventRepository.append(event)
-                    eventRepository.writeBundleMetadata(bundle, event)
-                    java.io.File(bundle, "explanation.json").writeText(state.explanation.toJson().toString(2))
-                    sessionRecorder.markEvent(bundle.name, state)
+        try {
+            val eventElapsed = SystemClock.elapsedRealtime()
+            val interruptionGeneration = captureInterruptionGeneration
+            val captureSessionId = sessionRecorder.currentSessionId
+            val captureEpochMs = System.currentTimeMillis()
+            val bundle = eventRepository.createEventBundle(reason)
+            val completion = CaptureCompletion { videoStatus ->
+                submitIo {
+                    java.io.File(bundle, "capture_status.json").writeText(org.json.JSONObject().apply {
+                        put("state", "sealed")
+                        put("video", videoStatus)
+                        put("lifecycleInterrupted", interruptionGeneration != captureInterruptionGeneration)
+                        put("sealedEpochMs", System.currentTimeMillis())
+                    }.toString(2))
                     EvidenceIntegrity.refreshManifest(bundle, Brand.VERSION)
                     EvidenceSigner.signIntegrityManifest(bundle)
-
-                    mainHandler.postDelayed({
-                        submitIo {
-                            val fullWindow = sensorTimeline.window(eventElapsed, 30_000L, 10_000L)
-                            sensorTimeline.writeCsv(java.io.File(bundle, "telemetry_window.csv"), fullWindow)
-                            val detectionWindow = detectionTimeline.window(eventElapsed, 30_000L, 10_000L)
-                            detectionTimeline.writeJsonl(java.io.File(bundle, "detections_window.jsonl"), detectionWindow)
-                            EvidenceIntegrity.refreshManifest(bundle, Brand.VERSION)
-                            EvidenceSigner.signIntegrityManifest(bundle)
-                        }
-                    }, 10_500L)
-
-                    runOnUiThread { bufferText.text = "EVENT SAVED: ${bundle.name}" }
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    runOnUiThread { bufferText.text = "CAPTURE FAILED: ${exception.message ?: "unknown"}" }
+                    runOnUiThread { if (!isDestroyed) bufferText.text = "EVENT SEALED: ${bundle.name}" }
                 }
             }
-        )
+            if (rollingBuffer == null) completion.videoReady("unavailable")
+            else rollingBuffer?.markEvent(bundle) { completion.videoReady(it) }
+            val file = eventRepository.newImageFile(reason, bundle)
+            val preTelemetry = sensorTimeline.window(eventElapsed, 30_000L, 0L)
+            sensorTimeline.writeCsv(java.io.File(bundle, "telemetry_pre.csv"), preTelemetry)
+            val preDetections = detectionTimeline.window(eventElapsed, 30_000L, 0L)
+            detectionTimeline.writeJsonl(java.io.File(bundle, "detections_pre.jsonl"), preDetections)
+
+            val options = ImageCapture.OutputFileOptions.Builder(file).build()
+            cameraController.takePicture(
+                options,
+                ioExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        try {
+                            val s = sensorSnapshot
+                            val event = ScanEvent(
+                                timestampEpochMs = captureEpochMs,
+                                type = reason,
+                                confidence = (state.fusedScore * 100f).roundToInt(),
+                                trackLabel = state.trackLabel,
+                                estimatedDistanceMetres = state.estimatedDistanceMetres,
+                                magneticMicroTesla = s.magneticMicroTesla,
+                                lightLux = s.lightLux,
+                                pressureHpa = s.pressureHpa,
+                                audioDbfs = s.audioDbfs,
+                                note = if (automatic) "automatic detector-disagreement capture" else "manual capture",
+                                anomalyReason = state.anomalyReason,
+                                profile = currentProfile.label,
+                                bundleName = bundle.name,
+                                sceneQualityPercent = (state.sceneQuality.score * 100f).roundToInt(),
+                                consensusRatio = state.consensusRatio,
+                                consensusAgeMs = state.consensusAgeMs,
+                                explanationSummary = state.explanation.summary,
+                                sessionId = captureSessionId
+                            )
+                            eventRepository.append(event)
+                            eventRepository.writeBundleMetadata(bundle, event)
+                            java.io.File(bundle, "explanation.json").writeText(state.explanation.toJson().toString(2))
+                            sessionRecorder.markEvent(bundle.name, state)
+                            completion.imageReady()
+                            // This work belongs to the capture, not the Activity's Handler.
+                            // It survives rotation and waits for video finalization before sealing.
+                            ioExecutor.schedule({
+                                try {
+                                    val fullWindow = sensorTimeline.window(eventElapsed, 30_000L, 10_000L)
+                                    sensorTimeline.writeCsv(java.io.File(bundle, "telemetry_window.csv"), fullWindow)
+                                    val detectionWindow = detectionTimeline.window(eventElapsed, 30_000L, 10_000L)
+                                    detectionTimeline.writeJsonl(java.io.File(bundle, "detections_window.jsonl"), detectionWindow)
+                                    completion.windowReady()
+                                } catch (error: Exception) {
+                                    completion.fail()
+                                    runOnUiThread { if (!isDestroyed) bufferText.text = "CAPTURE INCOMPLETE: ${error.message}" }
+                                }
+                            }, 10_500L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            runOnUiThread { if (!isDestroyed) bufferText.text = "EVENT SAVING POST-WINDOW: ${bundle.name}" }
+                        } catch (error: Exception) {
+                            completion.fail()
+                            runOnUiThread { if (!isDestroyed) bufferText.text = "CAPTURE INCOMPLETE: ${error.message}" }
+                        }
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        completion.fail()
+                        runOnUiThread { bufferText.text = "CAPTURE FAILED: ${exception.message ?: "unknown"}" }
+                    }
+                }
+            )
+        } catch (error: Exception) {
+            bufferText.text = "CAPTURE FAILED: ${error.message ?: error.javaClass.simpleName}"
+        }
     }
 
     private fun toggleLabMode() {
@@ -907,7 +957,7 @@ class MainActivity : AppCompatActivity() {
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
             setPadding(0, dp(10), 0, dp(12))
         })
-        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         shade.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER
             setMargins(dp(18), dp(40), dp(18), dp(40))
@@ -1033,7 +1083,7 @@ class MainActivity : AppCompatActivity() {
         }
         val scroll = ScrollView(this).apply { addView(body) }
         panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         shade.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
             gravity = Gravity.CENTER
             setMargins(dp(18), dp(50), dp(18), dp(50))
@@ -1145,10 +1195,10 @@ class MainActivity : AppCompatActivity() {
         val scroll = ScrollView(this).apply { addView(body) }
         panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(compactButton("SHARE LAST") { exportLatestEvidence() }, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+        actions.addView(compactButton("SHARE LAST") { exportLatestEvidence() }, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             setMargins(0, 0, dp(3), 0)
         })
-        actions.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        actions.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(0, dp(48), 1f))
         panel.addView(actions)
 
         shade.addView(
@@ -1229,6 +1279,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        captureInterruptionGeneration++
         consensusGate.reset()
         anomalyEpisodeLatched = false
         rollingBuffer?.stop()
@@ -1247,7 +1298,6 @@ class MainActivity : AppCompatActivity() {
         if (::faceDetector.isInitialized) faceDetector.close()
         if (::objectDetector.isInitialized) objectDetector.close()
         analysisExecutor.shutdown()
-        ioExecutor.shutdown()
         super.onDestroy()
     }
 }
