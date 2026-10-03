@@ -14,7 +14,7 @@ Updated 3 October 2026. **Not approved for general commercial launch.**
 - Post-migration database regression passed in a transaction that was rolled back. Synthetic tests cover reply idempotency, private notes and mentions, workspace/role boundaries, unsupported-channel rejection, cross-org message foreign keys, analytics scope, team lookup and published-only anonymous help.
 - Fixed form action buttons accidentally submitting replies, added submission guards, discarded stale workspace/session responses and cleared local auth before waiting for logout.
 - Built a synthetic `/qa/` demo for preview only. Its API adapter makes no network calls and CSP blocks network connections. Demo mutations remain in memory.
-- Source pushed to GitHub release branch at `b07edb6`. GitHub Actions run `37112388854` completed successfully and produced the preview artifact.
+- Source pushed to GitHub release branch at `d188f85`. GitHub Actions run `37115372925` completed successfully, including all 41 browser checks, and produced the preview and browser evidence artifacts.
 - Live HTTP smoke checks passed: unknown public help key returns 200/null; anonymous website-reply RPC returns 401.
 - Existing production widget JavaScript matched the original repository snapshot before this pass. Mobile accessibility improvements to the widget source are pending deployment.
 - Confirmed zero regression fixture workspaces remain in the database.
@@ -36,7 +36,7 @@ Updated 3 October 2026. **Not approved for general commercial launch.**
 
 | Flow | Evidence obtained | Remaining gate |
 | --- | --- | --- |
-| Sign-in/session | Ten API unit cases | Real sign-in and browser session recovery |
+| Sign-in/session | Ten API unit cases; hosted sign-in page served | Hosted sign-in returned “Failed to fetch”; existing owner needs account access/recovery |
 | Inbox and conversation | Database + synthetic browser navigation, incoming refresh and draft retention | Authenticated hosted staff/visitor round trip |
 | Website reply | Atomic RPC and deduplication tested | HTTP widget receive/sync test with isolated fixtures |
 | Internal note and mention | Transaction/privacy query and access tests | Browser/widget test showing note never reaches visitor |
@@ -48,13 +48,15 @@ Updated 3 October 2026. **Not approved for general commercial launch.**
 | Analytics | Scoped SQL regression passed | Browser rendering and period cross-check |
 | Mobile/desktop/PWA | Screenshots and responsive browser flows passed at five widths; menu focus/escape | Physical Android/iOS install, offline/session recovery |
 | Help Centre | Publication SQL regression passed | Anonymous HTTP and browser publication/search test |
-| Commercial site/docs | Link/asset checks + desktop/mobile screenshots and docs access | Hosted review, commercial terms and contact confirmation |
+| Commercial site/docs | Link/asset checks, desktop/mobile screenshots; hosted website and docs reviewed | Commercial terms and contact confirmation |
 
 ## Current external blockers
 
-- Cloud browser rejects the local preview with `ERR_BLOCKED_BY_CLIENT`; this is a browser access failure, not an application failure. No screenshot audit has been claimed.
+- Local cloud-browser access returned `ERR_BLOCKED_BY_CLIENT`. User-approved local Playwright tests completed instead, and the deployed preview is now accessible and visually reviewed.
 - User approved the local Playwright fallback with “Run”; that gate is satisfied and the local browser audit has completed.
-- Render connector has no existing-service build configuration update operation. Dashboard for the existing preview redirects to sign-in. An authenticated Render dashboard is needed to change the existing preview build configuration.
+- Render dashboard authentication completed; existing preview configuration updated and deployment `dep-db0did1srm7s73f4jrt0` is live on `d188f85`. Auto-deploy remains off. Root staff page, `/site/`, `/site/docs/` and `/qa/` were reviewed. Hosted synthetic reply/note/status-with-draft flows passed.
+- Hosted staff authentication returned “Failed to fetch”; no successful login or staff-to-visitor round trip is claimed. An existing confirmed owner membership was found, but the user reports not having login credentials. Account recovery/setup is the immediate access gate.
+- Automatic approval review rejected escalated shell networking for additional hosted file-hash and auth-preflight diagnostics. Those additional checks did not run; no hash/preflight result is claimed.
 - Figma Starter quota prevented retrieving Help Centre frame `2:251`. Exact comparison for that screen remains unverified; do not bypass the quota.
 - KeepGoing jobs `kgj_bf7afc6f6ccd4e13b996d50e32c8bf59` and `kgj_dae19a5fecea4f759f126328d4b58854` failed with “The model run failed.” Neither is working in the background.
 

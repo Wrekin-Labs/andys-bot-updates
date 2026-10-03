@@ -1,8 +1,8 @@
 {
   "release": "6.1.0-rc.1",
   "date": "2026-10-03",
-  "source_commit": "b07edb6efb1735dbb091d0c4e3ed37bc15ba1b05",
-  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37112388854",
+  "source_commit": "d188f85aaa5e30d9f2651e0e812bcb58cf3877bb",
+  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37115372925",
   "ci_conclusion": "success",
   "api_unit_tests": 10,
   "database_regression": "passed after migration, transaction rolled back",
@@ -17,7 +17,14 @@
     "scope": "synthetic preview and widget adapter",
     "results": "browser-results.json"
   },
-  "deployment": "not performed; existing preview configuration requires Render dashboard sign-in",
+  "deployment": {
+    "service": "srv-db0132h42hec73egh030",
+    "deploy": "dep-db0did1srm7s73f4jrt0",
+    "status": "live",
+    "commit": "d188f85aaa5e30d9f2651e0e812bcb58cf3877bb",
+    "url": "https://deskroute-ai-v6-preview.onrender.com/",
+    "auto_deploy": false
+  },
   "release_ready": false,
   "answer_policy_tests": 7,
   "edge_handler_tests": 5,
@@ -32,5 +39,19 @@
     "notifications": 2,
     "grounding_status": "grounding_not_available"
   },
-  "live_installations": "live-installations.json"
+  "live_installations": "live-installations.json",
+  "hosted_browser": {
+    "sign_in_page": "6.1 served",
+    "commercial_site": "passed",
+    "docs": "passed",
+    "synthetic_status_retains_draft": "passed",
+    "synthetic_public_reply": "passed",
+    "synthetic_internal_note": "passed",
+    "authenticated_staff": "not verified: sign-in returned Failed to fetch",
+    "owner_access": "Existing owner account confirmed; user reports no login credentials",
+    "screenshots": [
+      "screenshots/08-hosted-website.jpg",
+      "screenshots/09-hosted-inbox.jpg"
+    ]
+  }
 }

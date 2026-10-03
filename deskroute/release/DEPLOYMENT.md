@@ -13,7 +13,9 @@ Use the existing Render static preview service. Do not create or repurpose unrel
 
 The preview root uses the real backend and requires staff sign-in. `/site/` is the commercial preview. `/qa/` is a labelled synthetic demonstration with a separate network-free API adapter. It is not evidence of live delivery.
 
-Save the current service configuration and last successful deployment ID before changing it. After the source is pushed and the configuration is updated, deploy that exact commit. Verify the returned deployment is live, the expected version is served, all assets return successfully and the browser flows pass.
+Deployed 3 October 2026: `dep-db0did1srm7s73f4jrt0` is live on source `d188f85aaa5e30d9f2651e0e812bcb58cf3877bb`. The returned commit matches the successful CI run `37115372925`. Hosted staff shell, website, docs and synthetic reply/note/status flows were reviewed. Authenticated staff delivery is still blocked at sign-in. An additional full hosted file-hash check was prevented by the execution environment; local asset checks passed.
+
+The previous configuration is saved in `preview-rollback.json`; previous successful deploy is `dep-db0133142hec73egh0tg`. Auto-deploy remains off.
 
 Production panel `srv-db01no1srm7s73dopngg` and production widget `srv-db02b0p42hec73ekr4cg` are separate and must stay unchanged while the preview is tested.
 
