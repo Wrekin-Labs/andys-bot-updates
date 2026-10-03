@@ -64,8 +64,8 @@
     "deployed": true,
     "email_sent": false,
     "password_changed": false,
-    "live_delivery": "unverified",
-    "configuration_gate": "Explicit permission to send one recovery email, then verify delivery, real password update and authenticated access",
+    "live_delivery": "failed: SMTP 535 Authentication credentials invalid",
+    "configuration_gate": "Correct rejected SMTP credential; proposed native integration awaiting explicit organisation-wide Auth/Projects access approval; then verify delivery, private password update and staff access",
     "callback_allowlisted": true,
     "callback": "https://deskroute-ai-v6-preview.onrender.com/password.html",
     "custom_smtp_enabled": true,
@@ -75,8 +75,10 @@
     "smtp_host": "smtp.resend.com",
     "smtp_port": 465,
     "live_recovery_page": "Verified: current sign-in links to hosted recovery form; account email and Send recovery link rendered",
-    "send_approval": "Automatic approval review rejected recovery-email submission because explicit send authorization is required",
-    "smtp_screenshot": "screenshots/11-smtp-configured.jpg"
+    "send_approval": "User explicitly approved one recovery email. Secure browser submission was blocked; later manual recovery attempts failed at SMTP authentication.",
+    "smtp_screenshot": "screenshots/11-smtp-configured.jpg",
+    "diagnostic_evidence": "Read-only auth logs for 2026-10-03 13:00\u201313:28 UTC show /recover HTTP 500 with SMTP 535; account recovery_sent_at remains null and provider lists no recovery message.",
+    "native_integration": "Signed into existing Resend account; Supabase authorization page requests Auth and Projects READ + WRITE for the organisation. Not authorized."
   },
   "dated_knowledge_tests": 8,
   "total_api_policy_handler_tests": 42,

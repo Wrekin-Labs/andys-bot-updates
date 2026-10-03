@@ -103,3 +103,10 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - The hosted current sign-in page visibly shows the recovery link and same-account desktop/phone/tablet guidance. Its recovery form loads successfully.
 - Automatic approval review rejected the secure recovery-email request because sending the email needs explicit user authorization. No recovery email has been sent or password changed; delivery and real login remain open gates.
 - KeepGoing's latest job remains failed; direct work continued in this conversation.
+
+## Recovery delivery diagnosis
+
+- User approved one recovery email. Read-only auth logs for 3 October 2026, 13:00–13:28 UTC identify `/recover` HTTP 500 with SMTP `535 Authentication credentials invalid`. The saved configuration was present, but its credential was rejected. The account recovery timestamp remains empty and the provider lists no recovery message.
+- Existing sending keys were inspected by name only; no secret values were read or changed. Existing website email integrations were preserved.
+- Signed into the existing email-provider dashboard and prepared its native Supabase integration. Its OAuth grant requests Auth and Projects READ + WRITE for the whole selected organisation. The grant has not been authorized; explicit approval is required before proceeding.
+- Actual recovery delivery, private password update, and authenticated staff-to-widget checks remain open.
