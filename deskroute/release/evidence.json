@@ -50,8 +50,8 @@
     "synthetic_status_retains_draft": "passed",
     "synthetic_public_reply": "passed",
     "synthetic_internal_note": "passed",
-    "authenticated_staff": "Hosted workspace not yet verified. Owner account authentication and membership confirmed; erroneous workspace 401 fixed in cxroute-onboard v14.",
-    "owner_access": "Confirmed account and owner membership; deployed verified user-ID fix. User must retry hosted workspace to confirm end-to-end access.",
+    "authenticated_staff": "Android owner access confirmed by user report, successful account sign-in and authenticated device registration after workspace loading. No direct UI screenshot is claimed.",
+    "owner_access": "Restored on Android after cxroute-onboard v14 identity fix; live staff/widget reply and note round trip remains pending.",
     "screenshots": [
       "screenshots/08-hosted-website.jpg",
       "screenshots/09-hosted-inbox.jpg"
@@ -66,7 +66,7 @@
     "password_changed": null,
     "password_update_verification": "Unverified; no credential or private recovery link was inspected.",
     "live_delivery": "delivered",
-    "configuration_gate": "Recovery delivery works and owner account authentication is confirmed; verify hosted workspace after the deployed identity fix.",
+    "configuration_gate": "Owner account and Android workspace access restored. No further recovery request is needed.",
     "callback_allowlisted": true,
     "callback": "https://deskroute-ai-v6-preview.onrender.com/password.html",
     "custom_smtp_enabled": true,
@@ -107,5 +107,8 @@
     "later_diagnosis": "See owner-access-fix.json: external user sign-in succeeded; cxroute-onboard identity-field bug found, regression tested and deployed as v14."
   },
   "onboard_handler_tests": 5,
-  "owner_access_fix": "owner-access-fix.json"
+  "owner_access_fix": "owner-access-fix.json",
+  "widget_sync_handler_tests": 7,
+  "widget_sync_source": "Existing release source matches deployed cxroute-widget-sync v8 exactly; tested with in-memory adapters.",
+  "latest_local_api_policy_handler_total": 54
 }

@@ -41,6 +41,16 @@
     "application_auth_mode": "user",
     "source_commit": "c68f5addeab808430e2339875dda1fef244ff254"
   },
-  "live_staff_workspace_verified": false,
-  "remaining_gate": "Verify hosted owner workspace and isolated staff-to-widget reply/internal-note flow after deployment."
+  "live_staff_workspace_verified": true,
+  "remaining_gate": "Live staff-to-widget reply and internal-note round trip; direct browser observation remains unavailable in the current secure session.",
+  "post_deployment_access": {
+    "verified_at_utc": "2026-10-03T15:43:23.233Z",
+    "account_sign_in_at_utc": "2026-10-03T15:43:18.898790Z",
+    "platform": "android",
+    "app_version": "6.1.0-rc.1",
+    "device_enabled": true,
+    "user_report": "Done after the refresh/sign-in instruction",
+    "evidence": "Account sign-in and authenticated device registration observed after cxroute-onboard v14. Device registration follows successful workspace loading in the shipped UI.",
+    "scope": "Live Android account/workspace access; no direct screenshot or staff-to-widget round trip claimed."
+  }
 }

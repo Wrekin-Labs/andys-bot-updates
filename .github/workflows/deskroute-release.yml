@@ -26,6 +26,7 @@ jobs:
       - run: node deskroute/tests/widget-handler.test.mjs
       - run: node deskroute/tests/dated-knowledge.test.mjs
       - run: node deskroute/tests/onboard-handler.test.mjs
+      - run: node deskroute/tests/widget-sync.test.mjs
       - run: python deskroute/scripts/build_site.py
       - run: python deskroute/scripts/check_links.py
       - run: python deskroute/scripts/build_preview.py
