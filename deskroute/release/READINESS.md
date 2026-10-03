@@ -125,3 +125,10 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - The explicitly approved recovery request was submitted through the hosted form. Provider metadata confirms **Reset your password** delivered to the existing owner at **3 October 2026, 14:04:47 UTC / 15:04:47 Europe/London**. The form displays the expected recovery acknowledgement. No email body, private recovery link or credential value was read.
 - The previous SMTP authentication blocker is cleared by verified delivery. The user must choose the password privately. Actual owner sign-in, authenticated staff-to-widget flow, grounded AI and other remaining release gates are still unverified; general commercial launch remains unapproved.
 - The authorization for one recovery email has been fulfilled. Do not send duplicate reset messages.
+
+## Hosted staff sign-in follow-up
+
+- A secure email/password submission reached the hosted error: **We could not reach the sign-in service. Check your connection and try again.** The page did not show an invalid-password response or an authenticated workspace. Do not report restored staff access.
+- Read-only auth logs for 3 October, 14:45–14:55:30 UTC returned no events for `/token`, `/user` or `/verify`. This does not establish whether the cause is the browser connection or the app. Earlier account activity at 14:10:41 UTC does not prove successful access in the current hosted UI.
+- Native credential protection blocked console inspection even after the permitted canonical-origin navigation. Automated credential attempts stopped. The next step is private manual sign-in and positive workspace verification, then the isolated staff-to-widget reply/internal-note tests.
+- No new recovery email was sent, no credentials were read, and no production setting or release asset was changed. The password update remains unverified. Previous 42 API/policy/handler and 46 browser results remain the latest completed automated tests; release readiness is still false.
