@@ -116,3 +116,5 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - User completed the Resend organisation-access grant. The native wizard now confirms the intended project, existing sending domain and DNS verification.
 - The private Add API key and Configure SMTP steps remain unfinished and are handed to the user. No new key was created or revealed by the assistant. Existing SMTP authentication failure is not yet cleared; no successful recovery delivery or password update is claimed.
 - Preparation evidence: `screenshots/12-resend-integration-ready.jpg`.
+
+- Integration continuation: user-created `Supabase Integration` key visibly ready. Sender details are filled; final Configure SMTP submission is handed to the user. Delivery remains unverified. See `screenshots/13-smtp-final-step.jpg`.
