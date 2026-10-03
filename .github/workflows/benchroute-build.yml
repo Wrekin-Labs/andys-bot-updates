@@ -1,0 +1,28 @@
+name: BenchRoute prototype
+
+on:
+  push:
+    branches:
+      - benchroute-commercial-v0.1
+    paths:
+      - 'benchroute-commercial/**'
+      - '.github/workflows/benchroute-build.yml'
+  pull_request:
+    paths:
+      - 'benchroute-commercial/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: benchroute-commercial/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: benchroute-commercial/app/package-lock.json
+      - run: npm ci
+      - run: npm run build
