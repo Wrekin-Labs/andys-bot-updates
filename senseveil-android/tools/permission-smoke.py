@@ -16,8 +16,8 @@ if not serial.startswith("emulator-"):
     raise SystemExit("Permission smoke requires an explicitly selected emulator")
 
 
-def adb(*args, binary=False):
-    return subprocess.check_output(["adb", "-s", serial, *args], text=not binary, timeout=20)
+def adb(*args, binary=False, timeout=20):
+    return subprocess.check_output(["adb", "-s", serial, *args], text=not binary, timeout=timeout)
 
 
 def snapshot():
@@ -55,6 +55,9 @@ suite = ET.Element("testsuite", name="CameraPermissionSmoke", tests="2", failure
 failed = False
 try:
     case = ET.SubElement(suite, "testcase", name="denialKeepsSavedEventsAccessible")
+    # Gradle's connected-test runner may uninstall the target during cleanup.
+    # Always install the exact APK built for this run before the standalone flow.
+    adb("install", "-r", "app/build/outputs/apk/debug/app-debug.apk", timeout=120)
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "pm", "revoke", PACKAGE, "android.permission.CAMERA")
     adb("shell", "pm", "clear-permission-flags", PACKAGE, "android.permission.CAMERA", "user-set", "user-fixed")
@@ -85,6 +88,7 @@ except Exception as error:
     suite.set("failures", "1")
     ET.SubElement(case, "failure", message=str(error)).text = repr(error)
     if len(suite) == 1:
+        suite.set("skipped", "1")
         ET.SubElement(ET.SubElement(suite, "testcase", name="settingsGrantResumesExistingCameraActivity"), "skipped")
     try:
         capture("permission-failure")
@@ -92,6 +96,9 @@ except Exception as error:
         pass
 finally:
     ET.ElementTree(suite).write(OUT / "permission-smoke-results.xml", encoding="utf-8", xml_declaration=True)
-    adb("shell", "pm", "grant", PACKAGE, "android.permission.CAMERA")
+    try:
+        adb("shell", "pm", "grant", PACKAGE, "android.permission.CAMERA")
+    except subprocess.SubprocessError:
+        pass  # Preserve the original failure and its JUnit/screenshot evidence.
 print(json.dumps({"permission_smoke": "FAILED" if failed else "PASS", "checks": 2}))
 raise SystemExit(1 if failed else 0)
