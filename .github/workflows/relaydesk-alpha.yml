@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - relaydesk-v0.2-alpha.3
+      - relaydesk-rescue-fallback
     paths:
       - "relaydesk/**"
       - ".github/workflows/relaydesk-alpha.yml"
@@ -45,6 +46,8 @@ jobs:
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name RelayDeskViewer controller.py
       - name: Build Relay
         run: python -m PyInstaller --noconfirm --clean --onefile --noconsole --name RelayDeskRelay relay_server.py
+      - name: Build Rescue Host
+        run: python -m PyInstaller --noconfirm --clean --onefile --noconsole --name RelayDeskRescue rescue_host.py
       - name: Hash artifacts
         shell: pwsh
         run: Get-FileHash -Algorithm SHA256 dist\RelayDesk*.exe | Format-Table -AutoSize
@@ -54,3 +57,4 @@ jobs:
           path: relaydesk/dist/RelayDesk*.exe
           if-no-files-found: error
           retention-days: 14
+
