@@ -466,6 +466,8 @@ class MainActivity : AppCompatActivity() {
         sensorFusion = SensorFusionEngine(this) { snapshot ->
             sensorSnapshot = snapshot
             sensorTimeline.add(snapshot)
+            val deviceMoving = snapshot.accelerationMs2?.let { abs(it - 9.81f) > 1.8f } == true
+            if (::wifiRfBridge.isInitialized) wifiRfBridge.setDeviceMoving(deviceMoving)
             runOnUiThread { updateSensorText(snapshot) }
         }
         audioMonitor = AudioLevelMonitor(this) { db -> sensorFusion.setAudioDbfs(db) }
@@ -555,7 +557,6 @@ class MainActivity : AppCompatActivity() {
                 val profile = currentProfile
                 val lowLight = sensorSnapshot.lightLux?.let { it < 1.5f } == true && !torchEnabled
                 val deviceMoving = sensorSnapshot.accelerationMs2?.let { abs(it - 9.81f) > 1.8f } == true
-                if (::wifiRfBridge.isInitialized) wifiRfBridge.setDeviceMoving(deviceMoving)
                 val lowLightPenalty = if (lowLight) 0.06f else 0f
                 val humanLike = strongLandmarks >= profile.minLandmarks &&
                     bodyScore >= (profile.humanBodyThreshold + lowLightPenalty)

@@ -103,7 +103,7 @@ class PhoneWifiSurvey(
     private val onReading: (WifiSurveyReading) -> Unit
 ) {
     private val appContext = context.applicationContext
-    private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val handler = Handler(Looper.getMainLooper())
     private var registered = false
     private var running = false
@@ -124,6 +124,10 @@ class PhoneWifiSurvey(
 
     fun start() {
         if (running) return
+        if (wifi == null) {
+            onReading(WifiSurveyReading(status = "Wi-Fi hardware unavailable"))
+            return
+        }
         running = true
         try {
             if (Build.VERSION.SDK_INT >= 33) {
@@ -152,13 +156,17 @@ class PhoneWifiSurvey(
     }
 
     private fun requestScan() {
-        if (!wifi.isWifiEnabled) {
+        val manager = wifi ?: run {
+            onReading(WifiSurveyReading(status = "Wi-Fi hardware unavailable"))
+            return
+        }
+        if (!manager.isWifiEnabled) {
             onReading(WifiSurveyReading(status = "Wi-Fi is off"))
             return
         }
         try {
             @Suppress("DEPRECATION")
-            val started = wifi.startScan()
+            val started = manager.startScan()
             if (!started) publishResults("scan throttled or unavailable")
         } catch (_: SecurityException) {
             onReading(WifiSurveyReading(status = "Wi-Fi scan permission required"))
@@ -167,7 +175,11 @@ class PhoneWifiSurvey(
 
     private fun publishResults(statusOverride: String? = null) {
         try {
-            val aggregate = WifiSurveyAggregator.aggregate(wifi.scanResults.map { it.frequency to it.level })
+            val manager = wifi ?: run {
+                onReading(WifiSurveyReading(status = "Wi-Fi hardware unavailable"))
+                return
+            }
+            val aggregate = WifiSurveyAggregator.aggregate(manager.scanResults.map { it.frequency to it.level })
             onReading(if (statusOverride == null) aggregate else aggregate.copy(status = statusOverride))
         } catch (_: SecurityException) {
             onReading(WifiSurveyReading(status = "Wi-Fi scan permission required"))
