@@ -75,6 +75,23 @@ class WifiRfTest {
     }
 
     @Test
+    fun phoneMovementInvalidatesBaselineAndForcesRecalibration() {
+        val analyzer = WifiRfAnalyzer()
+        repeat(WifiRfAnalyzer.BASELINE_SAMPLES) { i ->
+            analyzer.accept(frame(i.toLong(), i * 100L), false)
+        }
+        assertEquals(WifiRfStatus.READY, analyzer.accept(frame(30, 3_100L), false).status)
+
+        val moving = analyzer.accept(frame(31, 3_200L, rssi = -78f, amp = 1.8f, variance = 0.20f), true)
+        assertEquals(WifiRfStatus.PAUSED_MOVING, moving.status)
+        assertEquals(0, moving.baselineSamples)
+
+        val afterMove = analyzer.accept(frame(32, 3_300L, rssi = -78f, amp = 1.8f, variance = 0.20f), false)
+        assertEquals(WifiRfStatus.CALIBRATING, afterMove.status)
+        assertFalse(afterMove.sustainedChange)
+    }
+
+    @Test
     fun wifiSurveyStoresOnlyAggregateSignalStatistics() {
         val reading = WifiSurveyAggregator.aggregate(
             listOf(2412 to -70, 2437 to -40, 5180 to -55, 5975 to -65, 6115 to -60),

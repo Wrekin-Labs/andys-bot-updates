@@ -82,10 +82,7 @@ class WifiRfAnalyzer {
         source = null
         lastSequence = -1L
         lastReceivedElapsed = 0L
-        baselineRssi = null
-        baselineAmplitude = null
-        baselineVariance = null
-        baselineSamples = 0
+        clearBaseline()
         clearPositive()
     }
 
@@ -102,8 +99,9 @@ class WifiRfAnalyzer {
             return unavailable(frame, "CSI/RF sample rate too low")
         }
         if (deviceMoving) {
+            clearBaseline()
             clearPositive()
-            return reading(frame, WifiRfStatus.PAUSED_MOVING, 0f, false, "paused while phone is moving")
+            return reading(frame, WifiRfStatus.PAUSED_MOVING, 0f, false, "paused while phone is moving; RF baseline invalidated")
         }
 
         if (baselineSamples < BASELINE_SAMPLES) {
@@ -171,6 +169,13 @@ class WifiRfAnalyzer {
 
     private fun unavailable(frame: WifiRfFrame, message: String) =
         reading(frame, WifiRfStatus.UNAVAILABLE, 0f, false, message)
+
+    private fun clearBaseline() {
+        baselineRssi = null
+        baselineAmplitude = null
+        baselineVariance = null
+        baselineSamples = 0
+    }
 
     private fun clearPositive() {
         positiveFrames = 0
