@@ -58,6 +58,8 @@ class WifiRfBridge(
             try {
                 Socket().use { socket ->
                     socket.connect(InetSocketAddress(preferences.rfBridgeHost, preferences.rfBridgePort), 2_500)
+                    analyzer.reset()
+                    onReading(WifiRfReading(status = WifiRfStatus.CALIBRATING, message = "RF bridge connected; recalibrating baseline"))
                     socket.soTimeout = 3_500
                     val output = PrintWriter(socket.getOutputStream(), true)
                     output.println(JSONObject().put("type", "senseveil_hello").put("v", 1).put("pair", preferences.rfPairCode).toString())
