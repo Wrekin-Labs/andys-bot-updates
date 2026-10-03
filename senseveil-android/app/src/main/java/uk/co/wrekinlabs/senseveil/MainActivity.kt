@@ -706,6 +706,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun captureEvent(reason: String, state: DetectionState, automatic: Boolean) {
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         if (!cameraReady || !hasCameraPermission() || !::cameraController.isInitialized) return
         val now = SystemClock.elapsedRealtime()
         if (!automatic && now - lastManualCaptureAt < 900L) return

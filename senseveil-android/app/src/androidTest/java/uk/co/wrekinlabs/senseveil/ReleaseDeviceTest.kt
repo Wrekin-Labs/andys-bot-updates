@@ -183,6 +183,15 @@ class ReleaseDeviceTest {
             assertTrue("All captured media is signed: ${result.message}", result.valid)
             assertTrue(File(bundle, "telemetry_window.csv").exists())
             assertTrue(File(bundle, "detections_window.jsonl").exists())
+            val beforeBackgroundRequest = events.listFiles().orEmpty().map { it.name }.toSet()
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            scenario.onActivity { activity ->
+                val controls = arrayListOf<android.view.View>()
+                activity.window.decorView.findViewsWithText(controls, "CAPTURE", android.view.View.FIND_VIEWS_WITH_TEXT)
+                controls.filterIsInstance<android.widget.Button>().first { it.text.toString() == "CAPTURE" }.performClick()
+            }
+            assertEquals("A queued capture request cannot start after leaving the foreground",
+                beforeBackgroundRequest, events.listFiles().orEmpty().map { it.name }.toSet())
         }
     }
 
