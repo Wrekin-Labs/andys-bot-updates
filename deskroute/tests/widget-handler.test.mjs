@@ -9,10 +9,10 @@ import {canSendAutomatically} from '../backend/answer-policy.js';
 import {literalGroundingCheck} from '../backend/literal-grounding.js';
 import {questionDate,datedKnowledge} from '../backend/dated-knowledge.js';
 const source=stripTypeScriptTypes((await readFile(new URL('../backend/cxroute-widget-chat.ts',import.meta.url),'utf8')).replace(/^import .*;\s*$/gm,''));
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true}={}){
  const writes=[],calls=[];let handler;
  const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:[]};
- const records={cxroute_knowledge_facts:knowledgeFacts,cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example']},cxroute_channel_ai_policies:{enabled:true,mode:'automatic',min_confidence:.9},cxroute_conversations:conversation,cxroute_org_members:{user_id:'qa-agent',role:'owner'}};
+ const records={cxroute_knowledge_facts:knowledgeFacts,cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example']},cxroute_channel_ai_policies:{enabled:true,mode:'automatic',min_confidence:.9},cxroute_settings:{monthly_ai_call_hard_limit:10000},cxroute_conversations:conversation,cxroute_org_members:{user_id:'qa-agent',role:'owner'}};
  const admin={
   from(table){
    let operation='read',body;
@@ -21,7 +21,7 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
     return (...args)=>{if(['insert','update'].includes(key)){operation=key;body=args[0];}return query;};
    }});return query;
   },
-  async rpc(name,p){calls.push({name,p});if(name==='cxroute_take_widget_rate_limit')return {data:1};if(name.startsWith('cxroute_search_approved_facts'))return {data:facts};if(name==='cxroute_record_knowledge_gap')return {data:'qa-gap'};throw Error('Unexpected RPC '+name);}
+  async rpc(name,p){calls.push({name,p});if(name==='cxroute_take_widget_rate_limit')return {data:1};if(name==='cxroute_reserve_ai_call')return {data:budgetAllowed,error:null};if(name.startsWith('cxroute_search_approved_facts'))return {data:facts};if(name==='cxroute_record_knowledge_gap')return {data:'qa-gap'};throw Error('Unexpected RPC '+name);}
  };
  runInNewContext(source,{Deno:{env:{get:name=>({SUPABASE_URL:'https://fixture.invalid',SUPABASE_SECRET_KEYS:'{"default":"test-only"}',OPENAI_API_KEY:provider==='absent'?undefined:'test-only'})[name]},serve:fn=>handler=fn},createClient:()=>admin,canSendAutomatically,literalGroundingCheck,questionDate,datedKnowledge,crypto:webcrypto,TextEncoder,URL,Response,console,fetch:async()=>provider==='failure'?new Response('{"error":{"message":"Provider unavailable"}}',{status:503}):new Response(JSON.stringify({output_text:JSON.stringify(reply)}))});
  const response=await handler(new Request('https://fixture.invalid/widget',{method:'POST',headers:{Origin:'https://release.example','Content-Type':'application/json'},body:JSON.stringify({widgetKey:'qa-key',conversationId:conversation.id,message:question})}));
@@ -40,6 +40,7 @@ for(const [question,fact] of [['What is the rehearsal room price from 1 November
  });
 }
 test('AI outage still answers a strong customer-safe approved fact',async()=>{const r=await exercise('What is the price?',[price],{provider:'failure'});assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.body===price.fact_value));});
+test('AI budget exhaustion degrades to a safe approved fact without breaking chat',async()=>{const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};const r=await exercise('What is the price?',[price],{provider:'ready',reply,budgetAllowed:false});assert.equal(r.body.llmUsed,false);assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));const event=r.writes.find(w=>w.table==='cxroute_ai_events');assert.equal(event?.body?.outcome,'budget_exceeded');assert.equal(event?.body?.failed_gate,'budget_exceeded');});
 const recording={id:'recording',organisation_id:'qa-org',brand_id:'qa-brand',review_status:'approved',fact_key:'recording_bookings_status',fact_value:'Recording studio bookings are currently paused.',category:'services',confidence:.99,valid_from:null,valid_until:null};
 test('recording question falls back to approved brand knowledge when search RPC misses it',async()=>{
  const r=await exercise('What days do u do recording',[],{knowledgeFacts:[recording]});

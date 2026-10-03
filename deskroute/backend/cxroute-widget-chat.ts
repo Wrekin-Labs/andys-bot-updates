@@ -654,6 +654,20 @@ Deno.serve(async(req:Request)=>{
         0.85
       );
 
+    const {data:organisationSettings}=await admin
+      .from("cxroute_settings")
+      .select("monthly_ai_call_hard_limit")
+      .eq("organisation_id",config.organisation_id)
+      .maybeSingle();
+
+    const aiCallLimit=Math.max(
+      1,
+      Math.min(
+        1000000,
+        Number(organisationSettings?.monthly_ai_call_hard_limit||10000)
+      )
+    );
+
     let matches:any[]=[];
     let searchError:any=null;
     const dateContext=questionDate(message);
@@ -936,14 +950,30 @@ Deno.serve(async(req:Request)=>{
 
     let llm:Grounded|null=null;
     let llmError:string|null=null;
+    let aiBudgetReserved=false;
 
-    if(evidence.length){
+    if(evidence.length&&aiEnabled&&Deno.env.get("OPENAI_API_KEY")){
       try{
-        llm=await groundedReply(
-          message,
-          evidence,
-          locale
+        const reservation=await admin.rpc(
+          "cxroute_reserve_ai_call",
+          {
+            p_organisation_id:config.organisation_id,
+            p_limit:aiCallLimit
+          }
         );
+
+        if(reservation.error){
+          llmError="budget_check_failed";
+        }else if(reservation.data!==true){
+          llmError="budget_exceeded";
+        }else{
+          aiBudgetReserved=true;
+          llm=await groundedReply(
+            message,
+            evidence,
+            locale
+          );
+        }
       }catch(error){
         llmError=
           error instanceof Error
@@ -1211,6 +1241,8 @@ Deno.serve(async(req:Request)=>{
             config.brand_id||null,
           locale:locale||null,
           llm_used:Boolean(llm),
+          ai_budget_reserved:aiBudgetReserved,
+          ai_call_limit:aiCallLimit,
           llm_model:
             llm?.model||null,
           llm_error:
@@ -1241,7 +1273,11 @@ Deno.serve(async(req:Request)=>{
       const failedGate=
         llmError==="literal_grounding_failed"
           ?"literal_grounding"
-          :dateContext.requiresHuman
+          :llmError==="budget_exceeded"
+            ?"budget_exceeded"
+            :llmError==="budget_check_failed"
+              ?"budget_check_failed"
+              :dateContext.requiresHuman
             ?"dated_review"
             :!evidence.length
               ?"no_evidence"
@@ -1255,9 +1291,11 @@ Deno.serve(async(req:Request)=>{
                       ?"review_mode"
                       :null;
       const outcome=
-        modelAutomaticAllowed
-          ?"auto_answered"
-          :directAutomaticAllowed
+        llmError==="budget_exceeded"
+          ?"budget_exceeded"
+          :modelAutomaticAllowed
+            ?"auto_answered"
+            :directAutomaticAllowed
             ?"direct_fact_fallback"
             :draftId
               ?"drafted"
