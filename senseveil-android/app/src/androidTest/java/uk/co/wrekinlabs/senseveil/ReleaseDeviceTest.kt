@@ -16,6 +16,20 @@ import java.io.File
 class ReleaseDeviceTest {
     @get:Rule val cameraPermission: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.CAMERA)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    @get:Rule val failureEvidence = object : org.junit.rules.TestWatcher() {
+        override fun failed(error: Throwable?, description: org.junit.runner.Description) {
+            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            val qa = File(context.getExternalFilesDir(null), "qa").apply { mkdirs() }
+            device.takeScreenshot(File(qa, "failed-${description.methodName}.png"))
+            device.dumpWindowHierarchy(File(qa, "failed-${description.methodName}.xml"))
+        }
+    }
+
+    @Before fun wakeAndUnlockTestDevice() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        device.wakeUp()
+        device.executeShellCommand("wm dismiss-keyguard")
+    }
 
     @Test fun keystoreSignatureAndVaultRejectTampering() {
         val root=File(context.cacheDir,"release-crypto-${System.nanoTime()}").apply { mkdirs() }
@@ -45,14 +59,17 @@ class ReleaseDeviceTest {
             val tools=device.findObject(UiSelector().text("TOOLS"))
             assertTrue("TOOLS button", tools.waitForExists(10000))
             tools.click()
+            val screenshots=File(context.getExternalFilesDir(null),"qa").apply { mkdirs() }
+            device.takeScreenshot(File(screenshots,"tools-top.png"))
             val scroll=androidx.test.uiautomator.UiScrollable(UiSelector().scrollable(true))
             assertTrue("quick start reachable", scroll.scrollTextIntoView("QUICK START"))
+            device.takeScreenshot(File(screenshots,"tools-bottom.png"))
             device.findObject(UiSelector().text("QUICK START")).click()
             device.pressBack()
-            assertTrue(device.findObject(UiSelector().textStartsWith("SENSEVEIL TOOLS")).exists())
+            // The Tools header is above the viewport after scrolling to Quick Start.
+            assertTrue("Back returns to the scrolled Tools list", device.findObject(UiSelector().text("QUICK START").className("android.widget.Button")).exists())
             device.pressBack()
             assertTrue(device.findObject(UiSelector().text("TOOLS")).exists())
-            val screenshots=File(context.getExternalFilesDir(null),"qa").apply { mkdirs() }
             device.takeScreenshot(File(screenshots,"scanner-portrait.png"))
             scenario.onActivity { it.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             device.waitForIdle()

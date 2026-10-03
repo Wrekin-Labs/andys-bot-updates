@@ -70,7 +70,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var faceDetector: FaceDetector
     private lateinit var objectDetector: ObjectDetector
 
-    private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val analysisExecutor = EvidenceWork.analysisExecutor
+    @Volatile private var analysisClosed = false
     private val ioExecutor = EvidenceWork.executor
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -441,7 +442,8 @@ class MainActivity : AppCompatActivity() {
                 listOf(poseDetector, faceDetector, objectDetector),
                 ImageAnalysis.COORDINATE_SYSTEM_VIEW_REFERENCED,
                 analysisExecutor
-            ) { result ->
+            ) analyze@ { result ->
+                if (analysisClosed) return@analyze
                 val pose = result.getValue(poseDetector)
                 val faces = result.getValue(faceDetector).orEmpty()
                 val objects = result.getValue(objectDetector).orEmpty()
@@ -1289,6 +1291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        analysisClosed = true
         mainHandler.removeCallbacksAndMessages(null)
         rollingBuffer?.stop()
         if (::sessionRecorder.isInitialized) submitIo { sessionRecorder.stop() }
@@ -1297,7 +1300,6 @@ class MainActivity : AppCompatActivity() {
         if (::poseDetector.isInitialized) poseDetector.close()
         if (::faceDetector.isInitialized) faceDetector.close()
         if (::objectDetector.isInitialized) objectDetector.close()
-        analysisExecutor.shutdown()
         super.onDestroy()
     }
 }
