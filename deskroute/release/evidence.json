@@ -50,7 +50,7 @@
     "synthetic_status_retains_draft": "passed",
     "synthetic_public_reply": "passed",
     "synthetic_internal_note": "passed",
-    "authenticated_staff": "not verified: sign-in returned Failed to fetch",
+    "authenticated_staff": "Not verified; latest observed sign-in rejected credentials",
     "owner_access": "Existing owner account confirmed; user reports no login credentials",
     "screenshots": [
       "screenshots/08-hosted-website.jpg",
@@ -65,7 +65,12 @@
     "email_sent": false,
     "password_changed": false,
     "live_delivery": "unverified",
-    "configuration_gate": "Verify exact callback allow-list and SMTP/template compatibility in Supabase Auth"
+    "configuration_gate": "Configure and save SMTP; verify delivery, real password update and authenticated access",
+    "callback_allowlisted": true,
+    "callback": "https://deskroute-ai-v6-preview.onrender.com/password.html",
+    "custom_smtp_enabled": false,
+    "smtp_preparation": "Public Resend SMTP settings entered in an unsaved dashboard form; private credential and save require user handoff",
+    "callback_screenshot": "screenshots/10-recovery-callback.jpg"
   },
   "dated_knowledge_tests": 8,
   "total_api_policy_handler_tests": 42,

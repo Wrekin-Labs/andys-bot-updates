@@ -89,3 +89,10 @@ Latest preview deploy `dep-db0ea6lg1s2s73dn083g` is **live** on tested source `d
 - KeepGoing retry `kgj_d0f71afa9d1742a287075173af5025d5` also failed with “The model run failed.” No background job is running.
 
 Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde55`, after CI `37121684879` passed. Retrieved deployed files match the tested source, including both relative modules and the unchanged Deno configuration. The previous v16 safe policy remains in git for rollback. No live visitor message was sent in this follow-up; the actual browser/widget round trip and account recovery gates remain open.
+
+## Recovery configuration follow-up, 3 October
+
+- Signed into the existing Supabase dashboard and saved the exact preview recovery callback. Existing Site URL and redirect entries were preserved. Screenshot: `screenshots/10-recovery-callback.jpg`.
+- Custom SMTP was disabled. The existing email provider has a verified sending domain available. Public SMTP values were prepared in an unsaved dashboard form; the private credential and final save require user handoff. No API key was created, exposed or copied.
+- No recovery email has been sent and no password changed. Successful owner login remains unverified. A fresh hosted recovery-page inspection was blocked by browser native-credential protection; no new UI test result is claimed.
+- The project dashboard also reports an organisation usage overage and potential restrictions from 31 October 2026. No plan or billing changes were made.
