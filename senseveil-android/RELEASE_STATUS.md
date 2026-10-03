@@ -1,4 +1,49 @@
-# SenseVeil AI v1.0 RC1 — verification record
+# SenseVeil AI v1.0.0-rc2 — verification record
+
+Updated 3 October 2026 (UTC). Application source: `fa14d06343976cf6226481bd5f7da9e7afa6b783`.
+
+## RC2 changes
+
+- Clearer Field overlay and header spacing; detailed detections remain in Lab.
+- Per-event review, verification and sharing, with unsealed exports blocked.
+- Capture progress survives rotation and rapid repeated manual taps are debounced.
+- Corrected ML Kit pose coordinates using the matching frame's camera-to-view transform, including rotation and crop.
+- Rough shoulder-based range is gated by frontal pose/face quality and remains available in Lab and evidence; Field does not present it as a measured distance.
+- Grouped Tools and larger evidence text. Existing fusion, consensus, signing, encryption, custody checks, external protocol, AR capability probe, replay and diagnostics remain.
+
+See [RC2_FIELD_AUDIT.md](RC2_FIELD_AUDIT.md) for the five-step audit and screenshots.
+
+## RC2 verification
+
+- Local Gradle `test lint assembleDebug assembleDebugAndroidTest`: PASS.
+- 23 JVM tests and five independent Python verifier tests: PASS, no failures.
+- Lint: zero errors, 112 warnings. No checks disabled or errors baselined.
+- Debug APK signature: Android v2 valid; final 16 KB ZIP alignment: PASS.
+- Final CI: [run 37114880198](https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37114880198). Both build and device-tests jobs passed for the exact source above. All five Android tests passed on API 35 with zero failures, errors or skips (79.489 s), for **33 tests total**.
+
+The Android suite checks Tools/Back/diagnostics, real emulator capture sealing across rotation, Keystore/AES-GCM tamper rejection, selected older-event verification/export while the newest remains unsealed, and pose projection across all right-angle rotations/crop/scale. Final CI screenshots were visually inspected and are retained in `docs/qa/rc2/`.
+
+The initial Andy Home RC2 device run was blocked by an emulator System UI ANR dialog (confirmed by failure screenshot); its three UI failures are not counted as application passes. The final source independently passed the complete CI device suite. Andy Home also built the final app and test APKs successfully.
+
+## RC2 installer provenance
+
+- Package `uk.co.wrekinlabs.senseveil`; version `1.0.0-rc2`, code 11; minimum Android 7/API 24.
+- File: `SenseVeil-AI-v1.0.0-rc2-debug.apk`; 176,579,821 bytes.
+- SHA-256: `b95b14c23f0fa792736566e4deabd513bb01d8d3ab9fc0bcedc33f9818f58e48`.
+- Debug certificate SHA-256: `9657cb624dab8cb0649a5ac39fd2f98f07a054d56ae3b38fe94d748cd014a5f1` (same as the downloadable RC1 installer).
+- CI and Andy Home build APKs use their respective debug keys and have different checksums. Update an existing debug installation using the same build source/key. Preserve needed evidence before uninstalling or clearing app data.
+
+The independently built Home installer is at `Desktop\SenseVeil-AI-v1.0-RC2`, with `SHA256SUMS.txt`. Its SHA-256 is `51eee088544ea9abe7d8c36bc75da2489ce9af6cd06646ca558ceb4c5e147a12`; it is 176,579,821 bytes and passes 16 KB ZIP alignment.
+
+## Remaining physical-device checks
+
+The owner confirmed that RC1 installed and ran on their phone. RC2 still needs real-phone overlay/range checks, TalkBack and enlarged-font checks, low-light/movement, audio opt-in/permission denial, haptics, long sessions, low storage and export/import exercises.
+
+The external sensor implementation remains the supplied SV1 protocol/parser/replay guard and adapter interface; vendor BLE/USB transports are not implemented. AR depth remains a capability probe, not live depth capture. Wi-Fi sensing is not part of this APK. Emulator tests do not establish physical measurement accuracy.
+
+---
+
+# Historical RC1 verification record
 
 Updated 3 October 2026 (UTC).
 

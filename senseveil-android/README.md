@@ -1,4 +1,4 @@
-# SenseVeil AI — v1.0 release candidate
+# SenseVeil AI — v1.0.0-rc2
 
 **See the signal. Verify the source.**
 
@@ -6,7 +6,7 @@ SenseVeil is an Android multisensor presence and detector-disagreement scanner. 
 
 ## Included features
 
-- CameraX camera preview, pose/face/object analysis, Field/Lab overlays, track stability and distance estimates.
+- CameraX camera preview, pose/face/object analysis with timestamp-matched viewport projection, Field/Lab overlays, track stability and gated rough monocular range in Lab.
 - Environmental sensor baselines, optional microphone level metering, weighted multisensor fusion, and multi-frame anomaly consensus.
 - Manual/automatic event capture, rolling video, pre/post sensor and decision timelines, explanation reports and event history.
 - SHA-256 manifests, device-held ECDSA signatures, AES-GCM encrypted vaults, ZIP/SVE import verification and operator-pinned signer fingerprints.
@@ -35,12 +35,16 @@ The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. Install with `adb 
 
 1. Allow camera permission, open **Tools → Quick Start**, and review **Device Support**.
 2. Choose Sensitive/Balanced/Strict, hold the phone still to calibrate, and select Field/Lab mode.
-3. Use Capture or allow sustained anomalies to trigger capture. Wait for **EVENT SEALED** before verifying/exporting. Capture completion survives rotation and records any lifecycle interruption or unavailable/partial video in the signed bundle.
-4. Use Events, Evidence Review, Verify Last Evidence and Session Replay to inspect measurements.
+3. Use Capture or allow sustained anomalies to trigger capture. Wait for **Evidence sealed** before verifying/exporting. Capture completion survives rotation and records any lifecycle interruption or unavailable/partial video in the signed bundle.
+4. Open **Events** and choose **Review**, **Verify**, or **Share** on the capture you want. Unsealed captures cannot be verified or shared. Use Session Replay for session timelines; the latest-evidence Tools shortcuts remain available.
 5. Record the Device Signer ID independently. A valid signature proves consistency with a key; it does not prove the signer's identity or an external timestamp.
 6. Export a verification ZIP for sharing. When the vault option is enabled, an encrypted device-bound SVE copy is also retained; the sharing ZIP is cleartext.
 
 Microphone level monitoring is opt-in; it does not save raw audio. Evidence stays in app storage unless you explicitly export it. Cloud backup/device transfer are excluded. Uninstalling or clearing app data destroys Android Keystore keys and can make SVE vaults unrecoverable. Export required evidence first.
+
+## RC2 field-feedback improvements
+
+The scanner has clearer Field overlays and a direction-only vision map; detailed boxes/skeleton remain in Lab. Capture progress survives rotation. Event cards support individual review, verification and export. See [RC2_FIELD_AUDIT.md](RC2_FIELD_AUDIT.md) for the screenshot audit and coordinate/range fix.
 
 ## Verification and limitations
 

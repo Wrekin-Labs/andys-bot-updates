@@ -26,4 +26,14 @@ No detection model, fusion, consensus, evidence signing/encryption, custody chai
 
 Actual radar/thermal vendor transports and live AR depth capture remain outside the supplied implementation. Physical-phone validation of the updated overlay, real-world ranging limits, TalkBack, enlarged system fonts and long sessions remains necessary. Screenshots alone do not establish accessibility compliance.
 
-Verification results and downloadable APK checksum will be added after the final device and CI runs.
+## Verified result
+
+Application source `fa14d06343976cf6226481bd5f7da9e7afa6b783` passed [GitHub run 37114880198](https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37114880198): 23 JVM, five Python verifier and five Android device tests (33 total), with no failures. Android lint has zero errors and 112 warnings; no error baselines or disabled checks. Both app and test APKs also built successfully on Andy Home.
+
+The final APK is signed with the same debug key as the working RC1 download and passes 16 KB ZIP alignment. SHA-256: `b95b14c23f0fa792736566e4deabd513bb01d8d3ab9fc0bcedc33f9818f58e48`.
+
+Visual inspection confirms separated header/status panels, readable event cards, disabled unsealed actions, clear verification verdicts, scrollable details/Tools, and reachable controls in landscape. The emulator camera uses a test pattern, so these screenshots do not validate real-person pose alignment or detection accuracy. An initial Home emulator run was obstructed by a System UI ANR; the full final CI device run passed.
+
+### Audit screenshots
+
+[Portrait scanner](docs/qa/rc2/scanner-portrait.png) · [Landscape scanner](docs/qa/rc2/scanner-landscape.png) · [Event cards](docs/qa/rc2/events-cards.png) · [Verification](docs/qa/rc2/event-verified.png) · [Event details](docs/qa/rc2/event-review.png) · [Tools](docs/qa/rc2/tools-bottom.png)

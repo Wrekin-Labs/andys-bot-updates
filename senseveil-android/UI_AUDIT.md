@@ -1,4 +1,14 @@
-# v1.0 RC UI and functionality audit
+# v1.0.0-rc2 UI and functionality audit
+
+3 October 2026. Current application source `fa14d06343976cf6226481bd5f7da9e7afa6b783`.
+
+The [RC2 field audit](RC2_FIELD_AUDIT.md) covers the five-step scan/capture/history/review/Tools flow, fixes based on owner phone screenshots, final emulator screenshots, and remaining physical-device checks.
+
+All 33 tests pass (23 JVM, five Python, five Android). [Final CI build and device jobs are green](https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37114880198). Lint has zero errors and 112 warnings. The user’s real photos are not published.
+
+---
+
+# Historical RC1 UI and functionality audit
 
 3 October 2026. Final application source: `a976c34`. Android API 35, emulated rear camera, portrait and landscape. Screenshots and test reports are in [the passing CI run](https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37111281645).
 
