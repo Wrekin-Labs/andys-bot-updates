@@ -35,7 +35,7 @@ The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. Install with `adb 
 
 1. Allow camera permission, open **Tools → Quick Start**, and review **Device Support**.
 2. Choose Sensitive/Balanced/Strict, hold the phone still to calibrate, and select Field/Lab mode.
-3. Use Capture or allow sustained anomalies to trigger capture. Give the post-event window time to finish before verifying/exporting.
+3. Use Capture or allow sustained anomalies to trigger capture. Wait for **EVENT SEALED** before verifying/exporting. Capture completion survives rotation and records any lifecycle interruption or unavailable/partial video in the signed bundle.
 4. Use Events, Evidence Review, Verify Last Evidence and Session Replay to inspect measurements.
 5. Record the Device Signer ID independently. A valid signature proves consistency with a key; it does not prove the signer's identity or an external timestamp.
 6. Export a verification ZIP for sharing. When the vault option is enabled, an encrypted device-bound SVE copy is also retained; the sharing ZIP is cleartext.
