@@ -96,4 +96,5 @@ jobs:
             senseveil-android/app/build/reports/androidTests/
             senseveil-android/app/build/outputs/androidTest-results/
             senseveil-android/app/build/device-audit/
+            senseveil-android/app/build/outputs/connected_android_test_additional_output/
           retention-days: 14

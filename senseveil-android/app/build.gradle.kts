@@ -13,6 +13,7 @@ android {
         versionCode = 10
         versionName = "1.0.0-rc1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["additionalTestOutputDir"] = "/sdcard/Android/media/uk.co.wrekinlabs.senseveil/qa"
     }
 
     compileOptions {

@@ -46,8 +46,6 @@ import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.pose.PoseDetector
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -228,6 +226,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
         previewView = PreviewView(this).apply {
@@ -300,7 +299,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(
             statusPanel,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            FrameLayout.LayoutParams(if (landscape) dp(resources.configuration.screenWidthDp - 178) else ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.TOP
                 setMargins(dp(10), dp(78), dp(10), 0)
             }
@@ -309,9 +308,9 @@ class MainActivity : AppCompatActivity() {
         radarView = RadarView(this).apply { background = roundedPanel(0xAA0B1015.toInt()) }
         root.addView(
             radarView,
-            FrameLayout.LayoutParams(dp(158), dp(126)).apply {
+            FrameLayout.LayoutParams(dp(if (landscape) 148 else 158), dp(if (landscape) 100 else 126)).apply {
                 gravity = Gravity.END or Gravity.TOP
-                setMargins(0, dp(145), dp(10), 0)
+                setMargins(0, dp(if (landscape) 78 else 145), dp(10), 0)
             }
         )
 
@@ -1027,8 +1026,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEvidenceReview() {
-        val body = EvidenceCatalog.render(eventRepository.eventRoot, limit = 12)
-        showTextPanel("EVIDENCE REVIEW", body)
+        bufferText.text = "CHECKING EVIDENCE…"
+        submitIo {
+            val body = EvidenceCatalog.render(eventRepository.eventRoot, limit = 12)
+            runOnUiThread { if (!isDestroyed) showTextPanel("EVIDENCE REVIEW", body) }
+        }
     }
 
     private fun showSensorAdapters() {
@@ -1046,17 +1048,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderSessionReplay(sessionId: String) {
-        val summary = sessionRecorder.latestSummary(sessionId)
-        val replay = sessionRecorder.latestReplay(28, sessionId)
-        val body = buildString {
-            append(summary)
-            if (replay.isNotEmpty()) {
-                append("\n\nRECENT TIMELINE\n")
-                replay.forEach { append(it).append('\n') }
+        bufferText.text = "READING SESSION…"
+        submitIo {
+            val summary = sessionRecorder.latestSummary(sessionId)
+            val replay = sessionRecorder.latestReplay(28, sessionId)
+            val body = buildString {
+                append(summary)
+                if (replay.isNotEmpty()) {
+                    append("\n\nRECENT TIMELINE\n")
+                    replay.forEach { append(it).append('\n') }
+                }
+                append("\nReplay is a measurement timeline, not a reconstruction of unseen events.")
             }
-            append("\nReplay is a measurement timeline, not a reconstruction of unseen events.")
+            runOnUiThread { if (!isDestroyed) showTextPanel("SESSION REPLAY", body) }
         }
-        showTextPanel("SESSION REPLAY", body)
     }
 
     private fun showTextPanel(title: String, bodyText: String) {

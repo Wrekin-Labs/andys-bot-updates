@@ -66,13 +66,18 @@ class EventRepository(private val context: Context) {
 
     fun recent(limit: Int = 30): List<ScanEvent> {
         if (!logFile.exists()) return emptyList()
-        return logFile.readLines().takeLast(limit).mapNotNull(::parse).reversed()
+        val tail = java.util.ArrayDeque<String>()
+        logFile.useLines { lines -> lines.forEach { line ->
+            tail.addLast(line)
+            while (tail.size > limit.coerceAtLeast(0)) tail.removeFirst()
+        } }
+        return tail.mapNotNull(::parse).reversed()
     }
 
     fun createEventBundle(reason: String): File {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.UK).format(Date())
         val safe = reason.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return File(eventRoot, "Event_${stamp}_$safe").apply { mkdirs() }
+        return File(eventRoot, "Event_${stamp}_${safe}_${java.util.UUID.randomUUID().toString().take(8)}").apply { mkdirs() }
     }
 
     fun newImageFile(reason: String, directory: File = eventRoot): File {
@@ -94,7 +99,8 @@ class EventRepository(private val context: Context) {
 
     fun latestBundle(): File? = eventRoot.listFiles()
         ?.filter { it.isDirectory && it.name.startsWith("Event_") }
-        ?.maxByOrNull { it.lastModified() }
+        // Finalization changes modification time; the name retains capture order.
+        ?.maxByOrNull { it.name }
 
     fun exportFileFor(bundle: File): File = File(eventRoot, "exports/${bundle.name}.zip")
 

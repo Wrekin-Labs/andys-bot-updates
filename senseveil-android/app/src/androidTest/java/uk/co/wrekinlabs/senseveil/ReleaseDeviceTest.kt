@@ -16,10 +16,12 @@ import java.io.File
 class ReleaseDeviceTest {
     @get:Rule val cameraPermission: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.CAMERA)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private fun auditDirectory(): File = File(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        ?: File(context.getExternalFilesDir(null), "qa").absolutePath).apply { mkdirs() }
     @get:Rule val failureEvidence = object : org.junit.rules.TestWatcher() {
         override fun failed(error: Throwable?, description: org.junit.runner.Description) {
             val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-            val qa = File(context.getExternalFilesDir(null), "qa").apply { mkdirs() }
+            val qa = auditDirectory()
             device.takeScreenshot(File(qa, "failed-${description.methodName}.png"))
             device.dumpWindowHierarchy(File(qa, "failed-${description.methodName}.xml"))
         }
@@ -59,7 +61,7 @@ class ReleaseDeviceTest {
             val tools=device.findObject(UiSelector().text("TOOLS"))
             assertTrue("TOOLS button", tools.waitForExists(10000))
             tools.click()
-            val screenshots=File(context.getExternalFilesDir(null),"qa").apply { mkdirs() }
+            val screenshots = auditDirectory()
             device.takeScreenshot(File(screenshots,"tools-top.png"))
             val scroll=androidx.test.uiautomator.UiScrollable(UiSelector().scrollable(true))
             assertTrue("quick start reachable", scroll.scrollTextIntoView("QUICK START"))

@@ -150,11 +150,20 @@ class SessionRecorder(private val context: Context) {
     fun latestSummary(sessionId: String? = null): String {
         val dir = sessionById(sessionId) ?: return "No recorded session yet."
         val meta = File(dir, "session.json")
-        val lines = File(dir, "timeline.jsonl").takeIf { it.exists() }?.readLines().orEmpty()
-        val anomalies = lines.count { runCatching { JSONObject(it).optBoolean("anomaly") }.getOrDefault(false) }
-        val candidate = lines.count { runCatching { JSONObject(it).optBoolean("candidateAnomaly") }.getOrDefault(false) }
-        val avgFusion = lines.mapNotNull { runCatching { JSONObject(it).optDouble("fusedScore") }.getOrNull() }
-            .takeIf { it.isNotEmpty() }?.average()
+        var samples = 0
+        var anomalies = 0
+        var candidate = 0
+        var fusionSum = 0.0
+        var fusionCount = 0
+        File(dir, "timeline.jsonl").takeIf { it.exists() }?.useLines { lines -> lines.forEach { line ->
+            samples++
+            runCatching { JSONObject(line) }.getOrNull()?.let { row ->
+                if (row.optBoolean("anomaly")) anomalies++
+                if (row.optBoolean("candidateAnomaly")) candidate++
+                row.optDouble("fusedScore").takeIf { it.isFinite() }?.let { fusionSum += it; fusionCount++ }
+            }
+        } }
+        val avgFusion = if (fusionCount > 0) fusionSum / fusionCount else null
 
         val status = runCatching { JSONObject(meta.readText()).optString("status", "unknown") }.getOrDefault("unknown")
         val metadata = runCatching { JSONObject(meta.readText()) }.getOrNull()
@@ -165,7 +174,7 @@ class SessionRecorder(private val context: Context) {
         return buildString {
             append(dir.name).append('\n')
             append("Status: ").append(status).append('\n')
-            append("Samples: ").append(lines.size).append('\n')
+            append("Samples: ").append(samples).append('\n')
             append("Candidate anomaly samples: ").append(candidate).append('\n')
             append("Sustained anomaly samples: ").append(anomalies).append('\n')
             if (avgFusion != null) append("Average fused confidence: ").append("%.0f%%".format(avgFusion * 100)).append('\n')
