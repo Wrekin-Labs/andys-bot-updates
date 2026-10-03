@@ -96,3 +96,10 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - Custom SMTP was disabled. The existing email provider has a verified sending domain available. Public SMTP values were prepared in an unsaved dashboard form; the private credential and final save require user handoff. No API key was created, exposed or copied.
 - No recovery email has been sent and no password changed. Successful owner login remains unverified. A fresh hosted recovery-page inspection was blocked by browser native-credential protection; no new UI test result is claimed.
 - The project dashboard also reports an organisation usage overage and potential restrictions from 31 October 2026. No plan or billing changes were made.
+
+## Saved SMTP verification
+
+- After the user completed the private handoff, reload confirmed custom SMTP enabled with host `smtp.resend.com`, port 465, a stored-password notice, and disabled Save button. The credential was not inspected.
+- The hosted current sign-in page visibly shows the recovery link and same-account desktop/phone/tablet guidance. Its recovery form loads successfully.
+- Automatic approval review rejected the secure recovery-email request because sending the email needs explicit user authorization. No recovery email has been sent or password changed; delivery and real login remain open gates.
+- KeepGoing's latest job remains failed; direct work continued in this conversation.
