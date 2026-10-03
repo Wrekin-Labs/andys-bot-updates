@@ -1,4 +1,4 @@
-# SenseVeil AI — v1.0.0-rc3
+# SenseVeil AI — v1.0.0-rc4
 
 **See the signal. Verify the source.**
 
@@ -58,7 +58,7 @@ The scanner has clearer Field overlays and a direction-only vision map; detailed
 
 ## Verification and limitations
 
-`RELEASE_STATUS.md` records the verified build, tests and remaining physical-device checks. A debug build is a tester deliverable, not a Play production-signed release. Real camera quality, thermal/battery behaviour, radar/thermal devices and AR depth require compatible physical hardware.
+`RC4_RELEASE_STATUS.md` records the latest verified build, tests and remaining physical-device checks; `RELEASE_STATUS.md` retains the RC1–RC3 history. A debug build is a tester deliverable, not a Play production-signed release. Real camera quality, thermal/battery behaviour, radar/thermal devices and AR depth require compatible physical hardware.
 
 The root repository workflow `.github/workflows/senseveil-android.yml` builds and tests this subproject, uploads the debug APK and runs Android device tests. No credentials, device evidence, signing keys or local SDK paths belong in Git.
 

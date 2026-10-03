@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Independent SenseVeil evidence verifier.
 
-Requires Python 3 and an `openssl` executable on PATH for ECDSA verification.
+Requires Python 3 and OpenSSL for ECDSA verification. On Windows it also checks common Git-for-Windows OpenSSL locations when `openssl` is not on PATH.
 Verifies ZIP bundles exported by SenseVeil. Encrypted .sve vaults remain device-bound
 and should be decrypted/exported by the originating Android installation first.
 """
@@ -100,6 +100,21 @@ def verify_hashes(bundle: Path) -> tuple[int, list[str]]:
                 failures.append(f'{rel}: not signed by manifest')
     return checked, failures
 
+def find_openssl() -> str | None:
+    found = shutil.which('openssl')
+    if found:
+        return found
+    if os.name == 'nt':
+        candidates = [
+            Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'Git' / 'usr' / 'bin' / 'openssl.exe',
+            Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'Git' / 'mingw64' / 'bin' / 'openssl.exe',
+            Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Git' / 'usr' / 'bin' / 'openssl.exe',
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
 def verify_signature(bundle: Path) -> tuple[bool, str | None, str]:
     env_path = bundle / 'integrity.sig.json'
     if not env_path.exists():
@@ -111,7 +126,7 @@ def verify_signature(bundle: Path) -> tuple[bool, str | None, str]:
     claimed = env.get('signerFingerprintSha256', '')
     if claimed and claimed.lower() != fp:
         return False, fp, 'public-key fingerprint mismatch'
-    openssl = shutil.which('openssl')
+    openssl = find_openssl()
     if not openssl:
         return False, fp, 'openssl not found; hashes can be checked but ECDSA signature cannot'
     with tempfile.TemporaryDirectory(prefix='senseveil-sig-') as td:

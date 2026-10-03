@@ -12,7 +12,7 @@ Tools → **WI-FI SURVEY** requests coarse + precise location together because A
 
 SSID and BSSID values are never written to SenseVeil evidence or session files.
 
-Android may throttle Wi-Fi scans. A throttled scan remains visible as an unavailable/throttled status and is not treated as an anomaly.
+Android may throttle Wi-Fi scans, and Android Wi-Fi scanning also requires Location services to be enabled. A throttled/unavailable scan is reported as such and is not treated as an anomaly.
 
 ## 2. External CSI/RF bridge
 
@@ -40,9 +40,9 @@ The pairing code prevents accidental cross-feed between nearby test bridges. It 
 
 SenseVeil requires at least 4 samples/s and builds a 30-sample stationary baseline. Phone movement pauses RF-change classification. Once calibrated, RSSI/amplitude/variance changes are compared with the baseline. A change must remain above threshold for at least 5 frames and 800 ms before the state becomes `RF_CHANGE`.
 
-Missing bridge data becomes `STALE` after 2.5 seconds. Low-rate, invalid and out-of-order frames become unavailable/rejected rather than detections.
+Missing bridge data becomes `STALE` after 2.5 seconds. Low-rate, invalid and out-of-order frames become unavailable/rejected rather than detections. Each successful bridge reconnect clears the previous RF baseline and recalibrates before classification resumes.
 
-Use **RF BASELINE RESET** after moving the phone, antenna, access point or bridge.
+Phone movement automatically invalidates the RF baseline; once the phone is stationary, SenseVeil requires a fresh calibration before RF-change classification resumes. Use **RF BASELINE RESET** after deliberately moving the antenna, access point or bridge, or whenever room geometry changes.
 
 ## Evidence
 

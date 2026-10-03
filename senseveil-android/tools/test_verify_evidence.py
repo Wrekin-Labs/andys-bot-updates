@@ -42,7 +42,11 @@ class EvidenceTests(unittest.TestCase):
             self.assertTrue(verifier.verify_hashes(self.bundle)[1])
 
     def test_zip_rejects_duplicate_and_unsafe_paths(self):
-        for entries in (['../outside'], ['/absolute'], ['a\\b'], ['same', 'same']):
+        # zipfile normalizes backslashes while creating archives on Windows,
+        # so exercise that path rule directly and keep archive cases portable.
+        with self.assertRaises(ValueError):
+            verifier.checked_path(self.root / 'extracted', 'a\\b')
+        for entries in (['../outside'], ['/absolute'], ['same', 'same']):
             data = io.BytesIO()
             with zipfile.ZipFile(data, 'w') as z:
                 for name in entries:
@@ -53,8 +57,10 @@ class EvidenceTests(unittest.TestCase):
 
     def test_real_ecdsa_signature_and_wrong_signature(self):
         key, public, signature = self.root / 'key.pem', self.root / 'pub.der', self.root / 'sig.bin'
+        openssl = verifier.find_openssl()
+        self.assertIsNotNone(openssl, 'OpenSSL is required for the ECDSA verifier test')
         def run(*args):
-            subprocess.run(['openssl', *map(str, args)], check=True, capture_output=True)
+            subprocess.run([openssl, *map(str, args)], check=True, capture_output=True)
         run('ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', key)
         run('pkey', '-in', key, '-pubout', '-outform', 'DER', '-out', public)
         run('dgst', '-sha256', '-sign', key, '-out', signature, self.bundle / 'integrity.json')
