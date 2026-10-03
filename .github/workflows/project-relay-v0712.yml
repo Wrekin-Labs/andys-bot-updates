@@ -1,0 +1,45 @@
+name: Project Relay 0.7.12 checks
+
+on:
+  push:
+    branches:
+      - project-relay-v0.7.12-unattended-recovery
+  pull_request:
+    paths:
+      - "project-relay-v0.7.12/**"
+      - ".github/workflows/project-relay-v0712.yml"
+
+jobs:
+  python-tests:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: project-relay-v0.7.12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run unattended recovery tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Compile Python package
+        run: python -m compileall -q project_relay
+
+  powershell-parse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse Project Relay PowerShell scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem "project-relay-v0.7.12\scripts" -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors) { $errors += $parseErrors }
+          }
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            exit 1
+          }

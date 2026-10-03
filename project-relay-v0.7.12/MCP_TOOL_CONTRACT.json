@@ -1,0 +1,720 @@
+{
+  "version": "0.7.11",
+  "catalog": "hosted-public-beta",
+  "security_model": {
+    "normal_mode": "Exact local approval for normal/customer mutations.",
+    "owner_mode": "OAuth role=owner plus workstation-local Owner Full Control; locally revocable.",
+    "filesystem_roots": "Normal approved roots can only be expanded locally.",
+    "screen_capture": "Generic hosted screen capture remains unpublished.",
+    "secret_input": "Passwords, API keys, card data and 2FA values must not be sent through typing or terminal tools.",
+    "remote_owner_approval": "OAuth-linked owners may remotely approve one existing exact unexpired approval only when workstation-local Owner Full Control is enabled. The underlying action remains single-use and exact-match bound."
+  },
+  "tools": [
+    {
+      "name": "commandport_browser_scroll_state",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Inspect the active browser's vertical scrollability and position without page text, form values, URLs or pixels. Unknown means the browser lacks a usable scroll provider."
+    },
+    {
+      "name": "commandport_capability_report",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Inspect Project Relay workstation capability categories and dependency availability without executing a mutation or returning secret values."
+    },
+    {
+      "name": "commandport_click",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Execute only the exact mouse click approved locally. Because a general click can trigger external actions, treat it as potentially destructive."
+    },
+    {
+      "name": "commandport_click_target",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Click the exact locally approved browser control after checking current identity, geometry and occlusion."
+    },
+    {
+      "name": "commandport_find_target",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Find exactly one visible browser button or link by its public label. Does not read input values or return page text."
+    },
+    {
+      "name": "commandport_focus_window",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Bring one existing top-level Windows window to the foreground without clicking or typing."
+    },
+    {
+      "name": "commandport_get_file_info",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Read metadata for one file or folder inside approved workstation roots."
+    },
+    {
+      "name": "commandport_get_runtime_config",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Read bounded non-secret Project Relay runtime preferences, executable availability, approved roots and owner-control status."
+    },
+    {
+      "name": "commandport_hash_file",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Compute SHA-256 for one file inside approved workstation roots without returning file content."
+    },
+    {
+      "name": "commandport_health_report",
+      "risk": "read",
+      "owner_required": false,
+      "description": "Return one bounded non-sensitive workstation health snapshot covering watchdog freshness, updater/backoff state, rollback availability, startup recovery tasks, and Owner Full Control availability."
+    },
+    {
+      "name": "commandport_launch_app",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Launch the exact allowlisted app approved locally. A process start does not confirm a ready window; inspect windows afterwards. Never retry automatically after a timeout."
+    },
+    {
+      "name": "commandport_list_directory",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List files and folders inside approved workstation roots."
+    },
+    {
+      "name": "commandport_list_process_details",
+      "risk": "read",
+      "owner_required": true,
+      "description": "Owner-routed read-only process details with executable identity and command arguments redacted."
+    },
+    {
+      "name": "commandport_list_processes",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List local Windows processes without changing them."
+    },
+    {
+      "name": "commandport_list_services",
+      "risk": "read",
+      "owner_required": true,
+      "description": "Owner-routed read-only Windows service inventory."
+    },
+    {
+      "name": "commandport_list_windows",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List visible top-level Windows application windows without changing focus."
+    },
+    {
+      "name": "commandport_open_url",
+      "risk": "open_world",
+      "owner_required": false,
+      "description": "Open one validated http(s) URL in the linked workstation's default browser. This navigates to an external site but does not click or submit anything."
+    },
+    {
+      "name": "commandport_owner_apply_text_replace",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: apply a previewable UTF-8 text replacement with optional expected SHA-256 conflict check and rollback checkpoint."
+    },
+    {
+      "name": "commandport_owner_apply_text_transaction",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: atomically stage and apply up to 20 distinct text edits after validating all expected SHA-256 values; restores already-written files if a later replace fails."
+    },
+    {
+      "name": "commandport_owner_approve",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: remotely approve one existing unexpired exact approval from an OAuth-linked owner session. Does not execute the action; the original action still consumes the approval once."
+    },
+    {
+      "name": "commandport_owner_event_log_query",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: query bounded Windows Event Log entries by log, recent time window and optional level; per-event messages are truncated."
+    },
+    {
+      "name": "commandport_owner_fs_copy",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: copy one explicit file or directory to an explicit destination."
+    },
+    {
+      "name": "commandport_owner_fs_delete",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: delete one explicit file, or a directory only when recursive is deliberately requested."
+    },
+    {
+      "name": "commandport_owner_fs_mkdir",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create a directory tree at an explicit absolute path."
+    },
+    {
+      "name": "commandport_owner_fs_move",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: move or rename one explicit file or directory."
+    },
+    {
+      "name": "commandport_owner_network_summary",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: return bounded Windows interface, IP, gateway and DNS diagnostics. Does not scan ports or services."
+    },
+    {
+      "name": "commandport_owner_pdf_delete_pages",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: delete explicit one-based PDF pages with optimistic SHA-256 conflict protection; refuses deleting every page."
+    },
+    {
+      "name": "commandport_owner_pdf_insert_pdf",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: insert pages from another approved-root PDF into a target PDF at an explicit zero-based position."
+    },
+    {
+      "name": "commandport_owner_power_action",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: shutdown, restart, sleep or lock the selected Windows workstation. Requires OAuth owner routing and the workstation-local Owner Full Control switch."
+    },
+    {
+      "name": "commandport_owner_preview_text_replace",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: preview a bounded exact/regex text replacement as a unified diff without writing."
+    },
+    {
+      "name": "commandport_owner_preview_text_transaction",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: preview up to 20 text edits across distinct approved-root files, returning per-file hashes and bounded unified diffs without writing."
+    },
+    {
+      "name": "commandport_owner_process_start",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start one explicit executable with bounded argument count. No shell expansion is used."
+    },
+    {
+      "name": "commandport_owner_process_terminate",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: terminate a specific PID with safeguards against system/self termination."
+    },
+    {
+      "name": "commandport_owner_read_document",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: format-aware bounded read of CSV, JSON, XLSX/XLSM, PDF, DOCX or text inside approved roots."
+    },
+    {
+      "name": "commandport_owner_read_file_lines",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: read bounded UTF-8 file lines from an approved root with positive pagination or negative tail offsets."
+    },
+    {
+      "name": "commandport_owner_read_image",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: read one local image as a bounded JPEG preview for visual inspection; file content is owner-only and the workstation-local Owner Full Control switch must be enabled."
+    },
+    {
+      "name": "commandport_owner_read_multiple_files",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: read bounded UTF-8 ranges from up to 20 files inside approved roots. Requires owner OAuth routing and the workstation-local Owner Full Control switch."
+    },
+    {
+      "name": "commandport_owner_recent_tool_calls",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: return bounded local tool-call history containing action names and argument shapes only; argument values are never logged."
+    },
+    {
+      "name": "commandport_owner_replace_docx_text",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: replace exact text in DOCX paragraphs/tables using a format-aware writer and rollback checkpoint."
+    },
+    {
+      "name": "commandport_owner_rollback_document",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: rollback one format-aware document checkpoint only if the current file still matches its post-write hash."
+    },
+    {
+      "name": "commandport_owner_rollback_text_edit",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: rollback one Relay text-edit checkpoint only when the current file still matches the checkpoint post-edit hash."
+    },
+    {
+      "name": "commandport_owner_rollback_text_transaction",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: rollback an entire Relay multi-file text transaction only when every current file still matches its post-transaction hash."
+    },
+    {
+      "name": "commandport_owner_run_command",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: run one bounded PowerShell command on an explicitly owner-linked workstation. Output and timeout remain bounded by the local adapter."
+    },
+    {
+      "name": "commandport_owner_runtime_config",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: update bounded runtime preferences such as default shell, blocked command names, output limit and local tool-history preference."
+    },
+    {
+      "name": "commandport_owner_sandbox_run",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: execute bounded Python or Node code inside an already-installed Docker image with no network, no host mounts, read-only root, dropped capabilities and CPU/memory/PID limits."
+    },
+    {
+      "name": "commandport_owner_sandbox_status",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: inspect whether the fixed Python/Node Docker sandbox images are locally installed and report the hard isolation settings used by Relay."
+    },
+    {
+      "name": "commandport_owner_scheduled_task_action",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start/stop/enable/disable one exact Windows Scheduled Task. Project Relay recovery tasks are protected from remote stop/disable."
+    },
+    {
+      "name": "commandport_owner_scheduled_tasks_list",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: list bounded Windows Scheduled Task names, paths and states without action arguments or credentials."
+    },
+    {
+      "name": "commandport_owner_search_content",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: bounded regex or literal content search across approved roots with file globs and up to five context lines. Binary/oversized files and symlink traversal are skipped."
+    },
+    {
+      "name": "commandport_owner_search_document",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: search text extracted from a supported document without modifying it."
+    },
+    {
+      "name": "commandport_owner_search_list",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: list active/recent Relay search sessions and their progress without returning search result contents."
+    },
+    {
+      "name": "commandport_owner_search_read",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: read a bounded page of results from one background Relay search session. Negative offsets provide tail behavior."
+    },
+    {
+      "name": "commandport_owner_search_start",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start a bounded background filename or content search across approved roots. Returns a search-session id for paginated polling."
+    },
+    {
+      "name": "commandport_owner_search_stop",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: request cancellation of one background Relay search session."
+    },
+    {
+      "name": "commandport_owner_self_update",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: stage only a published stable/beta Project Relay release through the existing checksum-verified rollback-capable updater."
+    },
+    {
+      "name": "commandport_owner_service_action",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start, stop or restart one exact Windows service name."
+    },
+    {
+      "name": "commandport_owner_software_install",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: silently install one exact Winget package id."
+    },
+    {
+      "name": "commandport_owner_software_list",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: list installed software through Winget with bounded output."
+    },
+    {
+      "name": "commandport_owner_software_search",
+      "risk": "open_world",
+      "owner_required": true,
+      "description": "Owner Full Control: search Winget packages with bounded output."
+    },
+    {
+      "name": "commandport_owner_software_uninstall",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: uninstall one exact Winget package id."
+    },
+    {
+      "name": "commandport_owner_software_upgrade",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: upgrade one exact Winget package id."
+    },
+    {
+      "name": "commandport_owner_ssh_start",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start a passwordless SSH terminal session using key/agent authentication only. Password and keyboard-interactive authentication are disabled and strict host-key checking is required."
+    },
+    {
+      "name": "commandport_owner_system_snapshot",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: return bounded OS, CPU-count, boot/memory and home-disk diagnostics for the selected workstation."
+    },
+    {
+      "name": "commandport_owner_terminal_list",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: list Relay terminal-session identities and status without exposing command text."
+    },
+    {
+      "name": "commandport_owner_terminal_read",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: read bounded paginated output from one Relay terminal session."
+    },
+    {
+      "name": "commandport_owner_terminal_start",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start one bounded interactive terminal session using PowerShell, cmd, WSL, Python, Node or R when installed. This is not a sandbox."
+    },
+    {
+      "name": "commandport_owner_terminal_stop",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: terminate one Relay-managed terminal session, optionally its Windows process tree."
+    },
+    {
+      "name": "commandport_owner_terminal_write",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: send bounded text to one Relay terminal session. Do not send passwords, tokens, card data or 2FA values."
+    },
+    {
+      "name": "commandport_owner_ui_click_control",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: click one exact visible enabled non-password UI Automation control after context checks."
+    },
+    {
+      "name": "commandport_owner_ui_find_control",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: find one exact visible enabled non-password UI Automation control without dumping the UI tree."
+    },
+    {
+      "name": "commandport_owner_update_xlsx_cells",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: update explicit XLSX/XLSM cell coordinates with optimistic SHA-256 conflict protection and a rollback checkpoint."
+    },
+    {
+      "name": "commandport_owner_update_xlsx_range",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: update an exact Sheet!A1:C10 Excel range from a 2D value array with exact dimension checks, optimistic SHA-256 conflict protection and rollback checkpoint."
+    },
+    {
+      "name": "commandport_owner_usage_stats",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: return bounded local action counts, success/failure rates and timing aggregates. Argument and output values are never included."
+    },
+    {
+      "name": "commandport_owner_write_csv",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create or replace a CSV file using structured rows, with optional expected SHA-256 conflict protection."
+    },
+    {
+      "name": "commandport_owner_write_docx",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create or replace a DOCX document from bounded text using a format-aware writer."
+    },
+    {
+      "name": "commandport_owner_write_json",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create or replace JSON using structured input and optional expected SHA-256 conflict protection."
+    },
+    {
+      "name": "commandport_owner_write_pdf",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create or replace a text PDF using a format-aware writer; generic text writes never touch PDFs."
+    },
+    {
+      "name": "commandport_owner_write_text_file",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create, rewrite or append a bounded UTF-8 text file inside approved roots with optional expected SHA-256 conflict protection and rollback checkpoint."
+    },
+    {
+      "name": "commandport_owner_write_xlsx",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create or replace an XLSX workbook from structured worksheet rows, with optional expected SHA-256 conflict protection."
+    },
+    {
+      "name": "commandport_owner_zip_create",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: create a ZIP from explicit approved-root files/directories, refusing symlinks and enforcing total file/byte limits."
+    },
+    {
+      "name": "commandport_owner_zip_extract",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: extract a ZIP into an approved destination with path-traversal, symlink, single-file, total-size and compression-ratio protections."
+    },
+    {
+      "name": "commandport_owner_zip_list",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Owner Full Control: inspect a ZIP archive inside approved roots. Rejects traversal and symlink entries and returns bounded metadata only."
+    },
+    {
+      "name": "commandport_ping",
+      "risk": "read",
+      "owner_required": false,
+      "description": "Ping the selected linked workstation through the Relay task channel and return its current version/host response."
+    },
+    {
+      "name": "commandport_prepare_click",
+      "risk": "approval_prepare",
+      "owner_required": false,
+      "description": "Create an exact local approval request for one mouse click at fixed screen coordinates. Does not click."
+    },
+    {
+      "name": "commandport_prepare_click_target",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Prepare local approval for an exact-label browser button or link click. Never supply secrets as labels."
+    },
+    {
+      "name": "commandport_prepare_launch_app",
+      "risk": "approval_prepare",
+      "owner_required": false,
+      "description": "Prepare exact local approval to open Notepad, Calculator or Relay. No paths, documents or custom arguments are accepted."
+    },
+    {
+      "name": "commandport_prepare_run_command",
+      "risk": "approval_prepare",
+      "owner_required": true,
+      "description": "Create an exact local approval request for one bounded PowerShell command."
+    },
+    {
+      "name": "commandport_prepare_scroll",
+      "risk": "owner_or_approved_control",
+      "owner_required": false,
+      "description": "Prepare a local approval for bounded scroll in the same active window."
+    },
+    {
+      "name": "commandport_prepare_service",
+      "risk": "approval_prepare",
+      "owner_required": true,
+      "description": "Prepare exact local approval for a named Windows service action."
+    },
+    {
+      "name": "commandport_prepare_switch_tab",
+      "risk": "owner_or_approved_control",
+      "owner_required": false,
+      "description": "Prepare a local approval for tab switch in the same active browser window."
+    },
+    {
+      "name": "commandport_prepare_type_text",
+      "risk": "approval_prepare",
+      "owner_required": false,
+      "description": "Create an exact local approval request to type text into the active window. Does not type."
+    },
+    {
+      "name": "commandport_prepare_write_file",
+      "risk": "approval_prepare",
+      "owner_required": true,
+      "description": "Create an exact local approval request for one bounded UTF-8 file write."
+    },
+    {
+      "name": "commandport_read_text_file",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Read a bounded UTF-8 range from a file inside approved workstation roots."
+    },
+    {
+      "name": "commandport_read_url",
+      "risk": "open_world",
+      "owner_required": false,
+      "description": "Fetch a bounded public http(s) resource. Rejects credential-shaped URLs and private/loopback/link-local/reserved targets."
+    },
+    {
+      "name": "commandport_run_command",
+      "risk": "approval_prepare",
+      "owner_required": true,
+      "description": "Run only the exact PowerShell command/cwd/timeout approved locally."
+    },
+    {
+      "name": "commandport_scroll",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Execute a locally approved bounded scroll in the same active window."
+    },
+    {
+      "name": "commandport_search_files",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Search file and folder names inside an approved root with bounded traversal."
+    },
+    {
+      "name": "commandport_search_text",
+      "risk": "sensitive_read",
+      "owner_required": true,
+      "description": "Search bounded UTF-8 text content inside approved roots."
+    },
+    {
+      "name": "commandport_service",
+      "risk": "approved_control",
+      "owner_required": true,
+      "description": "Execute only the exact owner-routed Windows service action approved locally."
+    },
+    {
+      "name": "commandport_switch_tab",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Execute a locally approved tab switch in the same active browser window."
+    },
+    {
+      "name": "commandport_type_text",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Type only the exact approved text into the active window, optionally followed by Enter. General typing can submit forms or trigger external actions."
+    },
+    {
+      "name": "commandport_write_file",
+      "risk": "approval_prepare",
+      "owner_required": true,
+      "description": "Write only the exact path/content/mode approved locally."
+    },
+    {
+      "name": "execute_bridge_read",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Execute only a curated read-only action on a trusted capability bridge. Writes and physical actions fail closed."
+    },
+    {
+      "name": "get_bridge",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Inspect one capability bridge and its declared capabilities."
+    },
+    {
+      "name": "get_device_status",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Read current metadata for one discovered hardware device."
+    },
+    {
+      "name": "get_profile",
+      "risk": "read",
+      "owner_required": false,
+      "description": "Return the stable authenticated Project Relay profile represented by the current OAuth credentials."
+    },
+    {
+      "name": "get_workstation_capabilities",
+      "risk": "read",
+      "owner_required": false,
+      "description": "Inspect the linked workstation's last advertised actions and which are published by this server. This does not execute them or verify this chat's cached tool list."
+    },
+    {
+      "name": "list_bridges",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List Project Relay capability bridges and their trust/risk metadata."
+    },
+    {
+      "name": "list_devices",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List the read-only hardware inventory on a paired Project Relay workstation."
+    },
+    {
+      "name": "list_serial_ports",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List serial/COM devices without opening them."
+    },
+    {
+      "name": "list_workstations",
+      "risk": "read",
+      "owner_required": false,
+      "description": "List enrolled Project Relay workstations and current online state."
+    },
+    {
+      "name": "pending_approvals",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "List unexpired local Project Relay approval requests waiting for workstation consent."
+    },
+    {
+      "name": "plan_bridge_action",
+      "risk": "sensitive_read",
+      "owner_required": false,
+      "description": "Plan a bridge action without executing it; returns risk, approval requirement and executability."
+    },
+    {
+      "name": "supervised_app_status",
+      "risk": "read",
+      "owner_required": false,
+      "description": "Inspect exact-process status and duplicate count for one locally registered supervised application."
+    },
+    {
+      "name": "supervised_list_apps",
+      "risk": "read",
+      "owner_required": false,
+      "description": "List locally registered supervised applications without private launch arguments."
+    },
+    {
+      "name": "supervised_owner_restart",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: restart one locally registered supervised application by exact executable identity."
+    },
+    {
+      "name": "supervised_owner_start",
+      "risk": "owner_or_approved_control",
+      "owner_required": true,
+      "description": "Owner Full Control: start one locally registered supervised application only when no matching instance is running."
+    }
+  ],
+  "hosted_compatibility": {
+    "mode": "v0.7.6-stable",
+    "note": "Public hosted actions must also exist in the device allowlist, local bridge registry and SQL action contract. CI enforces cross-layer consistency."
+  }
+}
