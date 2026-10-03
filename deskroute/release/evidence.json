@@ -51,7 +51,7 @@
     "synthetic_public_reply": "passed",
     "synthetic_internal_note": "passed",
     "authenticated_staff": "Not verified; latest observed sign-in rejected credentials",
-    "owner_access": "Existing owner account confirmed; user reports no login credentials",
+    "owner_access": "Recovery email delivered. Private password update and actual staff sign-in remain unverified.",
     "screenshots": [
       "screenshots/08-hosted-website.jpg",
       "screenshots/09-hosted-inbox.jpg"
@@ -62,10 +62,10 @@
   "account_recovery": {
     "source_tests": "passed in CI",
     "deployed": true,
-    "email_sent": false,
+    "email_sent": true,
     "password_changed": false,
-    "live_delivery": "failed: SMTP 535 Authentication credentials invalid",
-    "configuration_gate": "User submits Configure SMTP, then verify the approved recovery email delivery, private password update and real staff access.",
+    "live_delivery": "delivered",
+    "configuration_gate": "User completes private password update; verify actual staff sign-in and authenticated live core flows.",
     "callback_allowlisted": true,
     "callback": "https://deskroute-ai-v6-preview.onrender.com/password.html",
     "custom_smtp_enabled": true,
@@ -75,11 +75,15 @@
     "smtp_host": "smtp.resend.com",
     "smtp_port": 465,
     "live_recovery_page": "Verified: current sign-in links to hosted recovery form; account email and Send recovery link rendered",
-    "send_approval": "User explicitly approved one recovery email. Secure browser submission was blocked; later manual recovery attempts failed at SMTP authentication.",
+    "send_approval": "User explicitly approved one recovery email; approved email is now delivered. Do not send duplicates.",
     "smtp_screenshot": "screenshots/11-smtp-configured.jpg",
     "diagnostic_evidence": "Read-only auth logs for 2026-10-03 13:00\u201313:28 UTC show /recover HTTP 500 with SMTP 535; account recovery_sent_at remains null and provider lists no recovery message.",
-    "native_integration": "User created Supabase Integration key. Sender DeskRoute / info@thesmashroom.co.uk filled; final Configure SMTP button awaits user submission.",
-    "integration_screenshot": "screenshots/13-smtp-final-step.jpg"
+    "native_integration": "User completed private key creation and Configure SMTP; wizard visibly confirms configured and ready to send emails.",
+    "integration_screenshot": "screenshots/14-smtp-ready.jpg",
+    "delivery_timestamp_utc": "2026-10-03T14:04:47.868Z",
+    "delivery_subject": "Reset your password",
+    "delivery_recipient": "info@thesmashroom.co.uk",
+    "delivery_evidence": "Resend list-emails metadata reports delivered; hosted form shows the expected recovery acknowledgement. Email contents and credential link were not read."
   },
   "dated_knowledge_tests": 8,
   "total_api_policy_handler_tests": 42,

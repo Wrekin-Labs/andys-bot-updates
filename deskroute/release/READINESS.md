@@ -118,3 +118,10 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - Preparation evidence: `screenshots/12-resend-integration-ready.jpg`.
 
 - Integration continuation: user-created `Supabase Integration` key visibly ready. Sender details are filled; final Configure SMTP submission is handed to the user. Delivery remains unverified. See `screenshots/13-smtp-final-step.jpg`.
+
+## Recovery email delivered
+
+- Native Resend integration visibly confirms the correct shared project/domain is configured and ready to send. Evidence: `screenshots/14-smtp-ready.jpg`.
+- The explicitly approved recovery request was submitted through the hosted form. Provider metadata confirms **Reset your password** delivered to the existing owner at **3 October 2026, 14:04:47 UTC / 15:04:47 Europe/London**. The form displays the expected recovery acknowledgement. No email body, private recovery link or credential value was read.
+- The previous SMTP authentication blocker is cleared by verified delivery. The user must choose the password privately. Actual owner sign-in, authenticated staff-to-widget flow, grounded AI and other remaining release gates are still unverified; general commercial launch remains unapproved.
+- The authorization for one recovery email has been fulfilled. Do not send duplicate reset messages.
