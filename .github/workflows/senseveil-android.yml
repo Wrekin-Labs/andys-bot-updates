@@ -1,0 +1,90 @@
+name: SenseVeil Android RC
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['senseveil-android/**', '.github/workflows/senseveil-android.yml']
+  pull_request:
+    paths: ['senseveil-android/**', '.github/workflows/senseveil-android.yml']
+
+permissions:
+  contents: read
+concurrency:
+  group: senseveil-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: senseveil-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android platform
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile, unit tests, lint, and debug APK
+        run: ./gradlew clean test lint assembleDebug assembleDebugAndroidTest --stacktrace
+      - name: Evidence verifier tests
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: APK checksums
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SenseVeil-build-reports
+          path: |
+            senseveil-android/app/build/reports/
+            senseveil-android/app/build/test-results/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SenseVeil-AI-debug
+          path: |
+            senseveil-android/app/build/outputs/apk/debug/app-debug.apk
+            senseveil-android/app/build/outputs/apk/debug/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  device-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -camera-back emulated
+          script: cd senseveil-android && ./gradlew connectedDebugAndroidTest --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SenseVeil-device-test-reports
+          path: |
+            senseveil-android/app/build/reports/androidTests/
+            senseveil-android/app/build/outputs/androidTest-results/
+          retention-days: 14

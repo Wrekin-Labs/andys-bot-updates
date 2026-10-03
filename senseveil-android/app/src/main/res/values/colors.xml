@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="senseveil_background">#070A0D</color>
+    <color name="senseveil_cyan">#42E8FF</color>
+    <color name="senseveil_magenta">#FF4FD8</color>
+    <color name="senseveil_white">#F4FCFF</color>
+</resources>
