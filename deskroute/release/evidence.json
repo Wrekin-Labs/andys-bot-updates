@@ -1,10 +1,10 @@
 {
   "release": "6.1.0-rc.1",
   "date": "2026-10-03",
-  "source_commit": "d188f85aaa5e30d9f2651e0e812bcb58cf3877bb",
-  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37115372925",
+  "source_commit": "d50029ed96edf729317fd53d2e2a4fd80c9b4105",
+  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37119293218",
   "ci_conclusion": "success",
-  "api_unit_tests": 10,
+  "api_unit_tests": 12,
   "database_regression": "passed after migration, transaction rolled back",
   "fixture_workspaces_remaining": 0,
   "http_smoke": {
@@ -13,17 +13,20 @@
     "production_widget_matches_snapshot": "Matched baseline before pending widget UI changes"
   },
   "browser_tests": {
-    "passed": 41,
-    "scope": "synthetic preview and widget adapter",
-    "results": "browser-results.json"
+    "local_passed": 41,
+    "ci_passed": 46,
+    "scope": "synthetic preview, widget and recovery adapters; mobile offline public shell",
+    "local_results": "browser-results.json",
+    "ci_results": "ci-evidence.json"
   },
   "deployment": {
     "service": "srv-db0132h42hec73egh030",
-    "deploy": "dep-db0did1srm7s73f4jrt0",
+    "deploy": "dep-db0ea6lg1s2s73dn083g",
     "status": "live",
-    "commit": "d188f85aaa5e30d9f2651e0e812bcb58cf3877bb",
+    "commit": "d50029ed96edf729317fd53d2e2a4fd80c9b4105",
     "url": "https://deskroute-ai-v6-preview.onrender.com/",
-    "auto_deploy": false
+    "auto_deploy": false,
+    "previous_stable_deploy": "dep-db0did1srm7s73f4jrt0"
   },
   "release_ready": false,
   "answer_policy_tests": 7,
@@ -53,5 +56,15 @@
       "screenshots/08-hosted-website.jpg",
       "screenshots/09-hosted-inbox.jpg"
     ]
+  },
+  "recovery_tests": 8,
+  "ci_evidence": "ci-evidence.json",
+  "account_recovery": {
+    "source_tests": "passed in CI",
+    "deployed": true,
+    "email_sent": false,
+    "password_changed": false,
+    "live_delivery": "unverified",
+    "configuration_gate": "Verify exact callback allow-list and SMTP/template compatibility in Supabase Auth"
   }
 }

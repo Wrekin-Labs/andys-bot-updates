@@ -1,0 +1,14 @@
+{
+  "source_commit": "d50029ed96edf729317fd53d2e2a4fd80c9b4105",
+  "run_id": 37119293218,
+  "job_id": 111192120409,
+  "url": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37119293218",
+  "conclusion": "success",
+  "browser_checks": 46,
+  "api_tests": 12,
+  "answer_policy_tests": 7,
+  "edge_handler_tests": 5,
+  "recovery_tests": 8,
+  "html_asset_link_pages": 18,
+  "scope": "Synthetic browser/API recovery and product flows; real account access and email delivery remain unverified."
+}

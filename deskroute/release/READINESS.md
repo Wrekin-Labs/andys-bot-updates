@@ -71,6 +71,10 @@ The existing Smash Room widget asset and WordPress installation are unchanged; i
 ## Account access follow-up
 
 - Built a dedicated set/reset password page for existing accounts, linked from desktop and phone sign-in. Recovery tokens are stripped from the URL before use, validated server-side, kept in memory and cleared when leaving or after a successful update. No account or membership is created.
-- Added eight recovery API regressions and two sign-in error/race tests: all pass locally. The total API/policy/handler coverage is now 32 cases. Browser recovery and mobile offline-shell tests are added to CI; their result is pending for this source revision.
+- Added eight recovery API regressions and two sign-in error/race tests: all pass locally. The total API/policy/handler coverage is now 32 cases. CI run `37119293218` passed on source `d50029e`: 46 browser checks, including recovery at desktop/phone widths, expired links, same-tab recovery, mismatched-password prevention, successful synthetic password update, session cleanup and a working offline public shell. All 32 API/policy/handler cases also pass.
 - Fixed stale service-worker references to deleted navigation assets, which prevented the public-shell cache installing. The asset checker now verifies the cache list. Recovery pages/tokens remain outside the cache.
 - Deployment gate for live recovery: confirm the exact `/password.html` callback in Supabase Auth redirect settings, email-template compatibility and SMTP delivery. No recovery email has been sent, no password has been changed, and owner access is not yet restored. Browser credential protection prevented further dashboard inspection during this session.
+
+The original 41-check local evidence remains in `browser-results.json`; the expanded 46-check run is recorded in `ci-evidence.json` and its GitHub Actions browser artifact. No real recovery email or password update occurred.
+
+Latest preview deploy `dep-db0ea6lg1s2s73dn083g` is **live** on tested source `d50029e`. It includes account recovery and the offline-cache repair. Hosted recovery delivery and authenticated staff access are still unverified; no claim of owner access restoration is made.
