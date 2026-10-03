@@ -18,5 +18,15 @@
   "database_mutations": false,
   "live_widget_round_trip": "not rerun in this follow-up",
   "dated_answers": "human review required",
-  "edge_deployment": "pending"
+  "edge_deployment": {
+    "function": "cxroute-widget-chat",
+    "version": 17,
+    "status": "ACTIVE",
+    "retrieved_files_match_tested_source": true,
+    "existing_custom_widget_authentication_preserved": true
+  },
+  "source_commit": "edbde5528cb35bf7ec7dfb35fa496aab4924a13f",
+  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37121684879",
+  "ci_conclusion": "success",
+  "browser_checks": 46
 }

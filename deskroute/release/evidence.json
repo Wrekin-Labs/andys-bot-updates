@@ -1,8 +1,8 @@
 {
   "release": "6.1.0-rc.1",
   "date": "2026-10-03",
-  "source_commit": "d50029ed96edf729317fd53d2e2a4fd80c9b4105",
-  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37119293218",
+  "source_commit": "edbde5528cb35bf7ec7dfb35fa496aab4924a13f",
+  "ci_run": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37121684879",
   "ci_conclusion": "success",
   "api_unit_tests": 12,
   "database_regression": "passed after migration, transaction rolled back",
@@ -30,7 +30,7 @@
   },
   "release_ready": false,
   "answer_policy_tests": 7,
-  "edge_handler_tests": 5,
+  "edge_handler_tests": 7,
   "live_safety_fix": {
     "function": "cxroute-widget-chat",
     "version": 16,
@@ -66,5 +66,8 @@
     "password_changed": false,
     "live_delivery": "unverified",
     "configuration_gate": "Verify exact callback allow-list and SMTP/template compatibility in Supabase Auth"
-  }
+  },
+  "dated_knowledge_tests": 8,
+  "total_api_policy_handler_tests": 42,
+  "dated_knowledge_fix": "dated-knowledge-evidence.json"
 }

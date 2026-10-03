@@ -1,14 +1,16 @@
 {
-  "source_commit": "d50029ed96edf729317fd53d2e2a4fd80c9b4105",
-  "run_id": 37119293218,
-  "job_id": 111192120409,
-  "url": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37119293218",
+  "source_commit": "edbde5528cb35bf7ec7dfb35fa496aab4924a13f",
+  "run_id": 37121684879,
+  "job_id": 111198868479,
+  "url": "https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37121684879",
   "conclusion": "success",
   "browser_checks": 46,
   "api_tests": 12,
   "answer_policy_tests": 7,
-  "edge_handler_tests": 5,
+  "edge_handler_tests": 7,
   "recovery_tests": 8,
   "html_asset_link_pages": 18,
-  "scope": "Synthetic browser/API recovery and product flows; real account access and email delivery remain unverified."
+  "scope": "Synthetic browser/API recovery and product flows, dated-knowledge selection and actual Edge handler adapters. Real account access, email delivery and live staff/widget delivery remain unverified.",
+  "dated_knowledge_tests": 8,
+  "total_api_policy_handler_tests": 42
 }

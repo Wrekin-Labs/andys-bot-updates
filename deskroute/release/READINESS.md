@@ -7,8 +7,8 @@ Updated 3 October 2026. **Not approved for general commercial launch.**
 - New source implements the retrieved Figma designs for Inbox, Human Queue, Business Brain, Automations, Analytics, Channels, Team and Settings, with mobile navigation.
 - PWA manifest, icons and public-shell-only service worker; customer/API/auth responses are excluded from the cache.
 - Public Help Centre displays only published articles returned by a scoped public RPC.
-- Fifteen commercial website/documentation pages; all local links and assets across 17 HTML pages pass the link checker.
-- Ten API tests pass: refresh bearer retry, single concurrent refresh, sign-out during refresh, rejected refresh, empty mutation, permission error, anonymous help, stale workspace response, immediate local logout, temporary refresh failure.
+- Fifteen commercial website/documentation pages; all local links and assets across 18 HTML pages pass the link checker.
+- Twelve API tests pass (including late-login cancellation and clear connection errors): refresh bearer retry, single concurrent refresh, sign-out during refresh, rejected refresh, empty mutation, permission error, anonymous help, stale workspace response, immediate local logout, temporary refresh failure.
 - JavaScript syntax checks pass.
 - Supabase migration `deskroute_v61_scoped_support_workflows` successfully applied to project `dbhwjzznwhukoogjewfl`.
 - Post-migration database regression passed in a transaction that was rolled back. Synthetic tests cover reply idempotency, private notes and mentions, workspace/role boundaries, unsupported-channel rejection, cross-org message foreign keys, analytics scope, team lookup and published-only anonymous help.
@@ -84,6 +84,8 @@ Latest preview deploy `dep-db0ea6lg1s2s73dn083g` is **live** on tested source `d
 - Added bounded, organisation/brand-scoped retrieval for explicit ISO and full English dates. It selects only approved facts valid during the requested UTC day and includes validity timestamps in model evidence. It does not alter stored business facts or database schema.
 - Read-only production query for 1 November 2026 returns the approved £16 rehearsal fact and excludes the expired £15 fact. Actual handler regressions confirm the future-price draft reaches the staff review path, never an automatic visitor answer.
 - Unsupported/ambiguous dates do not fall back to today's prices. More than 200 candidates or eight relevant facts returns no proposed answer rather than hiding potentially conflicting evidence. Brandless widgets use only unbranded facts on this path.
-- **42 local API/policy/handler cases pass**: 12 API, eight recovery, seven answer-policy, seven actual-handler, eight dated-knowledge cases. UI source is unchanged; the latest completed browser CI evidence remains the 46-check run on `d50029e`.
+- **42 API/policy/handler cases pass locally and in CI**: 12 API, eight recovery, seven answer-policy, seven actual-handler, eight dated-knowledge cases. UI source is unchanged; CI `37121684879` also passed all 46 browser checks on `edbde55`.
 - Every dated answer still requires human review, including a confident provider response. Business time-zone interpretation, autonomous dated answers and live staff-to-widget delivery remain release gates. The grounded provider is still unverified.
 - KeepGoing retry `kgj_d0f71afa9d1742a287075173af5025d5` also failed with “The model run failed.” No background job is running.
+
+Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde55`, after CI `37121684879` passed. Retrieved deployed files match the tested source, including both relative modules and the unchanged Deno configuration. The previous v16 safe policy remains in git for rollback. No live visitor message was sent in this follow-up; the actual browser/widget round trip and account recovery gates remain open.
