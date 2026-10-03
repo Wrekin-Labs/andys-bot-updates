@@ -33,6 +33,59 @@ class ReleaseDeviceTest {
         device.executeShellCommand("wm dismiss-keyguard")
     }
 
+    @Test fun recoveryPreservesLiveSessionAndRecoversOnlyOrphan() {
+        val recorder = SessionRecorder(context)
+        recorder.start()
+        val root = File(context.getExternalFilesDir(null) ?: context.filesDir, "SenseVeilSessions")
+        val live = File(root, recorder.currentSessionId!!)
+        val orphan = File(root, "Session_qa_orphan_${System.nanoTime()}").apply { mkdirs() }
+        File(orphan, "session.json").writeText("{\"status\":\"active\"}")
+        try {
+            val recovered = SessionRecovery.recoverInterrupted(context)
+            assertTrue(recovered.names.contains(orphan.name))
+            assertFalse(recovered.names.contains(live.name))
+            assertEquals("active", org.json.JSONObject(File(live, "session.json").readText()).getString("status"))
+            recorder.stop()
+            assertFalse(ActiveSessions.contains(live.name))
+            assertTrue("Closed session remains signed", EvidenceVerifier.verifyBundle(live, true).valid)
+        } finally { recorder.stop(); live.deleteRecursively(); orphan.deleteRecursively() }
+    }
+
+    @Test fun largeTextToolsAndDeviceSupportRemainScrollable() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val original = device.executeShellCommand("settings get system font_scale").trim()
+        try {
+            device.executeShellCommand("settings put system font_scale 2.0")
+            device.waitForIdle()
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { assertTrue("Large font configuration applied", it.resources.configuration.fontScale >= 1.9f) }
+                val tools = device.findObject(UiSelector().text("TOOLS"))
+                assertTrue(tools.waitForExists(10000)); tools.click()
+                val scroll = androidx.test.uiautomator.UiScrollable(UiSelector().scrollable(true))
+                assertTrue(scroll.scrollTextIntoView("DEVICE SUPPORT"))
+                device.waitForIdle()
+                device.takeScreenshot(File(auditDirectory(), "large-text-tools.png"))
+                device.findObject(UiSelector().text("DEVICE SUPPORT").className("android.widget.Button")).click()
+                assertTrue(device.findObject(UiSelector().text("DEVICE SUPPORT").className("android.widget.TextView")).waitForExists(10000))
+                assertTrue(device.findObject(UiSelector().text("CLOSE").className("android.widget.Button")).exists())
+                assertTrue("Report body can scroll", device.findObject(UiSelector().scrollable(true)).exists())
+                device.waitForIdle()
+                device.takeScreenshot(File(auditDirectory(), "large-text-device-support.png"))
+                device.findObject(UiSelector().text("CLOSE").className("android.widget.Button")).click()
+                device.pressBack()
+                assertTrue(device.findObject(UiSelector().text("TOOLS")).waitForExists(10000))
+                device.findObject(UiSelector().text("EVENTS")).click()
+                assertTrue(device.findObject(UiSelector().text("Events")).waitForExists(10000))
+                device.waitForIdle()
+                device.takeScreenshot(File(auditDirectory(), "large-text-events.png"))
+                assertTrue(device.findObject(UiSelector().text("CLOSE").className("android.widget.Button")).exists())
+            }
+        } finally {
+            device.executeShellCommand(if (original == "null" || original.isBlank()) "settings delete system font_scale" else "settings put system font_scale $original")
+            device.waitForIdle()
+        }
+    }
+
     @Test fun poseCoordinatesFollowCameraRotationCropAndScale() {
         val sensorToBuffer = android.graphics.Matrix().apply { setScale(.5f, .5f) }
         val sensorToView = android.graphics.Matrix().apply { setScale(2f, 2f); postTranslate(-20f, 30f) }
@@ -79,6 +132,8 @@ class ReleaseDeviceTest {
             assertTrue("TOOLS button", tools.waitForExists(10000))
             tools.click()
             val screenshots = auditDirectory()
+            assertTrue(device.findObject(UiSelector().textContains("SENSEVEIL TOOLS")).waitForExists(10000))
+            device.waitForIdle()
             device.takeScreenshot(File(screenshots,"tools-top.png"))
             val scroll=androidx.test.uiautomator.UiScrollable(UiSelector().scrollable(true))
             assertTrue("quick start reachable", scroll.scrollTextIntoView("QUICK START"))
@@ -163,6 +218,8 @@ class ReleaseDeviceTest {
                 device.pressBack()
                 device.findObject(UiSelector().text("REVIEW").instance(1)).click()
                 assertTrue(device.findObject(UiSelector().text("EVENT REVIEW")).waitForExists(10000))
+                assertTrue(device.findObject(UiSelector().text("CLOSE").className("android.widget.Button")).waitForExists(10000))
+                device.waitForIdle()
                 device.takeScreenshot(File(auditDirectory(), "event-review.png"))
                 device.pressBack()
                 device.findObject(UiSelector().text("SHARE").instance(1)).click()

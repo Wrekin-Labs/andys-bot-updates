@@ -12,6 +12,7 @@ object SessionRecovery {
         if (!root.exists()) return SessionRecoveryResult(0, emptyList())
         val recovered = mutableListOf<String>()
         root.listFiles()?.filter { it.isDirectory && it.name.startsWith("Session_") }?.forEach { dir ->
+            if (ActiveSessions.contains(dir.name)) return@forEach
             val meta = File(dir, "session.json")
             if (!meta.exists()) return@forEach
             runCatching {

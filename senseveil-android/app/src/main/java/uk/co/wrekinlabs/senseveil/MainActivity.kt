@@ -62,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bufferText: TextView
     private lateinit var captureStatusText: TextView
     private var lastManualCaptureAt = 0L
+    private var cameraReady = false
+    private var cameraProblem: String? = null
     private lateinit var modeButton: Button
     private lateinit var lightButton: Button
     private lateinit var captureButton: Button
@@ -116,8 +118,7 @@ class MainActivity : AppCompatActivity() {
                 startCamera()
                 startRuntimeSensors()
             } else {
-                statusText.text = "CAMERA PERMISSION REQUIRED"
-                detailText.text = "Tap CAPTURE to retry camera permission, or enable it in Android Settings."
+                showCameraPermissionState()
             }
         }
 
@@ -184,13 +185,13 @@ class MainActivity : AppCompatActivity() {
         retentionManager = RetentionManager(this, securityPreferences)
         trustedSignerStore = TrustedSignerStore(this)
         operatorPreferences = OperatorPreferences(this)
-        val recovered = SessionRecovery.recoverInterrupted(this)
-        val retention = retentionManager.run(eventRepository.eventRoot)
         profileStore = ProfileStore(this)
         currentProfile = profileStore.current
         alertPolicyStore = AlertPolicyStore(this)
         alertMode = alertPolicyStore.mode
         sessionRecorder = SessionRecorder(this).also { it.start() }
+        labMode = savedInstanceState?.getBoolean("labMode") ?: false
+        audioMonitoringEnabled = savedInstanceState?.getBoolean("audioMonitoringEnabled") ?: false
         buildUi()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -202,10 +203,17 @@ class MainActivity : AppCompatActivity() {
         if (FirstRunGuide.shouldShow(this)) {
             bufferText.text = "FIRST RUN • OPEN TOOLS → QUICK START"
         }
-        if (recovered.recoveredSessions > 0) {
-            bufferText.text = "RECOVERED ${recovered.recoveredSessions} INTERRUPTED SESSION(S)"
-        } else if (retention.deletedItems > 0) {
-            bufferText.text = "HOUSEKEEPING: ${retention.deletedItems} OLD ITEM(S) REMOVED"
+        // Serialize housekeeping with evidence writes; active capture/session guards
+        // also protect producers that finish after an Activity is recreated.
+        submitIo {
+            val recovered = SessionRecovery.recoverInterrupted(this)
+            val retention = retentionManager.run(eventRepository.eventRoot)
+            runOnUiThread {
+                if (!isDestroyed) {
+                    if (recovered.recoveredSessions > 0) bufferText.text = "RECOVERED ${recovered.recoveredSessions} INTERRUPTED SESSION(S)"
+                    else if (retention.deletedItems > 0) bufferText.text = "HOUSEKEEPING: ${retention.deletedItems} OLD ITEM(S) REMOVED"
+                }
+            }
         }
         createDetectors()
         createSensorEngines()
@@ -223,6 +231,7 @@ class MainActivity : AppCompatActivity() {
             startCamera()
             startRuntimeSensors()
         } else {
+            showCameraPermissionState()
             permissionLauncher.launch(needed.toTypedArray())
         }
     }
@@ -270,10 +279,10 @@ class MainActivity : AppCompatActivity() {
         })
         brandBar.addView(brandCopy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        modeButton = compactButton("FIELD") { toggleLabMode() }
-        brandBar.addView(modeButton, LinearLayout.LayoutParams(dp(70), dp(48)).apply { setMargins(0, 0, dp(4), 0) })
+        modeButton = compactButton(if (labMode) "LAB" else "FIELD") { toggleLabMode() }
+        brandBar.addView(modeButton, LinearLayout.LayoutParams(dp(if (resources.configuration.fontScale >= 1.3f) 86 else 70), ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, dp(4), 0) })
         val toolsButton = compactButton("TOOLS") { showToolsPanel() }
-        brandBar.addView(toolsButton, LinearLayout.LayoutParams(dp(70), dp(48)))
+        brandBar.addView(toolsButton, LinearLayout.LayoutParams(dp(if (resources.configuration.fontScale >= 1.3f) 86 else 70), ViewGroup.LayoutParams.WRAP_CONTENT))
 
         root.addView(
             brandBar,
@@ -350,7 +359,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         captureStatusText = TextView(this).apply {
-            text = CaptureProgress.summary()
+            text = "Starting camera…"
             textSize = 12f
             setTextColor(Brand.GREEN)
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -361,15 +370,18 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
         }
         captureButton = compactButton("CAPTURE") {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestNeededPermissions()
-            else captureEvent("manual", latestDetection, false)
+            when {
+                !hasCameraPermission() -> showCameraAccess()
+                cameraProblem != null -> recreate()
+                cameraReady -> captureEvent("manual", latestDetection, false)
+            }
         }
         val events = compactButton("EVENTS") { showHistory() }
         lightButton = compactButton("LIGHT") { toggleTorch() }
         val wall = compactButton("RADAR") { showRadarInfo() }
 
         listOf(captureButton, events, lightButton, wall).forEach {
-            buttonRow.addView(it, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+            buttonRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
         }
 
         val disclaimer = TextView(this).apply {
@@ -445,6 +457,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun startCamera() {
         if (::cameraController.isInitialized) return
+        cameraReady = false
+        cameraProblem = null
+        refreshCaptureStatus()
 
         cameraController = LifecycleCameraController(this).apply {
             cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -589,9 +604,7 @@ class MainActivity : AppCompatActivity() {
             videoEnabled = false
             cameraController.setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.IMAGE_ANALYSIS)
             try { cameraController.bindToLifecycle(this) } catch (error: Exception) {
-                statusText.text = "CAMERA UNAVAILABLE"
-                detailText.text = "Close other camera apps and reopen SenseVeil."
-                bufferText.text = error.message ?: "Camera could not start"
+                showCameraFailure(error)
                 return
             }
         }
@@ -607,7 +620,8 @@ class MainActivity : AppCompatActivity() {
                     cameraController.bindToLifecycle(this)
                 }
                 check(cameraController.cameraInfo != null) { "Camera provider is unavailable" }
-                captureButton.isEnabled = true
+                cameraReady = true
+                refreshCaptureStatus()
                 statusText.text = "SCANNING"
                 detailText.text = "VISION ONLINE • SENSOR BASELINE LEARNING"
                 if (videoEnabled) {
@@ -619,9 +633,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 } else bufferText.text = "EVENT BUFFER: DEVICE COMBINATION UNSUPPORTED"
             } catch (error: Exception) {
-                statusText.text = "CAMERA UNAVAILABLE"
-                detailText.text = "Close other camera apps and reopen SenseVeil."
-                bufferText.text = error.message ?: "Camera could not start"
+                showCameraFailure(error)
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -663,7 +675,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateSensorText(s: SensorSnapshot) {
-        captureStatusText.text = CaptureProgress.summary()
+        refreshCaptureStatus()
         fun f(value: Float?, suffix: String, digits: Int = 0): String =
             value?.let { if (digits == 1) "%.1f%s".format(it, suffix) else "%.0f%s".format(it, suffix) } ?: "--"
 
@@ -694,7 +706,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun captureEvent(reason: String, state: DetectionState, automatic: Boolean) {
-        if (!::cameraController.isInitialized) return
+        if (!cameraReady || !hasCameraPermission() || !::cameraController.isInitialized) return
         val now = SystemClock.elapsedRealtime()
         if (!automatic && now - lastManualCaptureAt < 900L) return
         if (!automatic) lastManualCaptureAt = now
@@ -704,10 +716,12 @@ class MainActivity : AppCompatActivity() {
             val interruptionGeneration = captureInterruptionGeneration
             val captureSessionId = sessionRecorder.currentSessionId
             val captureEpochMs = System.currentTimeMillis()
+            val capturedSensors = sensorSnapshot
+            val capturedProfile = currentProfile.label
             val bundle = eventRepository.createEventBundle(reason)
             pendingBundleName = bundle.name
             CaptureProgress.started(bundle.name)
-            captureStatusText.text = CaptureProgress.summary()
+            refreshCaptureStatus()
             val completion = CaptureCompletion { videoStatus ->
                 submitIo {
                     try {
@@ -720,7 +734,7 @@ class MainActivity : AppCompatActivity() {
                     EvidenceIntegrity.refreshManifest(bundle, Brand.VERSION)
                     EvidenceSigner.signIntegrityManifest(bundle)
                     CaptureProgress.sealed(bundle.name)
-                    runOnUiThread { if (!isDestroyed) captureStatusText.text = CaptureProgress.summary() }
+                    runOnUiThread { if (!isDestroyed) refreshCaptureStatus() }
                     } catch (error: Exception) {
                         CaptureProgress.failed(bundle.name)
                         throw error
@@ -742,7 +756,7 @@ class MainActivity : AppCompatActivity() {
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                         try {
-                            val s = sensorSnapshot
+                            val s = capturedSensors
                             val event = ScanEvent(
                                 timestampEpochMs = captureEpochMs,
                                 type = reason,
@@ -755,7 +769,7 @@ class MainActivity : AppCompatActivity() {
                                 audioDbfs = s.audioDbfs,
                                 note = if (automatic) "automatic detector-disagreement capture" else "manual capture",
                                 anomalyReason = state.anomalyReason,
-                                profile = currentProfile.label,
+                                profile = capturedProfile,
                                 bundleName = bundle.name,
                                 sceneQualityPercent = (state.sceneQuality.score * 100f).roundToInt(),
                                 consensusRatio = state.consensusRatio,
@@ -783,7 +797,7 @@ class MainActivity : AppCompatActivity() {
                                     runOnUiThread { if (!isDestroyed) bufferText.text = "CAPTURE INCOMPLETE: ${error.message}" }
                                 }
                             }, 10_500L, java.util.concurrent.TimeUnit.MILLISECONDS)
-                            runOnUiThread { if (!isDestroyed) captureStatusText.text = CaptureProgress.summary() }
+                            runOnUiThread { if (!isDestroyed) refreshCaptureStatus() }
                         } catch (error: Exception) {
                             completion.fail()
                             CaptureProgress.failed(bundle.name)
@@ -865,7 +879,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         fun toolButton(label: String, action: () -> Unit) {
-            panel.addView(compactButton(label) { action() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+            panel.addView(compactButton(label) { action() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(0, dp(3), 0, dp(3))
             })
         }
@@ -995,35 +1009,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showDeviceSupport() {
-        val report = DeviceCapabilities.inspect(this).asText()
-        val root = findViewById<ViewGroup>(android.R.id.content)
-        val shade = FrameLayout(this).apply { setBackgroundColor(0xE6000000.toInt()) }
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(16))
-            background = roundedPanel(0xFF10161D.toInt())
-        }
-        panel.addView(TextView(this).apply {
-            text = "DEVICE SUPPORT"
-            setTextColor(Brand.CYAN)
-            textSize = 18f
-            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
-        })
-        panel.addView(TextView(this).apply {
-            text = report
-            setTextColor(0xFFD7E7ED.toInt())
-            textSize = 12f
-            setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
-            setPadding(0, dp(10), 0, dp(12))
-        })
-        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
-        shade.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.CENTER
-            setMargins(dp(18), dp(40), dp(18), dp(40))
-        })
-        root.addView(shade, matchParent())
+        showTextPanel("DEVICE SUPPORT", DeviceCapabilities.inspect(this).asText())
     }
-
 
     private fun showDeviceHealth() {
         val health = DeviceHealthMonitor.inspect(this, eventRepository.eventRoot)
@@ -1167,7 +1154,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(body)
         val scroll = ScrollView(this).apply { addView(content) }
         panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         shade.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
             gravity = Gravity.CENTER
             setMargins(dp(18), dp(50), dp(18), dp(50))
@@ -1353,8 +1340,65 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
+    private fun hasCameraPermission() = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    private fun refreshCaptureStatus() {
+        if (!::captureButton.isInitialized) return
+        val allowed = hasCameraPermission()
+        val caption = when { !allowed -> "CAMERA ACCESS"; cameraProblem != null -> "RETRY"; else -> "CAPTURE" }
+        if (captureButton.text.toString() != caption) captureButton.text = caption
+        captureButton.isEnabled = !allowed || cameraProblem != null || cameraReady
+        val message = when {
+            CaptureProgress.hasPending() -> CaptureProgress.summary()
+            !allowed -> "Camera access needed • saved events remain available"
+            cameraProblem != null -> "Camera unavailable • tap Retry"
+            !cameraReady -> "Starting camera…"
+            else -> CaptureProgress.summary()
+        }
+        if (captureStatusText.text.toString() != message) captureStatusText.text = message
+    }
+
+    private fun showCameraPermissionState() {
+        cameraReady = false
+        statusText.text = "CAMERA PERMISSION REQUIRED"
+        detailText.text = "Tap CAMERA ACCESS to retry or open app settings. Saved events and Tools remain available."
+        refreshCaptureStatus()
+    }
+
+    private fun showCameraFailure(error: Exception) {
+        cameraReady = false
+        cameraProblem = error.message ?: "Camera could not start"
+        statusText.text = "CAMERA UNAVAILABLE"
+        detailText.text = "Close other camera apps, then tap Retry."
+        bufferText.text = cameraProblem
+        refreshCaptureStatus()
+    }
+
+    private fun showCameraAccess() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Camera access")
+            .setMessage("Allow camera access for live scanning and captures. You can still review saved events without it. If Android no longer asks, open Settings → Permissions → Camera.")
+            .setPositiveButton("Try again") { _, _ -> requestNeededPermissions() }
+            .setNeutralButton("Open settings") { _, _ ->
+                startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", packageName, null)))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("labMode", labMode)
+        outState.putBoolean("audioMonitoringEnabled", audioMonitoringEnabled)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onResume() {
         super.onResume()
+        if (::captureButton.isInitialized) {
+            if (hasCameraPermission()) startCamera() else showCameraPermissionState()
+            refreshCaptureStatus()
+        }
         if (::sensorFusion.isInitialized) sensorFusion.start()
         if (::audioMonitor.isInitialized && audioMonitoringEnabled) audioMonitor.start()
         rollingBuffer?.start()

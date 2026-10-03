@@ -33,6 +33,7 @@ class SessionRecorder(private val context: Context) {
         previousChainHash = SessionChain.GENESIS
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.UK).format(Date(startedEpochMs))
         sessionDir = File(root, "Session_${stamp}_${java.util.UUID.randomUUID().toString().take(8)}").apply { mkdirs() }
+        ActiveSessions.opened(sessionDir!!.name)
         timelineFile = File(sessionDir, "timeline.jsonl")
         writeJsonAtomically(
             File(sessionDir, "session.json"),
@@ -113,6 +114,7 @@ class SessionRecorder(private val context: Context) {
     fun stop() {
         val dir = sessionDir ?: return
         stopped = true
+        try {
         val ended = System.currentTimeMillis()
         writeJsonAtomically(
             File(dir, "session.json"),
@@ -138,6 +140,9 @@ class SessionRecorder(private val context: Context) {
         anomalyCount = 0
         lastWriteElapsedMs = 0L
         previousChainHash = SessionChain.GENESIS
+        } finally {
+            ActiveSessions.closed(dir.name)
+        }
     }
 
     fun recentSessions(): List<String> = root.listFiles().orEmpty()

@@ -8,6 +8,7 @@ object CaptureProgress {
     fun sealed(name: String) { pending.remove(name); lastMessage = "Evidence sealed • open Events to verify" }
     fun failed(name: String) { pending.remove(name); lastMessage = "Capture incomplete • check Events" }
     fun isPending(name: String) = pending.contains(name)
+    fun hasPending() = pending.isNotEmpty()
     fun summary(): String = if (pending.isEmpty()) lastMessage else
         "Saving ${pending.size} capture${if (pending.size == 1) "" else "s"} • sealing may take 30s"
 }

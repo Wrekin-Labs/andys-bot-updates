@@ -44,7 +44,7 @@ class EvidenceHistoryView(
         panel.addView(controls)
         panel.addView(ScrollView(context).apply { addView(cards); isFillViewport = true },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        panel.addView(button("CLOSE") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        panel.addView(button("CLOSE") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(panel, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
             setMargins(dp(12), dp(28), dp(12), dp(24))
         })
@@ -114,7 +114,7 @@ class EvidenceHistoryView(
         setPadding(dp(3), dp(4), dp(3), dp(4)); setTextColor(Brand.CYAN)
         background = surface(0xFF101820.toInt()); setOnClickListener { action() }
     }
-    private fun weighted() = LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) }
+    private fun weighted() = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) }
     private fun surface(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(12).toFloat(); setStroke(dp(1), 0x4456DDEB) }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     override fun onAttachedToWindow() { super.onAttachedToWindow(); post(ticker) }
