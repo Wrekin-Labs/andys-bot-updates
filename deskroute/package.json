@@ -1,1 +1,14 @@
-{"name":"deskroute","private":true,"version":"6.1.0-rc.1","type":"module","scripts":{"test":"node --test tests/api.test.mjs","check":"node --check control-panel/app.js && node --check control-panel/api.js && node --check control-panel/help/help.js && node --check control-panel/sw.js","test:browser":"node tests/browser.mjs"}}
+{
+  "name": "deskroute",
+  "private": true,
+  "version": "6.1.0-rc.1",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/api.test.mjs",
+    "check": "node --check control-panel/app.js && node --check control-panel/api.js && node --check control-panel/help/help.js && node --check control-panel/sw.js",
+    "test:browser": "node tests/browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}
