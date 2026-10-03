@@ -21,6 +21,7 @@ jobs:
           python-version: '3.12'
       - run: npm --prefix deskroute run check
       - run: node deskroute/tests/api.test.mjs
+      - run: node deskroute/tests/recovery.test.mjs
       - run: node deskroute/tests/answer-policy.test.mjs
       - run: node deskroute/tests/widget-handler.test.mjs
       - run: python deskroute/scripts/build_site.py

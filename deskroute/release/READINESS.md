@@ -67,3 +67,10 @@ Website chat is the release reply path. Do not advertise paid checkout, other pr
 ## Production protection
 
 The existing Smash Room widget asset and WordPress installation are unchanged; its backend now runs the verified v16 safety fix. ERUK remains staged/off. One named DeskRoute release QA conversation was created during the explicitly requested live website tests and retained as review evidence. Do not deploy the synthetic demo as the production control panel. Existing Home-PC uncommitted changes are preserved in their original checkout.
+
+## Account access follow-up
+
+- Built a dedicated set/reset password page for existing accounts, linked from desktop and phone sign-in. Recovery tokens are stripped from the URL before use, validated server-side, kept in memory and cleared when leaving or after a successful update. No account or membership is created.
+- Added eight recovery API regressions and two sign-in error/race tests: all pass locally. The total API/policy/handler coverage is now 32 cases. Browser recovery and mobile offline-shell tests are added to CI; their result is pending for this source revision.
+- Fixed stale service-worker references to deleted navigation assets, which prevented the public-shell cache installing. The asset checker now verifies the cache list. Recovery pages/tokens remain outside the cache.
+- Deployment gate for live recovery: confirm the exact `/password.html` callback in Supabase Auth redirect settings, email-template compatibility and SMTP delivery. No recovery email has been sent, no password has been changed, and owner access is not yet restored. Browser credential protection prevented further dashboard inspection during this session.

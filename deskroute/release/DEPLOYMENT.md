@@ -30,3 +30,9 @@ When no grounded provider is available, all automatic answers require human revi
 To roll back the preview, redeploy its prior successful deployment and restore the saved prior configuration. The additive database functions can remain in place for an interface rollback; do not drop schema/functions during an incident. Restoring the old panel does not require deleting customer data.
 
 Before public release: complete READINESS.md gates, confirm commercial terms/contact, verify staff/visitor flows with isolated test data, record the release commit and keep the last working panel/widget URLs available. Publish the production panel from `deskroute/control-panel`, not the synthetic preview directory.
+
+## Account recovery activation
+
+The dedicated callback is `https://deskroute-ai-v6-preview.onrender.com/password.html`. Before requesting a real email, confirm that exact URL is in Supabase Auth's redirect allow-list and that the recovery email template uses the provider confirmation URL. Do not add a wildcard or change the shared project's Site URL without checking its other applications. Verify SMTP configuration and delivery to the existing workspace owner. The page handles the default client-only recovery fragment, validates its access token with Auth, removes it from browser history, updates only the current user's password and ends its local recovery session. It never creates accounts or grants memberships.
+
+The account owner must choose and enter their own new password. Do not place recovery URLs, access tokens or passwords in source, reports or chat. A generic successful recovery request does not prove delivery or that an account exists. Record the real desktop/phone sign-in and staff-to-widget tests separately after recovery.

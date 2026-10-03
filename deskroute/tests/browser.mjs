@@ -52,6 +52,24 @@ try{
  await page.setViewportSize({width:1440,height:1000});await page.goto(base+'/site/');await page.getByRole('heading',{name:'Clear answers. A calmer inbox.'}).waitFor();await page.screenshot({path:output+'/03-website-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/04-website-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);checks.push('Website desktop/mobile');
  await page.goto(base+'/site/docs/');await page.getByRole('heading',{name:'Your first successful handoff'}).waitFor();checks.push('Documentation accessible');
+ // Real recovery page, isolated synthetic auth responses. No email or live credential request.
+ const authCalls=[];
+ await context.route('**/auth/v1/**',async route=>{
+  const request=route.request(),url=new URL(request.url());const reply=options=>route.fulfill({...options,headers:{'access-control-allow-origin':base,'access-control-allow-methods':'GET,POST,PUT,OPTIONS','access-control-allow-headers':'apikey,content-type,authorization'}});if(request.method()==='OPTIONS'){await reply({status:204,body:''});return;}authCalls.push({path:url.pathname,method:request.method()});
+  if(url.pathname==='/auth/v1/recover'){assert.equal(url.searchParams.get('redirect_to'),base+'/password.html');await reply({json:{}});return;}
+  if(url.pathname==='/auth/v1/user'&&request.method()==='GET'){await reply(request.headers().authorization==='Bearer synthetic-expired'?{status:401,json:{message:'Expired'}}:{json:{id:'synthetic-user',email:'owner@example.com'}});return;}
+  if(url.pathname==='/auth/v1/user'&&request.method()==='PUT'){assert.deepEqual(request.postDataJSON(),{password:'Synthetic-password-42'});await reply({json:{id:'synthetic-user',email:'owner@example.com'}});return;}
+  if(url.pathname==='/auth/v1/logout'){await reply({status:204,body:''});return;}
+  throw new Error('Unexpected synthetic auth route: '+url.pathname);
+ });
+ for(const width of [390,1440]){
+  await page.setViewportSize({width,height:900});await page.goto(base+'/');await page.getByRole('link',{name:'Set or reset your password',exact:true}).click();await page.getByRole('textbox',{name:'Account email',exact:true}).fill('owner@example.com');await page.getByRole('button',{name:'Send recovery link',exact:true}).click();await page.getByText(/If this email belongs to an existing DeskRoute account/).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);checks.push('Recovery request and responsive layout at '+width+'px');
+ }
+ await page.goto(base+'/password.html#type=recovery&access_token=synthetic-expired');await page.getByText('This recovery link is incomplete or has expired. Request a new link below.',{exact:true}).waitFor();assert.equal(new URL(page.url()).hash,'');assert.equal(await page.getByRole('button',{name:'Save password',exact:true}).isVisible(),false);checks.push('Expired recovery link is cleared and rejected');
+ await page.setViewportSize({width:390,height:900});await page.goto(base+'/password.html#type=recovery&access_token=synthetic-valid');await page.getByRole('heading',{name:'Choose your password',exact:true}).waitFor();assert.equal(new URL(page.url()).hash,'');assert.equal(await page.evaluate(()=>localStorage.getItem('drs')),null);assert.equal(await page.getByRole('link',{name:'Back to sign in',exact:true}).getAttribute('href'),'./');
+ await page.getByRole('textbox',{name:'New password',exact:true}).fill('Synthetic-password-42');await page.getByRole('textbox',{name:'Confirm new password',exact:true}).fill('Synthetic-mismatch-42');await page.getByRole('button',{name:'Save password',exact:true}).click();await page.getByText('The passwords do not match. Enter them again.',{exact:true}).waitFor();assert.equal(authCalls.filter(c=>c.method==='PUT').length,0);
+ await page.getByRole('textbox',{name:'New password',exact:true}).fill('Synthetic-password-42');await page.getByRole('textbox',{name:'Confirm new password',exact:true}).fill('Synthetic-password-42');await page.getByRole('button',{name:'Save password',exact:true}).click();await page.getByText('Password updated. You can now return to sign in on your desktop or phone.',{exact:true}).waitFor();assert.equal(authCalls.filter(c=>c.method==='PUT').length,1);await page.screenshot({path:output+'/10-recovery-mobile.png',fullPage:true});checks.push('Validated recovery, mismatch guard, password save and session cleanup');
  let widgetMessages=[];
  await context.route('**/qa/widget-api*',async route=>{
   if(route.request().method()==='POST'){const body=route.request().postDataJSON();widgetMessages=[{direction:'inbound',author_type:'customer',body:body.message,created_at:new Date().toISOString()},{direction:'outbound',author_type:'ai',body:'This is the synthetic widget answer.',created_at:new Date().toISOString()}];await route.fulfill({json:{conversationId:'synthetic-widget-conversation',answer:widgetMessages[1].body,needsHuman:false}});}
@@ -66,6 +84,9 @@ try{
   await page.getByRole('textbox',{name:'How can we help?',exact:true}).press('Escape');await page.getByRole('dialog',{name:'Support chat'}).waitFor({state:'hidden'});assert.equal(await page.getByRole('button',{name:'Open support chat'}).evaluate(el=>el.getRootNode().activeElement===el),true);
   await page.getByRole('button',{name:'Open support chat'}).click();await page.getByText('This is the synthetic widget answer.',{exact:true}).waitFor();checks.push(`Widget opens, sends, receives, fits and restores focus at ${width}px`);
  }
+ const offlineContext=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'allow'});
+ const offlinePage=await offlineContext.newPage();await offlinePage.goto(base+'/');await offlinePage.waitForFunction(()=>!!navigator.serviceWorker.controller);
+ await offlineContext.setOffline(true);await offlinePage.reload();await offlinePage.getByRole('heading',{name:'Welcome back',exact:true}).waitFor();await offlinePage.getByText('Use the same account on desktop, phone and tablet.',{exact:true}).waitFor();assert.equal(await offlinePage.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await offlineContext.close();checks.push('PWA public shell installs and loads offline on mobile width');
  assert.deepEqual(errors,[]);
  await writeFile(resolve(output,'../browser-results.json'),JSON.stringify({time:new Date().toISOString(),scope:'Synthetic preview only; no live delivery/auth assertion',checks},null,2));console.log('PASS: '+checks.length+' browser checks');
 }finally{await browser?.close();await new Promise(r=>server.close(r));}

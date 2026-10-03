@@ -2,6 +2,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit,unquote
 import xml.etree.ElementTree as ET
+import ast,re
 base=Path(__file__).resolve().parents[1]/'control-panel'
 errors=[];count=0
 class Links(HTMLParser):
@@ -30,5 +31,12 @@ for asset in (base/'assets').glob('*.svg'):
   errors.append(f'{asset.name}: invalid SVG')
 for asset in (base/'assets').glob('*.woff2'):
  if asset.read_bytes()[:4] != b'wOF2':errors.append(f'{asset.name}: invalid font')
+cache_match=re.search(r'const ASSETS=(\[.*?\]);',(base/'sw.js').read_text())
+if not cache_match:errors.append('sw.js: public shell asset list missing')
+else:
+ for cached in ast.literal_eval(cache_match.group(1)):
+  target=base/cached
+  if target.is_dir():target=target/'index.html'
+  if not target.is_file():errors.append(f'sw.js: missing cache asset {cached}')
 if errors:raise SystemExit('\n'.join(errors))
 print(f'PASS: local links and assets in {count} HTML pages')

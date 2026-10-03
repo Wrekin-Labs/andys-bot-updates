@@ -16,8 +16,13 @@ export class DeskRouteAPI {
     return data;
   }
   async login(email, password) {
-    const data = await this.decode(await this.fetcher(`${API_URL}/auth/v1/token?grant_type=password`, { method: 'POST', headers: { apikey: PUBLIC_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }));
-    this.epoch++; this.save(data); return data;
+    const epoch = ++this.epoch;
+    let response;
+    try { response = await this.fetcher(`${API_URL}/auth/v1/token?grant_type=password`, { method: 'POST', headers: { apikey: PUBLIC_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }), signal: AbortSignal.timeout(15000) }); }
+    catch { throw new ApiError('We could not reach the sign-in service. Check your connection and try again.'); }
+    const data = await this.decode(response);
+    if (epoch !== this.epoch) throw new ApiError('Session changed. Please sign in again.', 401);
+    this.save(data); return data;
   }
   async refresh() {
     if (this.refreshPromise) return this.refreshPromise;
