@@ -4,7 +4,7 @@
   "version": "6.1.0-rc.1",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/api.test.mjs tests/answer-policy.test.mjs tests/widget-handler.test.mjs tests/recovery.test.mjs tests/dated-knowledge.test.mjs",
+    "test": "node --test tests/api.test.mjs tests/answer-policy.test.mjs tests/widget-handler.test.mjs tests/recovery.test.mjs tests/dated-knowledge.test.mjs tests/onboard-handler.test.mjs",
     "check": "node --check control-panel/app.js && node --check control-panel/api.js && node --check control-panel/help/help.js && node --check control-panel/sw.js && node --check widget/deskroute-widget.js && node --check control-panel/recovery-api.js && node --check control-panel/recovery.js && node --check backend/dated-knowledge.js",
     "test:browser": "node tests/browser.mjs"
   },

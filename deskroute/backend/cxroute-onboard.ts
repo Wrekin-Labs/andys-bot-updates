@@ -29,7 +29,8 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
 
   const body = await req.json().catch(()=>null) as Body|null;
   const action = String(body?.action || "create");
-  const userId = ctx.userClaims?.sub;
+  // withSupabase exposes the verified JWT subject as userClaims.id.
+  const userId = ctx.userClaims?.id;
   if (!userId) return Response.json({error:"Unauthorised"},{status:401});
 
   if (action === "me") {
