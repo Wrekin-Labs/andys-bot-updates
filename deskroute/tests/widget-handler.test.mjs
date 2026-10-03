@@ -8,10 +8,10 @@ import {webcrypto} from 'node:crypto';
 import {canSendAutomatically} from '../backend/answer-policy.js';
 import {questionDate,datedKnowledge} from '../backend/dated-knowledge.js';
 const source=stripTypeScriptTypes((await readFile(new URL('../backend/cxroute-widget-chat.ts',import.meta.url),'utf8')).replace(/^import .*;\s*$/gm,''));
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[]}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true}={}){
  const writes=[],calls=[];let handler;
- const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:'qa-agent',tags:[]};
- const records={cxroute_knowledge_facts:datedFacts,cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example']},cxroute_channel_ai_policies:{enabled:true,mode:'automatic',min_confidence:.9},cxroute_conversations:conversation,cxroute_org_members:{user_id:'qa-agent',role:'owner'}};
+ const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:[]};
+ const records={cxroute_knowledge_facts:knowledgeFacts,cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example']},cxroute_channel_ai_policies:{enabled:true,mode:'automatic',min_confidence:.9},cxroute_conversations:conversation,cxroute_org_members:{user_id:'qa-agent',role:'owner'}};
  const admin={
   from(table){
    let operation='read',body;
@@ -38,7 +38,18 @@ for(const [question,fact] of [['What is the rehearsal room price from 1 November
   assert.ok(r.writes.filter(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound').every(w=>w.body.author_type==='system'&&w.body.body!==fact.fact_value));
  });
 }
-test('AI outage keeps a related fact private and routes to review',async()=>{const r=await exercise('What is the price?',[price],{provider:'failure'});assert.equal(r.body.needsHuman,true);assert.notEqual(r.body.answer,price.fact_value);});
+test('AI outage still answers a strong customer-safe approved fact',async()=>{const r=await exercise('What is the price?',[price],{provider:'failure'});assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.body===price.fact_value));});
+const recording={id:'recording',organisation_id:'qa-org',brand_id:'qa-brand',review_status:'approved',fact_key:'recording_bookings_status',fact_value:'Recording studio bookings are currently paused.',category:'services',confidence:.99,valid_from:null,valid_until:null};
+test('recording question falls back to approved brand knowledge when search RPC misses it',async()=>{
+ const r=await exercise('What days do u do recording',[],{knowledgeFacts:[recording]});
+ assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,recording.fact_value);assert.equal(r.body.source?.factId,'recording');
+ assert.ok(r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.body===recording.fact_value));
+});
+test('first human handoff creates a staff notification',async()=>{
+ const r=await exercise('Is a lift available?',[],{assigned:false});
+ assert.equal(r.body.needsHuman,true);assert.equal(r.body.assignedUserId,'qa-agent');
+ assert.ok(r.writes.some(w=>w.table==='cxroute_staff_notifications'&&w.body.user_id==='qa-agent'));
+});
 test('unknown question with no approved facts creates a gap and human assignment',async()=>{const r=await exercise('Is a lift available?',[]);assert.equal(r.body.needsHuman,true);assert.equal(r.body.knowledgeGapId,'qa-gap');assert.equal(r.body.assignedUserId,'qa-agent');});
 test('validated grounded answer still reaches the visitor',async()=>{const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};const r=await exercise('What is the current price?',[price],{provider:'ready',reply});assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.author_type==='ai'));});
 

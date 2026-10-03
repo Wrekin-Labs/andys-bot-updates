@@ -238,6 +238,80 @@ async function groundedReply(
   };
 }
 
+
+const fallbackStop=new Set([
+  "what","when","where","which","who","why","how","the","and","are","was","were",
+  "this","that","with","from","for","you","your","our","can","could","would","please",
+  "tell","about","have","has","does","into","there","need","want","know","hire","hiring",
+  "days","day","do","did"
+]);
+
+function fallbackRelevance(question:string,row:any){
+  const raw=String(question||"").toLowerCase();
+  const words=[...new Set((raw.match(/[a-z0-9]+/g)||[])
+    .filter((x:string)=>x.length>=3&&!fallbackStop.has(x)))];
+  const key=String(row?.fact_key||"").toLowerCase().replaceAll("_"," ");
+  const category=String(row?.category||"").toLowerCase().replaceAll("_"," ");
+  const value=String(row?.fact_value||"").toLowerCase();
+  const hay=`${key} ${category} ${value}`;
+  const wordQ=` ${raw.replace(/[^a-z0-9]+/g," ").trim()} `;
+  const overlap=words.filter((x:string)=>hay.includes(x)).length;
+  let bonus=0;
+
+  if(
+    (wordQ.includes(" recording ")||wordQ.includes(" record ")||wordQ.includes(" studio "))&&
+    (key.includes("record")||value.includes("recording")||value.includes("studio"))
+  ) bonus+=0.70;
+
+  if(
+    (wordQ.includes(" rehearsal ")||wordQ.includes(" rehearsals "))&&
+    (key.includes("rehearsal")||value.includes("rehearsal"))
+  ) bonus+=0.55;
+
+  if(
+    (wordQ.includes(" booking ")||wordQ.includes(" bookings ")||wordQ.includes(" book "))&&
+    (category==="booking"||key.includes("booking"))
+  ) bonus+=0.35;
+
+  return Math.min(1.5,Math.min(0.40,0.08*overlap)+bonus);
+}
+
+function directFactIsCustomerSafe(fact:any){
+  const key=String(fact?.fact_key||"").toLowerCase();
+  const value=String(fact?.fact_value||"").toLowerCase();
+  if(key.includes("guard")||key.includes("internal")||key==="booking_confirmation_rule")return false;
+  if(value.includes("deskroute may")||value.includes("must not claim")||value.includes("internal instruction"))return false;
+  return true;
+}
+
+async function fallbackApprovedFacts(admin:any,config:any,question:string){
+  const result=await admin
+    .from("cxroute_knowledge_facts")
+    .select("id,organisation_id,brand_id,review_status,fact_key,fact_value,category,confidence,valid_from,valid_until")
+    .eq("organisation_id",config.organisation_id)
+    .eq("brand_id",config.brand_id)
+    .eq("review_status","approved")
+    .limit(200);
+
+  if(result.error)return {data:[],error:result.error};
+
+  const now=Date.now();
+  const rows=(Array.isArray(result.data)?result.data:[])
+    .filter((row:any)=>
+      String(row.organisation_id||"")===String(config.organisation_id)&&
+      String(row.brand_id||"")===String(config.brand_id)&&
+      String(row.review_status||"")==="approved"&&
+      (row.valid_from==null||Date.parse(String(row.valid_from))<=now)&&
+      (row.valid_until==null||Date.parse(String(row.valid_until))>now)
+    )
+    .map((row:any)=>({...row,relevance:fallbackRelevance(question,row)}))
+    .filter((row:any)=>Number(row.relevance)>=0.25)
+    .sort((a:any,b:any)=>Number(b.relevance)-Number(a.relevance)||Number(b.confidence||0)-Number(a.confidence||0))
+    .slice(0,8);
+
+  return {data:rows,error:null};
+}
+
 Deno.serve(async(req:Request)=>{
   const origin=req.headers.get("origin")||"*";
 
@@ -626,6 +700,23 @@ Deno.serve(async(req:Request)=>{
       );
     }
 
+    if(
+      !matches.length&&
+      config.brand_id&&
+      !dateContext.date&&
+      !dateContext.requiresHuman
+    ){
+      const fallback=await fallbackApprovedFacts(admin,config,message);
+      if(fallback.error){
+        return json(
+          {error:"Knowledge search failed"},
+          500,
+          origin
+        );
+      }
+      matches=fallback.data;
+    }
+
     const evidence:Evidence[]=
       matches
         .filter(
@@ -820,7 +911,16 @@ Deno.serve(async(req:Request)=>{
     }
 
     if(!llm&&!llmError)llmError=datedSearchIncomplete?"dated_knowledge_incomplete":dateContext.requiresHuman?"dated_answer_requires_review":"grounding_not_available";
-    const automaticAllowed=!dateContext.requiresHuman&&canSendAutomatically(aiMode,llm,minConfidence,relevance);
+    const modelAutomaticAllowed=!dateContext.requiresHuman&&canSendAutomatically(aiMode,llm,minConfidence,relevance);
+    const directAutomaticAllowed=
+      !dateContext.requiresHuman&&
+      aiMode==="automatic"&&
+      !llm&&
+      Boolean(best)&&
+      directFactIsCustomerSafe(best)&&
+      factConfidence>=Math.max(0.9,minConfidence)&&
+      relevance>=0.55;
+    const automaticAllowed=modelAutomaticAllowed||directAutomaticAllowed;
 
     let answer="";
     let needsHuman=true;
@@ -830,11 +930,22 @@ Deno.serve(async(req:Request)=>{
     let usedFactIds:string[]=[];
 
     if(automaticAllowed){
-      answer=String(llm?.answer||"");
-      usedFactIds=llm?.used_fact_ids||[];
+      answer=String(
+        llm?.answer||
+        best?.fact_value||
+        ""
+      );
+      usedFactIds=
+        llm?.used_fact_ids?.length
+          ?llm.used_fact_ids
+          :best
+            ?[best.id]
+            :[];
 
       needsHuman=false;
-      auditAction="widget_grounded_ai_answered";
+      auditAction=llm
+        ?"widget_grounded_ai_answered"
+        :"widget_approved_fact_answered";
 
       await admin
         .from("cxroute_messages")
@@ -845,7 +956,7 @@ Deno.serve(async(req:Request)=>{
             conversationId,
           direction:"outbound",
           body:answer,
-          author_type:"ai"
+          author_type:llm?"ai":"system"
         });
     }else if(
       hasUsableFact||
@@ -1004,18 +1115,16 @@ Deno.serve(async(req:Request)=>{
             .eq("id",conversationId)
             .eq("organisation_id",config.organisation_id);
 
-          if(currentAssigned){
-            await admin
-              .from("cxroute_staff_notifications")
-              .insert({
-                organisation_id:config.organisation_id,
-                user_id:targetUserId,
-                conversation_id:conversationId,
-                kind:"system",
-                title:"DeskRoute needs a human reply",
-                body_preview:message.slice(0,180)
-              });
-          }
+          await admin
+            .from("cxroute_staff_notifications")
+            .insert({
+              organisation_id:config.organisation_id,
+              user_id:targetUserId,
+              conversation_id:conversationId,
+              kind:"system",
+              title:"DeskRoute needs a human reply",
+              body_preview:message.slice(0,180)
+            });
         }
       }catch(error){
         console.error("cxroute-human-fallback",error);
@@ -1039,7 +1148,7 @@ Deno.serve(async(req:Request)=>{
         organisation_id:
           config.organisation_id,
         actor_type:
-          automaticAllowed
+          modelAutomaticAllowed
             ?"ai"
             :"system",
         action:auditAction,
