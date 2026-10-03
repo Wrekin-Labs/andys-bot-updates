@@ -460,20 +460,22 @@ class MainActivity : AppCompatActivity() {
             cameraController.setEnabledUseCases(CameraController.IMAGE_CAPTURE or CameraController.IMAGE_ANALYSIS)
         }
 
+        val poseProjection = PoseProjection()
         cameraController.setImageAnalysisAnalyzer(
             analysisExecutor,
-            MlKitAnalyzer(
+            poseProjection.wrap(MlKitAnalyzer(
                 listOf(poseDetector, faceDetector, objectDetector),
                 ImageAnalysis.COORDINATE_SYSTEM_VIEW_REFERENCED,
                 analysisExecutor
             ) analyze@ { result ->
                 if (analysisClosed) return@analyze
-                val pose = result.getValue(poseDetector)
+                val rawPose = result.getValue(poseDetector)
+                val pose = poseProjection.project(rawPose, result.timestamp)
                 val faces = result.getValue(faceDetector).orEmpty()
                 val objects = result.getValue(objectDetector).orEmpty()
 
                 val objectLabels = objects.flatMap { it.labels }.map { it.text }.filter { it.isNotBlank() }.distinct().take(3)
-                val landmarks = pose?.allPoseLandmarks.orEmpty()
+                val landmarks = rawPose?.allPoseLandmarks.orEmpty()
                 val strongLandmarks = landmarks.count { it.inFrameLikelihood >= 0.55f }
                 val averageLikelihood = if (landmarks.isEmpty()) 0f else
                     landmarks.map { it.inFrameLikelihood.toDouble() }.average().toFloat()
@@ -577,7 +579,7 @@ class MainActivity : AppCompatActivity() {
                 } else if (!candidateAnomaly) {
                     anomalyEpisodeLatched = false
                 }
-            }
+            })
         )
 
         previewView.controller = cameraController

@@ -1,6 +1,5 @@
 package uk.co.wrekinlabs.senseveil
 
-import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.face.Face
 
@@ -8,7 +7,7 @@ object DistanceEstimator {
     /**
      * Coarse monocular estimate only. This is not ARCore Depth and is labelled EST in the UI.
      */
-    fun estimateFromPose(pose: Pose?, faces: List<Face>, viewWidthPx: Int, viewHeightPx: Int): Float? {
+    fun estimateFromPose(pose: ProjectedPose?, faces: List<Face>, viewWidthPx: Int, viewHeightPx: Int): Float? {
         if (pose == null) return null
         val left = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER) ?: return null
         val right = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER) ?: return null
@@ -20,7 +19,7 @@ object DistanceEstimator {
             face.headEulerAngleY, face.headEulerAngleZ)
     }
 
-    fun horizontalOffset(pose: Pose?, viewWidthPx: Int): Float {
+    fun horizontalOffset(pose: ProjectedPose?, viewWidthPx: Int): Float {
         if (pose == null || viewWidthPx <= 0) return 0f
         val points = pose.allPoseLandmarks
             .filter { it.inFrameLikelihood >= 0.45f }

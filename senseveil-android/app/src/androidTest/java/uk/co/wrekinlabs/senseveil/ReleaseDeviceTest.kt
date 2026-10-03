@@ -33,6 +33,23 @@ class ReleaseDeviceTest {
         device.executeShellCommand("wm dismiss-keyguard")
     }
 
+    @Test fun poseCoordinatesFollowCameraRotationCropAndScale() {
+        val sensorToBuffer = android.graphics.Matrix().apply { setScale(.5f, .5f) }
+        val sensorToView = android.graphics.Matrix().apply { setScale(2f, 2f); postTranslate(-20f, 30f) }
+        val rotations = mapOf(0 to floatArrayOf(100f, 50f), 90 to floatArrayOf(50f, 100f),
+            180 to floatArrayOf(100f, 50f), 270 to floatArrayOf(50f, 100f))
+        rotations.forEach { (rotation, center) ->
+            val transform = PoseProjection.uprightToView(200, 100, rotation, sensorToBuffer, sensorToView)!!
+            transform.mapPoints(center)
+            assertEquals("Center x at rotation $rotation", 380f, center[0], .001f)
+            assertEquals("Center y at rotation $rotation", 230f, center[1], .001f)
+        }
+        val origin = floatArrayOf(0f, 0f)
+        PoseProjection.uprightToView(200, 100, 90, sensorToBuffer, sensorToView)!!.mapPoints(origin)
+        assertArrayEquals(floatArrayOf(-20f, 430f), origin, .001f)
+        assertNull(PoseProjection.uprightToView(200, 100, 45, sensorToBuffer, sensorToView))
+    }
+
     @Test fun keystoreSignatureAndVaultRejectTampering() {
         val root=File(context.cacheDir,"release-crypto-${System.nanoTime()}").apply { mkdirs() }
         try {

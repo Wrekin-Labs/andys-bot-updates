@@ -16,6 +16,8 @@ Private owner photos are not committed to this public repository. Regression scr
 
 ## Range limits
 
+Inspection of the pinned `pose-detection-common:18.0.0-beta5` implementation confirmed that its pose task constructs `Pose` with a null transform and does not apply the matrix supplied by CameraX. Face/object detectors do apply their transforms. RC2 adds a frame-timestamp-keyed pose projection through the sensor and actual CameraX viewport; only pose points receive this extra mapping. Regression coverage checks all four right-angle rotations plus crop/scale and rejects invalid rotation. This addresses the mixed coordinate spaces that could misplace skeletons and inflate shoulder-based distances.
+
 The existing monocular feature is retained in Lab and recorded evidence, with stricter visibility, confidence, face association and frontal-pose gates. It remains an adult shoulder-size and fixed-lens heuristic, not AR depth, radar range or a calibrated measurement. Sideways, tiny, clipped or low-confidence shoulder spans return no estimate. An unrelated external reading is no longer used as a person's visual range fallback. The vision map no longer invents a 3 m visual range when none is known.
 
 ## Preservation and release limits

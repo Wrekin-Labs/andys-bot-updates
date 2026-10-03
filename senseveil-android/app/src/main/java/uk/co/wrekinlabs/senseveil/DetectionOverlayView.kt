@@ -10,12 +10,11 @@ import android.graphics.RectF
 import android.view.View
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.objects.DetectedObject
-import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseLandmark
 
 class DetectionOverlayView(context: Context) : View(context) {
 
-    private var pose: Pose? = null
+    private var pose: ProjectedPose? = null
     private var faces: List<Face> = emptyList()
     private var objects: List<DetectedObject> = emptyList()
     private var state = DetectionState()
@@ -68,7 +67,7 @@ class DetectionOverlayView(context: Context) : View(context) {
     private val objectLabelPaint = Paint(labelPaint).apply { textSize = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 11f, resources.displayMetrics); color = Brand.AMBER }
 
     fun update(
-        pose: Pose?,
+        pose: ProjectedPose?,
         faces: List<Face>,
         objects: List<DetectedObject>,
         state: DetectionState,
