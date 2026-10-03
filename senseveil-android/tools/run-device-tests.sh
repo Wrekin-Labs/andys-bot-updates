@@ -2,7 +2,7 @@
 # Keep runtime evidence even when instrumentation fails.
 set -uo pipefail
 mkdir -p app/build/device-audit
-./gradlew connectedDebugAndroidTest --no-daemon
+./gradlew connectedDebugAndroidTest --no-daemon --max-workers=2
 test_status=$?
 if [ "$test_status" -eq 0 ]; then
   python3 tools/permission-smoke.py

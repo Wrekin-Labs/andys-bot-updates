@@ -1143,13 +1143,13 @@ class MainActivity : AppCompatActivity() {
             }
             content.addView(photo, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
             submitIo {
-                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, bounds)
-                val options = android.graphics.BitmapFactory.Options().apply {
-                    inSampleSize = maxOf(1, maxOf(bounds.outWidth, bounds.outHeight) / 720)
+                val bitmap = EvidencePhotoPreview.load(photoFile)
+                runOnUiThread {
+                    if (!isDestroyed && photo.isAttachedToWindow) {
+                        photo.setImageBitmap(bitmap)
+                        if (bitmap == null) photo.contentDescription = "Capture preview unavailable; original evidence is unchanged"
+                    } else bitmap?.recycle()
                 }
-                val bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                runOnUiThread { if (!isDestroyed) photo.setImageBitmap(bitmap) }
             }
         }
         content.addView(body)

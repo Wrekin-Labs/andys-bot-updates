@@ -31,6 +31,16 @@ class ReleaseDeviceTest {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.wakeUp()
         device.executeShellCommand("wm dismiss-keyguard")
+        // A cold CI emulator can leave this system dialog over every app. Only
+        // dismiss this identified launcher failure; never dismiss a SenseVeil ANR.
+        if (android.os.Build.HARDWARE in listOf("ranchu", "goldfish")) {
+            val launcherAnr = device.findObject(UiSelector().packageName("android").text("Pixel Launcher isn't responding"))
+            if (launcherAnr.exists()) {
+                android.util.Log.w("SenseVeilTest", "Dismissing pre-existing Pixel Launcher ANR on test emulator")
+                device.findObject(UiSelector().packageName("android").text("Close app")).click()
+                assertTrue("Launcher interruption cleared", launcherAnr.waitUntilGone(10000))
+            }
+        }
     }
 
     @Test fun recoveryPreservesLiveSessionAndRecoversOnlyOrphan() {
@@ -206,13 +216,14 @@ class ReleaseDeviceTest {
             explanationSummary = "No sustained anomaly", sceneQualityPercent = 100)
         try {
             File(sealed, "sample.txt").writeText("selected evidence")
+            PhotoFixture.write(File(sealed, "fixture.jpg"))
             EvidenceIntegrity.refreshManifest(sealed, Brand.VERSION)
             EvidenceSigner.signIntegrityManifest(sealed)
             repository.append(event(sealed, stamp))
             repository.append(event(pending, stamp + 1))
             assertNull("History cannot resolve paths outside its event directory", repository.bundleFor(event(sealed, stamp).copy(bundleName = "../outside")))
             assertNull(repository.bundleFor(event(sealed, stamp).copy(bundleName = "Event_../outside")))
-            ActivityScenario.launch(MainActivity::class.java).use {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 device.findObject(UiSelector().text("EVENTS")).also { assertTrue(it.waitForExists(10000)); it.click() }
                 assertTrue(device.findObject(UiSelector().text("Unsealed • cannot share yet")).waitForExists(10000))
                 assertFalse("Newest incomplete capture cannot be shared", device.findObject(UiSelector().text("SHARE").instance(0)).isEnabled)
@@ -228,6 +239,21 @@ class ReleaseDeviceTest {
                 device.findObject(UiSelector().text("REVIEW").instance(1)).click()
                 assertTrue(device.findObject(UiSelector().text("EVENT REVIEW")).waitForExists(10000))
                 assertTrue(device.findObject(UiSelector().text("CLOSE").className("android.widget.Button")).waitForExists(10000))
+                var previewReady = false
+                val previewDeadline = android.os.SystemClock.elapsedRealtime() + 10000
+                while (!previewReady && android.os.SystemClock.elapsedRealtime() < previewDeadline) {
+                    scenario.onActivity { activity ->
+                        val views = arrayListOf<android.view.View>()
+                        activity.window.decorView.findViewsWithText(views, "Capture preview; use Verify to check integrity",
+                            android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                        val drawable = views.filterIsInstance<android.widget.ImageView>().firstOrNull()?.drawable
+                            as? android.graphics.drawable.BitmapDrawable
+                        previewReady = drawable?.bitmap?.let { it.width == 64 && it.height == 128 } == true
+                    }
+                    if (!previewReady) android.os.SystemClock.sleep(100)
+                }
+                assertTrue("Selected photo loads with its portrait EXIF orientation", previewReady)
+                assertTrue("Review leaves signed evidence intact", EvidenceVerifier.verifyBundle(sealed, true).valid)
                 device.waitForIdle()
                 device.takeScreenshot(File(auditDirectory(), "event-review.png"))
                 device.pressBack()
