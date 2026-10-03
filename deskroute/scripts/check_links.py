@@ -13,7 +13,7 @@ class Links(HTMLParser):
   for key in ('href','src'):
    if key in d:self.links.append(d[key])
 for page in base.rglob('*.html'):
- parser=Links();parser.feed(page.read_text());count+=1
+ parser=Links();parser.feed(page.read_text(encoding='utf-8'));count+=1
  for link in parser.links:
   u=urlsplit(link)
   if u.scheme or u.netloc:continue
@@ -21,7 +21,7 @@ for page in base.rglob('*.html'):
   if target.is_dir():target=target/'index.html'
   if not target.exists():errors.append(f'{page.relative_to(base)}: missing {link}');continue
   if u.fragment and target.suffix=='.html' and not (page.name=='index.html' and not u.path):
-   target_parser=Links();target_parser.feed(target.read_text())
+   target_parser=Links();target_parser.feed(target.read_text(encoding='utf-8'))
    if u.fragment not in target_parser.ids:errors.append(f'{page.relative_to(base)}: missing anchor {link}')
 for asset in (base/'assets').glob('*.svg'):
  try:
@@ -31,7 +31,7 @@ for asset in (base/'assets').glob('*.svg'):
   errors.append(f'{asset.name}: invalid SVG')
 for asset in (base/'assets').glob('*.woff2'):
  if asset.read_bytes()[:4] != b'wOF2':errors.append(f'{asset.name}: invalid font')
-cache_match=re.search(r'const ASSETS=(\[.*?\]);',(base/'sw.js').read_text())
+cache_match=re.search(r'const ASSETS=(\[.*?\]);',(base/'sw.js').read_text(encoding='utf-8'))
 if not cache_match:errors.append('sw.js: public shell asset list missing')
 else:
  for cached in ast.literal_eval(cache_match.group(1)):
