@@ -53,7 +53,9 @@ class SessionRecorder(private val context: Context) {
     fun append(
         state: DetectionState,
         sensor: SensorSnapshot,
-        external: ExternalPresenceReading?
+        external: ExternalPresenceReading?,
+        wifiRf: WifiRfReading? = null,
+        wifiSurvey: WifiSurveyReading? = null
     ) {
         if (stopped) return
         val nowElapsed = SystemClock.elapsedRealtime()
@@ -87,6 +89,17 @@ class SessionRecorder(private val context: Context) {
             put("externalConfidence", external?.confidence ?: JSONObject.NULL)
             put("externalDistanceMetres", external?.distanceMetres ?: JSONObject.NULL)
             put("externalSource", external?.source ?: JSONObject.NULL)
+            put("rfStatus", wifiRf?.status?.name ?: JSONObject.NULL)
+            put("rfSource", wifiRf?.source ?: JSONObject.NULL)
+            put("rfNovelty", wifiRf?.novelty ?: JSONObject.NULL)
+            put("rfSustainedChange", wifiRf?.sustainedChange ?: JSONObject.NULL)
+            put("rfSampleRateHz", wifiRf?.sampleRateHz ?: JSONObject.NULL)
+            put("rfRssiDbm", wifiRf?.rssiDbm ?: JSONObject.NULL)
+            put("rfCsiAmplitude", wifiRf?.csiAmplitude ?: JSONObject.NULL)
+            put("rfCsiVariance", wifiRf?.csiVariance ?: JSONObject.NULL)
+            put("wifiVisibleNetworks", wifiSurvey?.visibleNetworks ?: JSONObject.NULL)
+            put("wifiStrongestRssiDbm", wifiSurvey?.strongestRssiDbm ?: JSONObject.NULL)
+            put("wifiMedianRssiDbm", wifiSurvey?.medianRssiDbm ?: JSONObject.NULL)
             put("explanation", state.explanation.toJson())
         }
         val rowHash = SessionChain.computeHash(previousChainHash, row)

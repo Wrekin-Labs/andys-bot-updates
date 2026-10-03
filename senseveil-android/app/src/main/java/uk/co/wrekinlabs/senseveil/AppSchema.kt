@@ -10,7 +10,7 @@ data class SchemaMigrationReport(
 
 object AppSchema {
     const val SETTINGS_SCHEMA_VERSION = 1
-    const val EVIDENCE_SCHEMA_VERSION = 2
+    const val EVIDENCE_SCHEMA_VERSION = 3
     const val EVIDENCE_FORMAT = "senseveil-evidence-v1"
 
     fun migrate(context: Context): SchemaMigrationReport {

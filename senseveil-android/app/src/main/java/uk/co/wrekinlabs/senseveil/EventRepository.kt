@@ -18,6 +18,17 @@ data class ScanEvent(
     val lightLux: Float?,
     val pressureHpa: Float?,
     val audioDbfs: Float?,
+    val rfStatus: String? = null,
+    val rfSource: String? = null,
+    val rfNovelty: Float? = null,
+    val rfSustainedChange: Boolean? = null,
+    val rfSampleRateHz: Float? = null,
+    val rfRssiDbm: Float? = null,
+    val rfCsiAmplitude: Float? = null,
+    val rfCsiVariance: Float? = null,
+    val wifiVisibleNetworks: Int? = null,
+    val wifiStrongestRssiDbm: Int? = null,
+    val wifiMedianRssiDbm: Int? = null,
     val note: String = "",
     val anomalyReason: String? = null,
     val profile: String? = null,
@@ -39,6 +50,17 @@ data class ScanEvent(
         put("lightLux", lightLux ?: JSONObject.NULL)
         put("pressureHpa", pressureHpa ?: JSONObject.NULL)
         put("audioDbfs", audioDbfs ?: JSONObject.NULL)
+        put("rfStatus", rfStatus ?: JSONObject.NULL)
+        put("rfSource", rfSource ?: JSONObject.NULL)
+        put("rfNovelty", rfNovelty ?: JSONObject.NULL)
+        put("rfSustainedChange", rfSustainedChange ?: JSONObject.NULL)
+        put("rfSampleRateHz", rfSampleRateHz ?: JSONObject.NULL)
+        put("rfRssiDbm", rfRssiDbm ?: JSONObject.NULL)
+        put("rfCsiAmplitude", rfCsiAmplitude ?: JSONObject.NULL)
+        put("rfCsiVariance", rfCsiVariance ?: JSONObject.NULL)
+        put("wifiVisibleNetworks", wifiVisibleNetworks ?: JSONObject.NULL)
+        put("wifiStrongestRssiDbm", wifiStrongestRssiDbm ?: JSONObject.NULL)
+        put("wifiMedianRssiDbm", wifiMedianRssiDbm ?: JSONObject.NULL)
         put("note", note)
         put("anomalyReason", anomalyReason ?: JSONObject.NULL)
         put("profile", profile ?: JSONObject.NULL)
@@ -130,6 +152,17 @@ class EventRepository(private val context: Context) {
             lightLux = j.optFloatOrNull("lightLux"),
             pressureHpa = j.optFloatOrNull("pressureHpa"),
             audioDbfs = j.optFloatOrNull("audioDbfs"),
+            rfStatus = j.optNullableString("rfStatus"),
+            rfSource = j.optNullableString("rfSource"),
+            rfNovelty = j.optFloatOrNull("rfNovelty"),
+            rfSustainedChange = if (j.has("rfSustainedChange") && !j.isNull("rfSustainedChange")) j.optBoolean("rfSustainedChange") else null,
+            rfSampleRateHz = j.optFloatOrNull("rfSampleRateHz"),
+            rfRssiDbm = j.optFloatOrNull("rfRssiDbm"),
+            rfCsiAmplitude = j.optFloatOrNull("rfCsiAmplitude"),
+            rfCsiVariance = j.optFloatOrNull("rfCsiVariance"),
+            wifiVisibleNetworks = j.optInt("wifiVisibleNetworks").takeIf { j.has("wifiVisibleNetworks") && !j.isNull("wifiVisibleNetworks") },
+            wifiStrongestRssiDbm = j.optInt("wifiStrongestRssiDbm").takeIf { j.has("wifiStrongestRssiDbm") && !j.isNull("wifiStrongestRssiDbm") },
+            wifiMedianRssiDbm = j.optInt("wifiMedianRssiDbm").takeIf { j.has("wifiMedianRssiDbm") && !j.isNull("wifiMedianRssiDbm") },
             note = j.optString("note", ""),
             anomalyReason = j.optNullableString("anomalyReason"),
             profile = j.optNullableString("profile"),

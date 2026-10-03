@@ -93,14 +93,19 @@ class MainActivity : AppCompatActivity() {
     private val consensusGate = TemporalConsensusGate()
     private val sensorTimeline = SensorTimeline()
     private val detectionTimeline = DetectionTimeline()
+    private val rfTimeline = RfTimeline()
     private lateinit var sensorFusion: SensorFusionEngine
     private lateinit var audioMonitor: AudioLevelMonitor
+    private lateinit var wifiRfBridge: WifiRfBridge
+    private lateinit var phoneWifiSurvey: PhoneWifiSurvey
     private val trackState = PersonTrackState()
 
     private var rollingBuffer: RollingVideoBuffer? = null
     private var externalHub: ExternalSensorHub = NoExternalSensorHub()
     private var externalReading: ExternalPresenceReading? = null
     private var sensorSnapshot = SensorSnapshot()
+    private var wifiRfReading = WifiRfReading()
+    private var wifiSurveyReading = WifiSurveyReading()
     private var latestDetection = DetectionState()
 
     private var labMode = false
@@ -109,6 +114,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAutoCaptureAt = 0L
     private var anomalyEpisodeLatched = false
     @Volatile private var captureInterruptionGeneration = 0L
+    private val localNetworkPermissionName = "android.permission.ACCESS_LOCAL_NETWORK"
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -131,6 +137,30 @@ class MainActivity : AppCompatActivity() {
                 bufferText.text = "AUDIO MONITOR: ON"
             } else {
                 bufferText.text = "AUDIO MONITOR: PERMISSION NOT GRANTED"
+            }
+        }
+
+    private val wifiSurveyPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val fineGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            operatorPreferences.wifiSurveyEnabled = fineGranted
+            if (fineGranted && ::phoneWifiSurvey.isInitialized) {
+                phoneWifiSurvey.start()
+                bufferText.text = "WI-FI SURVEY: ON"
+            } else {
+                bufferText.text = "WI-FI SURVEY: PRECISE LOCATION PERMISSION NOT GRANTED"
+            }
+        }
+
+    private val localNetworkPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            operatorPreferences.rfBridgeEnabled = granted
+            if (granted && ::wifiRfBridge.isInitialized) {
+                wifiRfBridge.start()
+                bufferText.text = "RF BRIDGE: CONNECTING"
+            } else {
+                bufferText.text = "RF BRIDGE: LOCAL NETWORK PERMISSION NOT GRANTED"
             }
         }
 
@@ -439,6 +469,19 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { updateSensorText(snapshot) }
         }
         audioMonitor = AudioLevelMonitor(this) { db -> sensorFusion.setAudioDbfs(db) }
+        wifiRfBridge = WifiRfBridge(this, operatorPreferences) { reading ->
+            wifiRfReading = reading
+            rfTimeline.addRf(reading)
+            runOnUiThread {
+                updateSensorText(sensorSnapshot)
+                if (reading.sustainedChange) bufferText.text = "RF CHANGE RECORDED • " + (reading.source ?: "bridge")
+            }
+        }
+        phoneWifiSurvey = PhoneWifiSurvey(this) { reading ->
+            wifiSurveyReading = reading
+            rfTimeline.addSurvey(reading)
+            runOnUiThread { updateSensorText(sensorSnapshot) }
+        }
         externalHub.start { reading ->
             val decision = externalReplayGuard.check(reading)
             if (decision.accepted) {
@@ -453,6 +496,16 @@ class MainActivity : AppCompatActivity() {
     private fun startRuntimeSensors() {
         sensorFusion.start()
         if (audioMonitoringEnabled) audioMonitor.start()
+        startOptionalWifiFeatures()
+    }
+
+    private fun startOptionalWifiFeatures() {
+        if (::phoneWifiSurvey.isInitialized && operatorPreferences.wifiSurveyEnabled && hasWifiSurveyPermission()) {
+            phoneWifiSurvey.start()
+        }
+        if (::wifiRfBridge.isInitialized && operatorPreferences.rfBridgeEnabled && hasLocalNetworkPermission()) {
+            wifiRfBridge.start()
+        }
     }
 
     private fun startCamera() {
@@ -502,6 +555,7 @@ class MainActivity : AppCompatActivity() {
                 val profile = currentProfile
                 val lowLight = sensorSnapshot.lightLux?.let { it < 1.5f } == true && !torchEnabled
                 val deviceMoving = sensorSnapshot.accelerationMs2?.let { abs(it - 9.81f) > 1.8f } == true
+                if (::wifiRfBridge.isInitialized) wifiRfBridge.setDeviceMoving(deviceMoving)
                 val lowLightPenalty = if (lowLight) 0.06f else 0f
                 val humanLike = strongLandmarks >= profile.minLandmarks &&
                     bodyScore >= (profile.humanBodyThreshold + lowLightPenalty)
@@ -578,7 +632,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 latestDetection = state
                 detectionTimeline.add(state)
-                runCatching { sessionRecorder.append(state, sensorSnapshot, ext) }.onFailure { error ->
+                runCatching { sessionRecorder.append(state, sensorSnapshot, ext, wifiRfReading, wifiSurveyReading) }.onFailure { error ->
                     runOnUiThread { if (!isDestroyed) bufferText.text = "SESSION WRITE FAILED: ${error.message}" }
                 }
 
@@ -684,6 +738,14 @@ class MainActivity : AppCompatActivity() {
             append("  LIGHT ").append(f(s.lightLux, "lx"))
             append("  AUDIO ").append(f(s.audioDbfs, "dB", 1))
             if (labMode) append("  PRESS ").append(f(s.pressureHpa, "hPa", 1))
+            if (operatorPreferences.rfBridgeEnabled) {
+                append("\nRF ").append(wifiRfReading.status.name)
+                if (wifiRfReading.sampleRateHz != null) append(" ").append("%.1fHz".format(wifiRfReading.sampleRateHz))
+                if (wifiRfReading.novelty > 0f) append(" Δ").append((wifiRfReading.novelty * 100f).roundToInt()).append('%')
+            }
+            if (operatorPreferences.wifiSurveyEnabled) {
+                append("  WIFI ").append(wifiSurveyReading.visibleNetworks).append(" AP")
+            }
         }
         if (!torchEnabled && s.lightLux != null && s.lightLux < 2f) {
             lightButton.text = "LOW LIGHT"
@@ -718,6 +780,8 @@ class MainActivity : AppCompatActivity() {
             val captureSessionId = sessionRecorder.currentSessionId
             val captureEpochMs = System.currentTimeMillis()
             val capturedSensors = sensorSnapshot
+            val capturedRf = wifiRfReading
+            val capturedWifiSurvey = wifiSurveyReading
             val capturedProfile = currentProfile.label
             val bundle = eventRepository.createEventBundle(reason)
             pendingBundleName = bundle.name
@@ -749,6 +813,7 @@ class MainActivity : AppCompatActivity() {
             sensorTimeline.writeCsv(java.io.File(bundle, "telemetry_pre.csv"), preTelemetry)
             val preDetections = detectionTimeline.window(eventElapsed, 30_000L, 0L)
             detectionTimeline.writeJsonl(java.io.File(bundle, "detections_pre.jsonl"), preDetections)
+            rfTimeline.writeCsv(java.io.File(bundle, "rf_pre.csv"), rfTimeline.window(eventElapsed, 30_000L, 0L))
 
             val options = ImageCapture.OutputFileOptions.Builder(file).build()
             cameraController.takePicture(
@@ -768,6 +833,17 @@ class MainActivity : AppCompatActivity() {
                                 lightLux = s.lightLux,
                                 pressureHpa = s.pressureHpa,
                                 audioDbfs = s.audioDbfs,
+                                rfStatus = capturedRf.status.name,
+                                rfSource = capturedRf.source,
+                                rfNovelty = capturedRf.novelty,
+                                rfSustainedChange = capturedRf.sustainedChange,
+                                rfSampleRateHz = capturedRf.sampleRateHz,
+                                rfRssiDbm = capturedRf.rssiDbm,
+                                rfCsiAmplitude = capturedRf.csiAmplitude,
+                                rfCsiVariance = capturedRf.csiVariance,
+                                wifiVisibleNetworks = capturedWifiSurvey.visibleNetworks.takeIf { operatorPreferences.wifiSurveyEnabled },
+                                wifiStrongestRssiDbm = capturedWifiSurvey.strongestRssiDbm,
+                                wifiMedianRssiDbm = capturedWifiSurvey.medianRssiDbm,
                                 note = if (automatic) "automatic detector-disagreement capture" else "manual capture",
                                 anomalyReason = state.anomalyReason,
                                 profile = capturedProfile,
@@ -791,6 +867,7 @@ class MainActivity : AppCompatActivity() {
                                     sensorTimeline.writeCsv(java.io.File(bundle, "telemetry_window.csv"), fullWindow)
                                     val detectionWindow = detectionTimeline.window(eventElapsed, 30_000L, 10_000L)
                                     detectionTimeline.writeJsonl(java.io.File(bundle, "detections_window.jsonl"), detectionWindow)
+                                    rfTimeline.writeCsv(java.io.File(bundle, "rf_window.csv"), rfTimeline.window(eventElapsed, 30_000L, 10_000L))
                                     completion.windowReady()
                                 } catch (error: Exception) {
                                     completion.fail()
@@ -926,6 +1003,33 @@ class MainActivity : AppCompatActivity() {
             root.removeView(shade)
             showToolsPanel()
         }
+        toolSection("Wi-Fi / RF sensing (opt-in)")
+        panel.addView(TextView(this).apply {
+            text = "Wi-Fi surveys store aggregate signal counts only. CSI/RF records environmental radio change and never feeds person-detection confidence."
+            setTextColor(Brand.TEXT_MUTED)
+            textSize = 11f
+            setPadding(0, dp(2), 0, dp(6))
+        })
+        toolButton("WI-FI SURVEY: " + if (operatorPreferences.wifiSurveyEnabled) "ON" else "OFF") {
+            root.removeView(shade)
+            toggleWifiSurvey()
+        }
+        toolButton("RF BRIDGE: " + if (operatorPreferences.rfBridgeEnabled) "ON" else "OFF") {
+            root.removeView(shade)
+            toggleRfBridge()
+        }
+        toolButton("RF BRIDGE SETUP") {
+            root.removeView(shade)
+            showRfBridgeSetup()
+        }
+        toolButton("RF BASELINE RESET") {
+            wifiRfBridge.resetBaseline()
+            bufferText.text = "RF BASELINE RESET • HOLD PHONE STILL"
+        }
+        toolButton("RF STATUS") {
+            root.removeView(shade)
+            showRfStatus()
+        }
         toolSection("Signer trust")
         toolButton("TRUST LAST IMPORTED SIGNER") { trustLastImportedSigner() }
         toolButton("TRUSTED SIGNERS") { showTextPanel("TRUSTED SIGNERS", trustedSignerStore.render()) }
@@ -1007,6 +1111,115 @@ class MainActivity : AppCompatActivity() {
         } else {
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    private fun toggleWifiSurvey() {
+        if (operatorPreferences.wifiSurveyEnabled) {
+            operatorPreferences.wifiSurveyEnabled = false
+            phoneWifiSurvey.stop()
+            wifiSurveyReading = WifiSurveyReading(status = "off")
+            bufferText.text = "WI-FI SURVEY: OFF"
+            updateSensorText(sensorSnapshot)
+            return
+        }
+        if (hasWifiSurveyPermission()) {
+            operatorPreferences.wifiSurveyEnabled = true
+            phoneWifiSurvey.start()
+            bufferText.text = "WI-FI SURVEY: ON"
+        } else {
+            wifiSurveyPermissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+            )
+        }
+    }
+
+    private fun toggleRfBridge() {
+        if (operatorPreferences.rfBridgeEnabled) {
+            operatorPreferences.rfBridgeEnabled = false
+            wifiRfBridge.stop()
+            bufferText.text = "RF BRIDGE: OFF"
+            updateSensorText(sensorSnapshot)
+            return
+        }
+        if (hasLocalNetworkPermission()) {
+            operatorPreferences.rfBridgeEnabled = true
+            wifiRfBridge.start()
+            bufferText.text = "RF BRIDGE: CONNECTING"
+        } else if (Build.VERSION.SDK_INT >= 37) {
+            localNetworkPermissionLauncher.launch(localNetworkPermissionName)
+        }
+    }
+
+    private fun showRfBridgeSetup() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val host = android.widget.EditText(this).apply {
+            hint = "Bridge host or IP"
+            setText(operatorPreferences.rfBridgeHost)
+            setSingleLine(true)
+        }
+        val port = android.widget.EditText(this).apply {
+            hint = "Port"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(operatorPreferences.rfBridgePort.toString())
+            setSingleLine(true)
+        }
+        val pair = TextView(this).apply {
+            text = "Pair code: " + operatorPreferences.rfPairCode + "\nUse this exact code in the ESP32/PC bridge. It prevents accidental cross-feed; it is not transport encryption."
+            setPadding(0, dp(12), 0, 0)
+        }
+        box.addView(host)
+        box.addView(port)
+        box.addView(pair)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("RF bridge setup")
+            .setMessage("Enter the local CSI bridge endpoint. Android 17 asks for Local Network access only when RF bridge sensing is enabled.")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                operatorPreferences.rfBridgeHost = host.text.toString()
+                operatorPreferences.rfBridgePort = port.text.toString().toIntOrNull() ?: 8765
+                if (operatorPreferences.rfBridgeEnabled) {
+                    wifiRfBridge.stop()
+                    if (hasLocalNetworkPermission()) wifiRfBridge.start()
+                }
+                bufferText.text = "RF BRIDGE ENDPOINT SAVED"
+            }
+            .setNeutralButton("New pair code") { _, _ ->
+                val code = operatorPreferences.regenerateRfPairCode()
+                if (operatorPreferences.rfBridgeEnabled) {
+                    wifiRfBridge.stop()
+                    if (hasLocalNetworkPermission()) wifiRfBridge.start()
+                }
+                showTextPanel("NEW RF PAIR CODE", code + "\n\nUpdate the ESP32/PC bridge to use this code.")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showRfStatus() {
+        val rf = wifiRfReading
+        val wifi = wifiSurveyReading
+        showTextPanel(
+            "WI-FI / RF STATUS",
+            buildString {
+                append("RF bridge: ").append(if (operatorPreferences.rfBridgeEnabled) "enabled" else "off").append('\n')
+                append("Endpoint: ").append(operatorPreferences.rfBridgeHost).append(':').append(operatorPreferences.rfBridgePort).append('\n')
+                append("State: ").append(rf.status.name).append('\n')
+                append("Source: ").append(rf.source ?: "--").append('\n')
+                append("Sample rate: ").append(rf.sampleRateHz?.let { "%.1f Hz".format(it) } ?: "--").append('\n')
+                append("Novelty: ").append("%.0f%%".format(rf.novelty * 100f)).append('\n')
+                append("Sustained RF change: ").append(rf.sustainedChange).append('\n')
+                append("Detail: ").append(rf.message).append("\n\n")
+                append("Phone Wi-Fi survey: ").append(if (operatorPreferences.wifiSurveyEnabled) "enabled" else "off").append('\n')
+                append("Visible networks: ").append(wifi.visibleNetworks).append('\n')
+                append("Strongest RSSI: ").append(wifi.strongestRssiDbm?.let { it.toString() + " dBm" } ?: "--").append('\n')
+                append("Median RSSI: ").append(wifi.medianRssiDbm?.let { it.toString() + " dBm" } ?: "--").append('\n')
+                append("Bands: 2.4GHz ").append(wifi.band24Count).append(" • 5GHz ").append(wifi.band5Count).append(" • 6GHz ").append(wifi.band6Count).append("\n\n")
+                append("RF variation is environmental evidence only. SenseVeil does not infer a person or image through a wall from Wi-Fi/CSI.")
+            }
+        )
     }
 
     private fun showDeviceSupport() {
@@ -1343,6 +1556,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun hasCameraPermission() = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
+    private fun hasWifiSurveyPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasLocalNetworkPermission() =
+        Build.VERSION.SDK_INT < 37 ||
+            ContextCompat.checkSelfPermission(this, localNetworkPermissionName) == PackageManager.PERMISSION_GRANTED
+
     private fun refreshCaptureStatus() {
         if (!::captureButton.isInitialized) return
         val allowed = hasCameraPermission()
@@ -1402,6 +1622,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (::sensorFusion.isInitialized) sensorFusion.start()
         if (::audioMonitor.isInitialized && audioMonitoringEnabled) audioMonitor.start()
+        startOptionalWifiFeatures()
         rollingBuffer?.start()
     }
 
@@ -1412,6 +1633,8 @@ class MainActivity : AppCompatActivity() {
         rollingBuffer?.stop()
         if (::audioMonitor.isInitialized) audioMonitor.stop()
         if (::sensorFusion.isInitialized) sensorFusion.stop()
+        if (::phoneWifiSurvey.isInitialized) phoneWifiSurvey.stop()
+        if (::wifiRfBridge.isInitialized) wifiRfBridge.stop()
         super.onPause()
     }
 
@@ -1421,6 +1644,8 @@ class MainActivity : AppCompatActivity() {
         rollingBuffer?.stop()
         if (::sessionRecorder.isInitialized) submitIo { sessionRecorder.stop() }
         externalHub.stop()
+        if (::phoneWifiSurvey.isInitialized) phoneWifiSurvey.stop()
+        if (::wifiRfBridge.isInitialized) wifiRfBridge.stop()
         if (::cameraController.isInitialized) cameraController.clearImageAnalysisAnalyzer()
         if (::poseDetector.isInitialized) poseDetector.close()
         if (::faceDetector.isInitialized) faceDetector.close()
