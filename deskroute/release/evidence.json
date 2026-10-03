@@ -65,7 +65,7 @@
     "email_sent": false,
     "password_changed": false,
     "live_delivery": "failed: SMTP 535 Authentication credentials invalid",
-    "configuration_gate": "Correct rejected SMTP credential; proposed native integration awaiting explicit organisation-wide Auth/Projects access approval; then verify delivery, private password update and staff access",
+    "configuration_gate": "Finish native integration private credential and SMTP steps, then verify the approved recovery email delivery, private password update and real staff access.",
     "callback_allowlisted": true,
     "callback": "https://deskroute-ai-v6-preview.onrender.com/password.html",
     "custom_smtp_enabled": true,
@@ -78,7 +78,8 @@
     "send_approval": "User explicitly approved one recovery email. Secure browser submission was blocked; later manual recovery attempts failed at SMTP authentication.",
     "smtp_screenshot": "screenshots/11-smtp-configured.jpg",
     "diagnostic_evidence": "Read-only auth logs for 2026-10-03 13:00\u201313:28 UTC show /recover HTTP 500 with SMTP 535; account recovery_sent_at remains null and provider lists no recovery message.",
-    "native_integration": "Signed into existing Resend account; Supabase authorization page requests Auth and Projects READ + WRITE for the organisation. Not authorized."
+    "native_integration": "User completed the organisation grant. Selected project dbhwjzznwhukoogjewfl and thesmashroom.co.uk; project, domain and DNS steps visibly complete. Add API key and Configure SMTP await private user completion.",
+    "integration_screenshot": "screenshots/12-resend-integration-ready.jpg"
   },
   "dated_knowledge_tests": 8,
   "total_api_policy_handler_tests": 42,

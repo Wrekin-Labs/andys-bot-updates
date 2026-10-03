@@ -110,3 +110,9 @@ Dated-knowledge deployment: **`cxroute-widget-chat` v17 ACTIVE**, source `edbde5
 - Existing sending keys were inspected by name only; no secret values were read or changed. Existing website email integrations were preserved.
 - Signed into the existing email-provider dashboard and prepared its native Supabase integration. Its OAuth grant requests Auth and Projects READ + WRITE for the whole selected organisation. The grant has not been authorized; explicit approval is required before proceeding.
 - Actual recovery delivery, private password update, and authenticated staff-to-widget checks remain open.
+
+## Native email integration preparation
+
+- User completed the Resend organisation-access grant. The native wizard now confirms the intended project, existing sending domain and DNS verification.
+- The private Add API key and Configure SMTP steps remain unfinished and are handed to the user. No new key was created or revealed by the assistant. Existing SMTP authentication failure is not yet cleared; no successful recovery delivery or password update is claimed.
+- Preparation evidence: `screenshots/12-resend-integration-ready.jpg`.
