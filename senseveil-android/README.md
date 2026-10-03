@@ -1,4 +1,4 @@
-# SenseVeil AI — v1.0.0-rc2
+# SenseVeil AI — v1.0.0-rc3
 
 **See the signal. Verify the source.**
 
@@ -25,7 +25,11 @@ Use JDK 17, Android SDK platform **37.0**, build-tools 36.0.0, and the checked-i
 python3 -m unittest discover -s tools -p 'test_*.py' -v
 # With a booted, authorized emulator or phone:
 ./gradlew connectedDebugAndroidTest
+# Full CI device flow on a disposable emulator only:
+ANDROID_SERIAL=emulator-5554 ./tools/run-device-tests.sh
 ```
+
+The full CI device script reinstalls the built APK and exercises camera denial and a Settings grant. It refuses to run the permission smoke on a physical-device serial.
 
 Windows: use `gradlew.bat`. Set `ANDROID_HOME` to the installed Android SDK directory or create an untracked `local.properties` containing `sdk.dir=...`.
 
@@ -41,6 +45,12 @@ The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. Install with `adb 
 6. Export a verification ZIP for sharing. When the vault option is enabled, an encrypted device-bound SVE copy is also retained; the sharing ZIP is cleartext.
 
 Microphone level monitoring is opt-in; it does not save raw audio. Evidence stays in app storage unless you explicitly export it. Cloud backup/device transfer are excluded. Uninstalling or clearing app data destroys Android Keystore keys and can make SVE vaults unrecoverable. Export required evidence first.
+
+## RC3 reliability and accessibility
+
+Pending captures and their archives are protected from age/quota cleanup. Housekeeping runs away from the UI thread; session recovery skips sessions still owned by this process. Capture metadata keeps the sensor snapshot and profile from the trigger time. New capture requests are rejected after the Activity leaves the foreground, while existing captures still finish sealing.
+
+Camera denial leaves Events and Tools available. Camera Access offers retry and app Settings; returning after a grant starts the camera. The capture status distinguishes starting, unavailable, permission-needed and ready states. Buttons grow with larger text, Device Support uses a scrolling report, and Field/Lab plus an opted-in microphone setting survive Activity recreation. Photo previews respect JPEG rotation and mirroring without changing signed originals. See [RC3_DESIGN_AUDIT.md](RC3_DESIGN_AUDIT.md).
 
 ## RC2 field-feedback improvements
 

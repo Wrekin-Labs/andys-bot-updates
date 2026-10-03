@@ -1,4 +1,51 @@
-# SenseVeil AI v1.0.0-rc2 — verification record
+# SenseVeil AI v1.0.0-rc3 — verification record
+
+Updated 3 October 2026 (UTC). Application source: `89db2422a31b14d32e833c6776cb308950f5d4b2`; validation revision: `236ece19af7447b242946500aa6cade4a116a007` (test harness changes only).
+
+## RC3 changes
+
+- Protect in-flight evidence and matching archives from retention cleanup; serialize housekeeping with evidence I/O off the UI thread.
+- Preserve live sessions during Activity recreation and freeze capture sensor/profile metadata at the trigger.
+- Reject new background capture requests while allowing existing captures to finish sealing.
+- Recover camera access through retry/Settings and refresh camera state on returning to the app.
+- Let controls grow with large text; make Device Support scrollable with a reachable Close control.
+- Respect all JPEG EXIF rotations/reflections in photo previews without modifying signed originals.
+- Preserve fusion, consensus, custody checks, signing/encryption, external protocol, AR capability, replay and diagnostics.
+
+See [RC3_DESIGN_AUDIT.md](RC3_DESIGN_AUDIT.md) for the current screenshot audit and detailed evidence limits.
+
+## RC3 verification
+
+- Local Gradle `test lint assembleDebug assembleDebugAndroidTest`: PASS on the exact source above.
+- 27 JVM tests and five independent Python verifier tests: PASS, no failures/errors/skips.
+- Lint: zero errors, 110 warnings; no errors baselined and no checks disabled.
+- APK: Android v2 signature valid; final 16 KB ZIP alignment PASS.
+- Final GitHub [run 37132323436](https://github.com/Wrekin-Labs/andys-bot-updates/actions/runs/37132323436): **build and device-tests PASS**. All nine native Android tests passed (175.778 s), plus both standalone permission checks. Together with JVM and Python coverage, **43 checks passed**, with no failures/errors/skips.
+- Andy Home built the same final app and test APKs successfully (3 min 10 s).
+
+The first RC3 device run failed four UI tests behind a confirmed Pixel Launcher ANR. It is not counted as a pass. The revised harness clears only that specific emulator launcher interruption and compiles APKs before booting the emulator to reduce contention. It does not dismiss SenseVeil crashes or ANRs.
+
+An intermediate run passed all native Android tests but exposed a permission-test setup error after Gradle uninstalled the app. The standalone smoke script now reinstalls the exact built APK before checking denial and Settings-return recovery. The final successful run includes this fix. Eleven accepted screenshots from that run are preserved in `docs/qa/rc3/` and the linked five-step audit.
+
+## RC3 installer provenance
+
+- Package `uk.co.wrekinlabs.senseveil`; version `1.0.0-rc3`, code 12; minimum Android 7/API 24.
+- File: `SenseVeil-AI-v1.0.0-rc3-debug.apk`; 176,582,786 bytes.
+- SHA-256: `89e3e8dfdd271fd3f88d87a0246cc45ce7f058a8aff9d007a6994f65c8f8ed56`.
+- Debug certificate SHA-256: `9657cb624dab8cb0649a5ac39fd2f98f07a054d56ae3b38fe94d748cd014a5f1` (same as the downloadable RC1/RC2 installers).
+- CI and Andy Home use their respective debug keys; use the same installer source to update an existing debug installation. Export needed evidence before uninstalling or clearing app data, which destroys device-bound vault keys.
+
+The independently built Home installer is at `Desktop\SenseVeil-AI-v1.0-RC3`, with `SHA256SUMS.txt`. Its SHA-256 is `efe7d084e5762844c7d0b2bda4208393cb89ec78ffcbec54a79fe68b3fa2b55a`; it is 176,582,498 bytes and passes Android v2 signing and 16 KB ZIP alignment. Its certificate matches the earlier Home installers.
+
+## RC3 field-test gates
+
+This is a debug release candidate for testing. Physical camera/pose/range accuracy, low-light movement, TalkBack and enlarged-font landscape scanning, microphone opt-in, long-session battery/thermal behaviour, low-storage fault injection and real-device export/import remain checks for the phone.
+
+The preserved external sensor layer is the SV1 protocol/parser/replay guard and adapter interface. Vendor-specific BLE/USB transports are not implemented. AR depth remains a capability probe, not live depth capture. Wi-Fi through-wall sensing is not implemented.
+
+---
+
+# Historical RC2 verification record
 
 Updated 3 October 2026 (UTC). Application source: `fa14d06343976cf6226481bd5f7da9e7afa6b783`.
 
