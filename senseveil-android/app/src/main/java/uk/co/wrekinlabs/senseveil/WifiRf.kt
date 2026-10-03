@@ -49,7 +49,9 @@ object WifiRfProtocol {
     fun parse(line: String, expectedPairCode: String, nowElapsedMs: Long = SystemClock.elapsedRealtime()): WifiRfFrame? {
         val j = runCatching { JSONObject(line) }.getOrNull() ?: return null
         if (j.optInt("v", -1) != 1 || j.optString("pair") != expectedPairCode) return null
-        val source = j.optString("source").trim().takeIf { it.isNotEmpty() && it.length <= 80 } ?: return null
+        val source = j.optString("source").trim().takeIf {
+            it.matches(Regex("[A-Za-z0-9._:-]{1,80}"))
+        } ?: return null
         val seq = j.optLong("seq", -1L).takeIf { it >= 0 } ?: return null
         val epoch = j.optLong("epochMs", -1L).takeIf { it > 0 } ?: return null
         val rate = finite(j, "sampleRateHz")?.takeIf { it > 0f && it <= 1000f } ?: return null
@@ -82,6 +84,12 @@ class WifiRfAnalyzer {
         source = null
         lastSequence = -1L
         lastReceivedElapsed = 0L
+        clearBaseline()
+        clearPositive()
+    }
+
+    @Synchronized
+    fun invalidateBaseline() {
         clearBaseline()
         clearPositive()
     }

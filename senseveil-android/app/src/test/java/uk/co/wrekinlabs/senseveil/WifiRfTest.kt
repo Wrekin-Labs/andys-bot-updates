@@ -21,6 +21,8 @@ class WifiRfTest {
         assertNull(WifiRfProtocol.parse(ok, "wrong-pair", 1234L))
         assertNull(WifiRfProtocol.parse("""{"v":1,"pair":"abc123456789","source":"x","seq":1,"epochMs":1,"sampleRateHz":0}""", "abc123456789", 1L))
         assertNull(WifiRfProtocol.parse("""{"v":1,"pair":"abc123456789","source":"x","seq":1,"epochMs":1,"sampleRateHz":20,"rssiDbm":"NaN"}""", "abc123456789", 1L))
+        assertNull(WifiRfProtocol.parse("""{"v":1,"pair":"abc123456789","source":"bad,source","seq":1,"epochMs":1,"sampleRateHz":20,"rssiDbm":-50}""", "abc123456789", 1L))
+        assertNull(WifiRfProtocol.parse("""{"v":1,"pair":"abc123456789","source":"bad\nsource","seq":1,"epochMs":1,"sampleRateHz":20,"rssiDbm":-50}""", "abc123456789", 1L))
     }
 
     @Test

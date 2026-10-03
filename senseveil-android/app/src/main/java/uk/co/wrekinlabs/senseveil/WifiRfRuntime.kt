@@ -27,17 +27,20 @@ class WifiRfBridge(
     private val running = AtomicBoolean(false)
     @Volatile private var deviceMoving = false
     @Volatile private var worker: Thread? = null
+    @Volatile private var generation = 0L
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
+        val runGeneration = ++generation
         onReading(WifiRfReading(status = WifiRfStatus.CONNECTING, message = "connecting to paired RF bridge"))
-        worker = Thread({ loop() }, "SenseVeil-RF").apply {
+        worker = Thread({ loop(runGeneration) }, "SenseVeil-RF").apply {
             isDaemon = true
             start()
         }
     }
 
     fun stop() {
+        generation++
         running.set(false)
         worker?.interrupt()
         worker = null
@@ -45,6 +48,7 @@ class WifiRfBridge(
     }
 
     fun setDeviceMoving(value: Boolean) {
+        if (value && !deviceMoving) analyzer.invalidateBaseline()
         deviceMoving = value
     }
 
@@ -53,8 +57,8 @@ class WifiRfBridge(
         onReading(WifiRfReading(status = WifiRfStatus.CALIBRATING, message = "RF baseline reset"))
     }
 
-    private fun loop() {
-        while (running.get()) {
+    private fun loop(runGeneration: Long) {
+        while (running.get() && generation == runGeneration) {
             try {
                 Socket().use { socket ->
                     socket.connect(InetSocketAddress(preferences.rfBridgeHost, preferences.rfBridgePort), 2_500)
@@ -64,7 +68,7 @@ class WifiRfBridge(
                     val output = PrintWriter(socket.getOutputStream(), true)
                     output.println(JSONObject().put("type", "senseveil_hello").put("v", 1).put("pair", preferences.rfPairCode).toString())
                     val input = BufferedReader(InputStreamReader(socket.getInputStream()))
-                    while (running.get()) {
+                    while (running.get() && generation == runGeneration) {
                         try {
                             val line = input.readLine() ?: break
                             val frame = WifiRfProtocol.parse(line, preferences.rfPairCode) ?: continue
@@ -77,14 +81,14 @@ class WifiRfBridge(
             } catch (_: SecurityException) {
                 onReading(WifiRfReading(status = WifiRfStatus.UNAVAILABLE, message = "local network permission required"))
             } catch (error: Exception) {
-                if (running.get()) {
+                if (running.get() && generation == runGeneration) {
                     onReading(WifiRfReading(
                         status = WifiRfStatus.UNAVAILABLE,
                         message = "RF bridge unavailable: " + error.javaClass.simpleName
                     ))
                 }
             }
-            if (running.get()) {
+            if (running.get() && generation == runGeneration) {
                 try {
                     Thread.sleep(1_500L)
                 } catch (_: InterruptedException) {
