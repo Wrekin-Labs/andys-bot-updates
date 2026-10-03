@@ -2,6 +2,16 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 
+async function sha256Hex(value:string){
+  const digest=await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value)
+  );
+  return [...new Uint8Array(digest)]
+    .map(b=>b.toString(16).padStart(2,"0"))
+    .join("");
+}
+
 function json(body:unknown,status=200,origin="*"){
   return new Response(JSON.stringify(body),{
     status,
@@ -24,6 +34,7 @@ Deno.serve(async(req:Request)=>{
     const body=await req.json();
     const widgetKey=String(body?.widgetKey||"").trim();
     const conversationId=String(body?.conversationId||"").trim();
+    const visitorToken=String(body?.visitorToken||"").trim();
     const after=body?.after?String(body.after):null;
     const includeHistory=Boolean(body?.includeHistory);
     if(!widgetKey||!conversationId) return json({error:"widgetKey and conversationId are required"},400,origin);
@@ -42,7 +53,7 @@ Deno.serve(async(req:Request)=>{
     if(origin!=="*"&&allowed.length>0&&!allowed.includes(origin)) return json({error:"Origin not allowed"},403,origin);
 
     let conversationQuery=admin.from("cxroute_conversations")
-      .select("id,brand_id")
+      .select("id,brand_id,visitor_token_hash")
       .eq("id",conversationId)
       .eq("organisation_id",config.organisation_id)
       .eq("channel","website_chat");
@@ -53,6 +64,12 @@ Deno.serve(async(req:Request)=>{
 
     const {data:conversation}=await conversationQuery.maybeSingle();
     if(!conversation) return json({error:"Conversation not found"},404,origin);
+
+    if(conversation.visitor_token_hash){
+      if(!visitorToken) return json({error:"Conversation access denied"},403,origin);
+      const hash=await sha256Hex(visitorToken);
+      if(hash!==String(conversation.visitor_token_hash)) return json({error:"Conversation access denied"},403,origin);
+    }
 
     let query=admin.from("cxroute_messages")
       .select("id,body,author_type,direction,created_at")

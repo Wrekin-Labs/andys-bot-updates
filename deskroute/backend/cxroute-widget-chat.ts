@@ -8,6 +8,7 @@ type Body={
   widgetKey?:string;
   message?:string;
   conversationId?:string;
+  visitorToken?:string;
   visitorName?:string;
   visitorEmail?:string;
   locale?:string;
@@ -52,6 +53,14 @@ async function sha256Hex(value:string){
   );
 
   return [...new Uint8Array(digest)]
+    .map(b=>b.toString(16).padStart(2,"0"))
+    .join("");
+}
+
+function createVisitorToken(){
+  const bytes=new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes]
     .map(b=>b.toString(16).padStart(2,"0"))
     .join("");
 }
@@ -353,7 +362,7 @@ Deno.serve(async(req:Request)=>{
 
       const {data:config,error:configError}=await admin
         .from("cxroute_widget_configs")
-        .select("id,organisation_id,brand_id,display_name,welcome_message,enabled,allowed_origins,require_name,require_email,privacy_url,prechat_message,offline_message")
+        .select("id,organisation_id,brand_id,display_name,welcome_message,enabled,allowed_origins,require_name,require_email,privacy_url,prechat_message,offline_message,widget_version")
         .eq("public_key",widgetKey)
         .eq("enabled",true)
         .maybeSingle();
@@ -415,6 +424,7 @@ Deno.serve(async(req:Request)=>{
         privacy_url:config.privacy_url||null,
         prechat_message:translation?.prechat_message||config.prechat_message,
         offline_message:translation?.offline_message||config.offline_message,
+        widget_version:String(config.widget_version||"6.1.0-rc.1"),
         locale
       },200,origin);
     }catch(error){
@@ -754,11 +764,15 @@ Deno.serve(async(req:Request)=>{
       body.conversationId
         ?String(body.conversationId)
         :"";
+    let visitorToken=
+      body.visitorToken
+        ?String(body.visitorToken).trim()
+        :"";
 
     if(conversationId){
       const {data:existing}=await admin
         .from("cxroute_conversations")
-        .select("id,brand_id")
+        .select("id,brand_id,visitor_token_hash")
         .eq("id",conversationId)
         .eq(
           "organisation_id",
@@ -778,7 +792,28 @@ Deno.serve(async(req:Request)=>{
             config.brand_id
         )
       ){
-        conversationId="";
+        return json({error:"Conversation access denied"},403,origin);
+      }
+
+      if(existing.visitor_token_hash){
+        if(
+          !visitorToken||
+          await sha256Hex(visitorToken)!==
+            String(existing.visitor_token_hash)
+        ){
+          return json({error:"Conversation access denied"},403,origin);
+        }
+      }else{
+        visitorToken=createVisitorToken();
+        const tokenHash=await sha256Hex(visitorToken);
+        const legacyUpdate=await admin
+          .from("cxroute_conversations")
+          .update({visitor_token_hash:tokenHash})
+          .eq("id",conversationId)
+          .eq("organisation_id",config.organisation_id);
+        if(legacyUpdate.error){
+          return json({error:"Could not secure conversation"},500,origin);
+        }
       }
     }
 
@@ -798,6 +833,9 @@ Deno.serve(async(req:Request)=>{
               body.visitorName
             ).trim()
           :"Website visitor";
+
+      visitorToken=createVisitorToken();
+      const visitorTokenHash=await sha256Hex(visitorToken);
 
       const {
         data:contact,
@@ -841,7 +879,8 @@ Deno.serve(async(req:Request)=>{
           channel:"website_chat",
           subject:
             message.slice(0,120),
-          status:"open"
+          status:"open",
+          visitor_token_hash:visitorTokenHash
         })
         .select("id")
         .single();
@@ -1191,6 +1230,7 @@ Deno.serve(async(req:Request)=>{
       {
         answer,
         conversationId,
+        visitorToken,
         needsHuman,
         aiMode,
         draftId,

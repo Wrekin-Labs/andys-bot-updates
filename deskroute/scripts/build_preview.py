@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import shutil
 
 root = Path(__file__).resolve().parents[1]
@@ -18,7 +19,12 @@ shutil.copytree(root / 'control-panel/help', qa / 'help')
 shutil.copy2(root / 'tests/fixture-api.js', qa / 'api.js')
 shutil.copy2(root / 'tests/widget.html', qa / 'widget.html')
 shutil.copy2(root / 'widget/deskroute-widget.js', qa / 'widget.js')
-shutil.copy2(root / 'widget/deskroute-widget.js', out / 'deskroute-widget.js')
+
+version = json.loads((root / 'package.json').read_text(encoding='utf-8'))['version']
+version_dir = out / 'widget' / version
+version_dir.mkdir(parents=True, exist_ok=True)
+shutil.copy2(root / 'widget/deskroute-widget.js', version_dir / 'deskroute-widget.js')
+shutil.copy2(root / 'widget/deskroute-loader.js', out / 'deskroute-widget.js')
 
 p = qa / 'app.js'
 p.write_text(
@@ -42,4 +48,4 @@ s = s.replace(
 )
 p.write_text(s, encoding='utf-8')
 
-print('Built preview with isolated /qa/ demonstration; no network access from demo.')
+print(f'Built preview and DeskRoute widget loader with pinned asset {version}.')

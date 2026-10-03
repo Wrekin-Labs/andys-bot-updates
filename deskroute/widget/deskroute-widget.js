@@ -17,13 +17,23 @@
   '</style><button class="dr-btn" aria-label="Open support chat">Chat</button><section class="dr-panel" role="dialog" aria-label="Support chat"><div class="dr-head"><div class="dr-title"></div><button class="dr-close" aria-label="Close chat">&times;</button></div><div class="dr-pre">Loading support...</div><div class="dr-msgs" aria-live="polite"></div><form class="dr-form"><div class="dr-fields dr-hidden"><input class="dr-in dr-name" aria-label="Your name" autocomplete="name" placeholder="Your name"><input class="dr-in dr-email" aria-label="Email" autocomplete="email" placeholder="Email (optional)" type="email"></div><textarea class="dr-ta" aria-label="How can we help?" maxlength="1000" placeholder="How can we help?"></textarea><button class="dr-send" type="submit">Send</button><div class="dr-note"></div></form></section>';
   while(wrap.firstChild)sh.appendChild(wrap.firstChild);
   var btn=sh.querySelector('.dr-btn'),panel=sh.querySelector('.dr-panel'),close=sh.querySelector('.dr-close'),head=sh.querySelector('.dr-title'),pre=sh.querySelector('.dr-pre'),msgs=sh.querySelector('.dr-msgs'),form=sh.querySelector('.dr-form'),fields=sh.querySelector('.dr-fields'),nameIn=sh.querySelector('.dr-name'),emailIn=sh.querySelector('.dr-email'),ta=sh.querySelector('.dr-ta'),send=sh.querySelector('.dr-send'),note=sh.querySelector('.dr-note');
-  var storageKey='deskroute-conversation-'+key;
-  var legacyConversation=localStorage.getItem(storageKey)||'';
-  var conversationId=sessionStorage.getItem(storageKey)||legacyConversation;
-  if(legacyConversation&&!sessionStorage.getItem(storageKey)){
-    sessionStorage.setItem(storageKey,legacyConversation);
-    localStorage.removeItem(storageKey);
+  var storageKey='deskroute-state-'+key,legacyKey='deskroute-conversation-'+key;
+  var conversationId='',visitorToken='',savedName='',savedEmail='';
+  function readState(){
+    try{
+      var raw=localStorage.getItem(storageKey);
+      if(raw){
+        var state=JSON.parse(raw);
+        if(state&&Number(state.expiresAt||0)>Date.now()){
+          conversationId=String(state.conversationId||'');visitorToken=String(state.visitorToken||'');savedName=String(state.name||'');savedEmail=String(state.email||'');return;
+        }
+      }
+    }catch(e){}
+    try{conversationId=sessionStorage.getItem(legacyKey)||localStorage.getItem(legacyKey)||'';savedName=sessionStorage.getItem('deskroute-name-'+key)||'';savedEmail=sessionStorage.getItem('deskroute-email-'+key)||''}catch(e){}
   }
+  function persistState(){if(!conversationId)return;try{localStorage.setItem(storageKey,JSON.stringify({conversationId:conversationId,visitorToken:visitorToken,name:savedName,email:savedEmail,expiresAt:Date.now()+30*24*60*60*1000}))}catch(e){}}
+  function clearState(){conversationId='';visitorToken='';savedName='';savedEmail='';historyLoaded=false;lastSeen='';try{localStorage.removeItem(storageKey);sessionStorage.removeItem(legacyKey);localStorage.removeItem(legacyKey)}catch(e){}}
+  readState();
   var cfg=null,lastSeen='',timer=null,historyLoaded=false;
   function add(text,kind){var d=document.createElement('div');d.className='dr-msg '+(kind||'');d.textContent=text;msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;return d}
   function setError(text){note.textContent=text||'';note.className='dr-note'+(text?' dr-err':'')}
@@ -38,17 +48,16 @@
       nameIn.required=!!j.require_name&&!conversationId;emailIn.required=!!j.require_email&&!conversationId;
       if(conversationId)compactComposer();
       if(j.require_email)emailIn.placeholder='Email';
-      var savedName=sessionStorage.getItem('deskroute-name-'+key)||'',savedEmail=sessionStorage.getItem('deskroute-email-'+key)||'';
       nameIn.value=savedName;emailIn.value=savedEmail;
     }catch(e){head.textContent=title;pre.textContent='Support is temporarily unavailable.';setError(e.message)}
   }
   async function sync(includeHistory){
     if(!conversationId||document.hidden)return false;
     try{
-      var payload={widgetKey:key,conversationId:conversationId,after:includeHistory?null:(lastSeen||null)};
+      var payload={widgetKey:key,conversationId:conversationId,visitorToken:visitorToken||undefined,after:includeHistory?null:(lastSeen||null)};
       if(includeHistory)payload.includeHistory=true;
       var r=await fetch(syncEndpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
-      var j=await r.json();if(!r.ok)return false;
+      var j=await r.json();if(!r.ok){if(r.status===403){clearState();setError('This chat session expired. Send a new message to start again.')}return false;}
       var items=j.messages||[];
       if(includeHistory){msgs.innerHTML='';historyLoaded=true;lastSeen='';}
       items.forEach(function(m){
@@ -69,11 +78,11 @@
     if(cfg&&cfg.require_name&&!nameIn.value.trim()){setError('Please enter your name.');return}
     if(cfg&&cfg.require_email&&!emailIn.value.trim()){setError('Please enter your email.');return}
     send.disabled=true;add(message,'me');ta.value='';
-    sessionStorage.setItem('deskroute-name-'+key,nameIn.value.trim());sessionStorage.setItem('deskroute-email-'+key,emailIn.value.trim());
+    savedName=nameIn.value.trim();savedEmail=emailIn.value.trim();
     try{
-      var r=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({widgetKey:key,message:message,conversationId:conversationId||undefined,visitorName:nameIn.value.trim()||undefined,visitorEmail:emailIn.value.trim()||undefined,locale:navigator.language||'en-GB'})});
+      var r=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({widgetKey:key,message:message,conversationId:conversationId||undefined,visitorToken:visitorToken||undefined,visitorName:savedName||undefined,visitorEmail:savedEmail||undefined,locale:navigator.language||'en-GB'})});
       var j=await r.json();if(!r.ok)throw new Error(j.error||'Could not send message');
-      if(j.conversationId){conversationId=j.conversationId;sessionStorage.setItem(storageKey,conversationId);compactComposer()}
+      if(j.conversationId){conversationId=j.conversationId;if(j.visitorToken)visitorToken=String(j.visitorToken);persistState();compactComposer()}
       var loaded=await sync(true);
       if(!loaded&&j.answer)add(j.answer,j.needsHuman?'sys':'');
       beginPolling();

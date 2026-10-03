@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
+import {webcrypto,createHash} from 'node:crypto';
 const source=stripTypeScriptTypes((await readFile(new URL('../backend/cxroute-widget-sync.ts',import.meta.url),'utf8')).replace(/^import .*;\s*$/gm,''));
 const org='qa-org',brand='qa-brand',conversation='qa-conversation';
 const fixtureMessages=[
@@ -41,7 +42,7 @@ async function exercise(body={},overrides={}){
    };
   }});return query;
  }};
- runInNewContext(source,{Deno:{serve:fn=>handler=fn,env:{get:name=>({SUPABASE_SECRET_KEYS:'{"default":"fixture-only"}',SUPABASE_URL:'https://fixture.invalid'})[name]}},createClient:()=>admin,Response});
+ runInNewContext(source,{Deno:{serve:fn=>handler=fn,env:{get:name=>({SUPABASE_SECRET_KEYS:'{"default":"fixture-only"}',SUPABASE_URL:'https://fixture.invalid'})[name]}},createClient:()=>admin,Response,crypto:webcrypto,TextEncoder});
  const response=await handler(new Request('https://fixture.invalid/sync',{method:'POST',headers:{Origin:overrides.origin||'https://qa.example','Content-Type':'application/json'},body:JSON.stringify({widgetKey:'qa-widget',conversationId:conversation,...body})}));
  return {status:response.status,body:await response.json(),reads};
 }
@@ -76,4 +77,19 @@ test('disabled widget and disallowed origin fail before messages are read',async
 });
 test('database failure is reported rather than represented as an empty successful sync',async()=>{
  const r=await exercise({}, {failTable:'cxroute_messages'});assert.equal(r.status,500);assert.equal(r.body.messages,undefined);
+});
+
+const visitorToken='qa-secret-token';
+const visitorTokenHash=createHash('sha256').update(visitorToken).digest('hex');
+test('visitor token is required once a conversation has been secured',async()=>{
+ const secured={id:conversation,organisation_id:org,brand_id:brand,channel:'website_chat',visitor_token_hash:visitorTokenHash};
+ const missing=await exercise({}, {records:{cxroute_conversations:[secured]}});
+ assert.equal(missing.status,403);
+ assert.ok(!missing.reads.includes('cxroute_messages'));
+ const wrong=await exercise({visitorToken:'wrong-token'}, {records:{cxroute_conversations:[secured]}});
+ assert.equal(wrong.status,403);
+ assert.ok(!wrong.reads.includes('cxroute_messages'));
+ const ok=await exercise({visitorToken}, {records:{cxroute_conversations:[secured]}});
+ assert.equal(ok.status,200);
+ assert.deepEqual(ok.body.messages.map(m=>m.id),['reply']);
 });
