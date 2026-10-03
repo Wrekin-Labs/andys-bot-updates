@@ -113,4 +113,53 @@ class ReleaseDeviceTest {
             assertTrue(File(bundle, "detections_window.jsonl").exists())
         }
     }
+
+    @Test fun historyVerifiesSelectedCaptureAndBlocksUnsealedExport() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val repository = EventRepository(context)
+        val sealed = repository.createEventBundle("qa_selected")
+        val pending = repository.createEventBundle("qa_unsealed")
+        val stamp = System.currentTimeMillis()
+        fun event(bundle: File, time: Long) = ScanEvent(time, "manual", 85, "H01", null,
+            44f, 92f, null, null, profile = "Balanced", bundleName = bundle.name,
+            explanationSummary = "No sustained anomaly", sceneQualityPercent = 100)
+        try {
+            File(sealed, "sample.txt").writeText("selected evidence")
+            EvidenceIntegrity.refreshManifest(sealed, Brand.VERSION)
+            EvidenceSigner.signIntegrityManifest(sealed)
+            repository.append(event(sealed, stamp))
+            repository.append(event(pending, stamp + 1))
+            assertNull("History cannot resolve paths outside its event directory", repository.bundleFor(event(sealed, stamp).copy(bundleName = "../outside")))
+            assertNull(repository.bundleFor(event(sealed, stamp).copy(bundleName = "Event_../outside")))
+            ActivityScenario.launch(MainActivity::class.java).use {
+                device.findObject(UiSelector().text("EVENTS")).also { assertTrue(it.waitForExists(10000)); it.click() }
+                assertTrue(device.findObject(UiSelector().text("Unsealed • cannot share yet")).waitForExists(10000))
+                assertFalse("Newest incomplete capture cannot be shared", device.findObject(UiSelector().text("SHARE").instance(0)).isEnabled)
+                assertTrue("Earlier sealed capture can be verified", device.findObject(UiSelector().text("VERIFY").instance(1)).isEnabled)
+                device.takeScreenshot(File(auditDirectory(), "events-cards.png"))
+                device.findObject(UiSelector().text("VERIFY").instance(1)).click()
+                val verified = device.findObject(UiSelector().textContains("STATUS VERIFIED"))
+                assertTrue("Selected earlier capture verifies while newest is incomplete", verified.waitForExists(15000))
+                assertTrue(verified.text.contains(sealed.name))
+                assertFalse(verified.text.contains(pending.name))
+                device.takeScreenshot(File(auditDirectory(), "event-verified.png"))
+                device.pressBack()
+                device.findObject(UiSelector().text("REVIEW").instance(1)).click()
+                assertTrue(device.findObject(UiSelector().text("EVENT REVIEW")).waitForExists(10000))
+                device.takeScreenshot(File(auditDirectory(), "event-review.png"))
+                device.pressBack()
+                device.findObject(UiSelector().text("SHARE").instance(1)).click()
+                val zip = repository.shareCacheFileFor(sealed)
+                val deadline = android.os.SystemClock.elapsedRealtime() + 15000
+                while (android.os.SystemClock.elapsedRealtime() < deadline &&
+                    !runCatching { java.util.zip.ZipFile(zip).use { it.getEntry("sample.txt") != null } }.getOrDefault(false)) android.os.SystemClock.sleep(200)
+                assertTrue("Sharing the selected event creates its ZIP", zip.exists())
+                java.util.zip.ZipFile(zip).use { archive ->
+                    assertNotNull(archive.getEntry("sample.txt"))
+                    assertEquals("selected evidence", archive.getInputStream(archive.getEntry("sample.txt")).bufferedReader().readText())
+                }
+                device.pressBack()
+            }
+        } finally { sealed.deleteRecursively(); pending.deleteRecursively() }
+    }
 }

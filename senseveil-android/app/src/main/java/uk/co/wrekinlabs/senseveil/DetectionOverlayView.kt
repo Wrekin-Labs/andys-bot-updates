@@ -62,9 +62,10 @@ class DetectionOverlayView(context: Context) : View(context) {
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 30f
+        textSize = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 13f, resources.displayMetrics)
         typeface = android.graphics.Typeface.MONOSPACE
     }
+    private val objectLabelPaint = Paint(labelPaint).apply { textSize = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 11f, resources.displayMetrics); color = Brand.AMBER }
 
     fun update(
         pose: Pose?,
@@ -84,15 +85,19 @@ class DetectionOverlayView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         drawReticle(canvas)
-        objects.forEach { drawObject(canvas, it) }
-        faces.forEach { drawRect(canvas, it.boundingBox, facePaint) }
-        drawPose(canvas)
+        if (labMode) {
+            objects.forEach { drawObject(canvas, it) }
+            faces.forEach { drawRect(canvas, it.boundingBox, facePaint) }
+            drawPose(canvas)
+        }
 
         poseBounds()?.let { box ->
             if (state.anomaly) {
                 canvas.drawRect(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat(), anomalyPaint)
             } else if (state.candidateAnomaly) {
                 canvas.drawRect(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat(), candidatePaint)
+            } else if (!labMode && state.humanLike) {
+                canvas.drawRoundRect(RectF(box), 12f, 12f, facePaint)
             }
             if (state.humanLike) drawLabel(canvas, box)
         }
@@ -104,25 +109,27 @@ class DetectionOverlayView(context: Context) : View(context) {
         canvas.drawCircle(cx, cy, minOf(width, height) * 0.14f, reticlePaint)
         canvas.drawLine(cx - 38f, cy, cx + 38f, cy, reticlePaint)
         canvas.drawLine(cx, cy - 38f, cx, cy + 38f, reticlePaint)
-        canvas.drawLine(width * 0.33f, 0f, width * 0.33f, height.toFloat(), reticlePaint)
-        canvas.drawLine(width * 0.66f, 0f, width * 0.66f, height.toFloat(), reticlePaint)
+        if (labMode) {
+            canvas.drawLine(width * 0.33f, 0f, width * 0.33f, height.toFloat(), reticlePaint)
+            canvas.drawLine(width * 0.66f, 0f, width * 0.66f, height.toFloat(), reticlePaint)
+        }
     }
 
     private fun drawLabel(canvas: Canvas, box: Rect) {
         val confidence = (state.fusedScore * 100f).toInt().coerceIn(0, 100)
-        val distance = state.estimatedDistanceMetres?.let { "  ~%.1fm EST".format(it) } ?: ""
         val prefix = when {
             labMode && state.anomaly -> "CONSENSUS Δ"
             state.anomaly -> "ANOMALY"
             labMode && state.candidateAnomaly -> "CANDIDATE"
             else -> "HUMAN"
         }
-        val text = "$prefix ${state.trackLabel ?: "--"}  $confidence%$distance"
+        val text = if (labMode) "$prefix ${state.trackLabel ?: "--"} • $confidence%" else "${state.trackLabel ?: "PERSON"} • TRACKING"
         val widthText = labelPaint.measureText(text)
-        val left = box.left.toFloat().coerceAtLeast(8f)
-        val top = (box.top - 42).toFloat().coerceAtLeast(8f)
-        canvas.drawRoundRect(RectF(left, top, left + widthText + 24f, top + 38f), 8f, 8f, labelBg)
-        canvas.drawText(text, left + 12f, top + 29f, labelPaint)
+        val lineHeight = labelPaint.fontSpacing + 16f
+        val left = box.left.toFloat().coerceIn(8f, maxOf(8f, width - widthText - 32f))
+        val top = (box.top - lineHeight).coerceIn(8f, maxOf(8f, height - lineHeight - 8f))
+        canvas.drawRoundRect(RectF(left, top, left + widthText + 24f, top + lineHeight), 8f, 8f, labelBg)
+        canvas.drawText(text, left + 12f, top + 8f - labelPaint.ascent(), labelPaint)
     }
 
     private fun drawPose(canvas: Canvas) {
@@ -147,7 +154,7 @@ class DetectionOverlayView(context: Context) : View(context) {
             if (pa != null && pb != null) canvas.drawLine(pa.x, pa.y, pb.x, pb.y, skeletonPaint)
         }
         pose?.allPoseLandmarks
-            ?.filter { it.inFrameLikelihood >= 0.45f }
+            ?.filter { it.inFrameLikelihood >= 0.65f && it.position.x.isFinite() && it.position.y.isFinite() && it.position.x in 0f..width.toFloat() && it.position.y in 0f..height.toFloat() }
             ?.forEach { canvas.drawCircle(it.position.x, it.position.y, 5.5f, jointPaint) }
     }
 
@@ -158,7 +165,7 @@ class DetectionOverlayView(context: Context) : View(context) {
 
     private fun poseBounds(): Rect? {
         val points = pose?.allPoseLandmarks
-            ?.filter { it.inFrameLikelihood >= 0.45f }
+            ?.filter { it.inFrameLikelihood >= 0.65f && it.position.x.isFinite() && it.position.y.isFinite() && it.position.x in 0f..width.toFloat() && it.position.y in 0f..height.toFloat() }
             ?.map { it.position }
             .orEmpty()
         if (points.size < 4) return null
@@ -176,9 +183,9 @@ class DetectionOverlayView(context: Context) : View(context) {
         if (!labMode) return
         val label = detected.labels.firstOrNull()?.text?.takeIf { it.isNotBlank() } ?: return
         val text = "OBJ ${detected.trackingId ?: "--"} ${label.uppercase()}"
-        val small = Paint(labelPaint).apply { textSize = 22f; color = Brand.AMBER }
+        val small = objectLabelPaint
         val widthText = small.measureText(text)
-        val left = detected.boundingBox.left.toFloat().coerceAtLeast(6f)
+        val left = detected.boundingBox.left.toFloat().coerceIn(6f, maxOf(6f, width - widthText - 24f))
         val top = (detected.boundingBox.bottom + 6).toFloat().coerceAtMost(height - 34f)
         canvas.drawRoundRect(RectF(left, top, left + widthText + 18f, top + 30f), 6f, 6f, labelBg)
         canvas.drawText(text, left + 9f, top + 23f, small)

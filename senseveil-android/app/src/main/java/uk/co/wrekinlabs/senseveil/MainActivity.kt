@@ -60,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var detailText: TextView
     private lateinit var sensorText: TextView
     private lateinit var bufferText: TextView
+    private lateinit var captureStatusText: TextView
+    private var lastManualCaptureAt = 0L
     private lateinit var modeButton: Button
     private lateinit var lightButton: Button
     private lateinit var captureButton: Button
@@ -254,11 +256,15 @@ class MainActivity : AppCompatActivity() {
         brandCopy.addView(TextView(this).apply {
             text = Brand.APP_NAME
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 17f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setTypeface(typeface, Typeface.BOLD)
         })
         brandCopy.addView(TextView(this).apply {
-            text = Brand.TAGLINE
+            text = "v${Brand.VERSION} • Field research"
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(Brand.TEXT_MUTED)
             textSize = 10f
         })
@@ -286,7 +292,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             textSize = 18f
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
-            text = "INITIALISING SENSOR FUSION…"
+            text = "Starting camera and sensors…"
         }
         detailText = TextView(this).apply {
             setTextColor(Brand.CYAN)
@@ -305,7 +311,17 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        brandBar.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, _ ->
+            val lp = statusPanel.layoutParams as FrameLayout.LayoutParams
+            val target = bottom + dp(6)
+            if (lp.topMargin != target) { lp.topMargin = target; statusPanel.layoutParams = lp }
+        }
         radarView = RadarView(this).apply { background = roundedPanel(0xAA0B1015.toInt()) }
+        statusPanel.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
+            val lp = radarView.layoutParams as? FrameLayout.LayoutParams ?: return@addOnLayoutChangeListener
+            val target = if (landscape) top else bottom + dp(6)
+            if (lp.topMargin != target) { lp.topMargin = target; radarView.layoutParams = lp }
+        }
         root.addView(
             radarView,
             FrameLayout.LayoutParams(dp(if (landscape) 148 else 158), dp(if (landscape) 100 else 126)).apply {
@@ -333,6 +349,13 @@ class MainActivity : AppCompatActivity() {
             text = "EVENT BUFFER: STARTING"
         }
 
+        captureStatusText = TextView(this).apply {
+            text = CaptureProgress.summary()
+            textSize = 12f
+            setTextColor(Brand.GREEN)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            setPadding(0, dp(4), 0, dp(4))
+        }
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -351,12 +374,14 @@ class MainActivity : AppCompatActivity() {
 
         val disclaimer = TextView(this).apply {
             setTextColor(0xFF8799A3.toInt())
-            textSize = 9f
-            text = "AI classifications and field readings are measurements/estimates, not evidence of paranormal activity. Through-wall mode requires external radar hardware."
+            textSize = 10f
+            text = "AI scores are estimates, not proof of a cause. Radar requires external hardware."
+            contentDescription = "AI scores are estimates, not proof of a paranormal cause. The phone camera cannot see through walls. Radar requires external hardware."
         }
 
         bottomPanel.addView(sensorText)
         bottomPanel.addView(bufferText)
+        bottomPanel.addView(captureStatusText)
         bottomPanel.addView(buttonRow)
         bottomPanel.addView(disclaimer)
 
@@ -465,7 +490,7 @@ class MainActivity : AppCompatActivity() {
                     bodyScore >= (profile.humanBodyThreshold + lowLightPenalty)
                 val facePresent = faces.isNotEmpty()
                 val track = trackState.update(humanLike)
-                val distance = DistanceEstimator.estimateFromPose(pose, previewView.width)
+                val distance = DistanceEstimator.estimateFromPose(pose, faces, previewView.width, previewView.height)
                 val horizontal = DistanceEstimator.horizontalOffset(pose, previewView.width)
                 val ext = freshExternalReading()
                 val fusion = FusionScorer.score(profile, bodyScore, facePresent, sensorSnapshot.novelty, ext)
@@ -524,7 +549,7 @@ class MainActivity : AppCompatActivity() {
                     consensusAgeMs = consensus.ageMs,
                     trackLabel = track.label,
                     trackStability = track.stability,
-                    estimatedDistanceMetres = distance ?: ext?.distanceMetres,
+                    estimatedDistanceMetres = if (humanLike) distance else ext?.takeIf { it.detected }?.distanceMetres,
                     horizontalOffset = if (humanLike) horizontal else ext?.lateralOffset ?: 0f,
                     strongLandmarks = strongLandmarks,
                     sensorNovelty = sensorSnapshot.novelty,
@@ -601,14 +626,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderDetection(state: DetectionState) {
         val confidence = (state.fusedScore * 100f).roundToInt()
-        val dist = state.estimatedDistanceMetres?.let { " • ~%.1fm EST".format(it) } ?: ""
+        // A shoulder-size guess is deliberately not promoted to a measured range in Field mode.
+        val dist = if (labMode && state.humanLike) state.estimatedDistanceMetres?.let {
+            " • ~%.1fm ROUGH".format((it * 2).roundToInt() / 2f)
+        } ?: "" else ""
         val extNow = freshExternalReading()
         statusText.text = when {
             labMode && state.anomaly -> "SUSTAINED DISAGREEMENT • $confidence%"
             labMode && state.candidateAnomaly -> "CANDIDATE • ${(state.consensusRatio * 100).roundToInt()}% CONSENSUS"
             state.anomaly -> "ANOMALOUS HUMAN-LIKE SIGNAL • $confidence%"
-            state.humanLike && state.facePresent -> "HUMAN ${state.trackLabel ?: ""} • $confidence%$dist"
-            state.humanLike -> "HUMAN-LIKE ${state.trackLabel ?: ""} • $confidence%$dist"
+            state.humanLike && state.facePresent -> "PERSON ${state.trackLabel ?: ""}$dist"
+            state.humanLike -> "HUMAN-LIKE ${state.trackLabel ?: ""}$dist"
             extNow?.detected == true -> "${extNow.sensorType} PRESENCE • ${(extNow.confidence * 100).roundToInt()}%"
             else -> "SCANNING • NO STRONG PRESENCE"
         }
@@ -627,11 +655,13 @@ class MainActivity : AppCompatActivity() {
                 "V ${(state.fusion.vision * 100).roundToInt()} F ${(state.fusion.face * 100).roundToInt()} " +
                 "S ${(state.fusion.field * 100).roundToInt()} X ${(state.fusion.external * 100).roundToInt()}"
         } else {
-            "VISION ${(state.bodyScore * 100).roundToInt()}%  •  FUSED $confidence%  •  ${currentProfile.label.uppercase()}"
+            "Fusion score $confidence% • ${currentProfile.label}\n" +
+                if (state.humanLike) "Visual tracking • range unmeasured" else "Hold steady • watch for changes"
         }
     }
 
     private fun updateSensorText(s: SensorSnapshot) {
+        captureStatusText.text = CaptureProgress.summary()
         fun f(value: Float?, suffix: String, digits: Int = 0): String =
             value?.let { if (digits == 1) "%.1f%s".format(it, suffix) else "%.0f%s".format(it, suffix) } ?: "--"
 
@@ -663,15 +693,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun captureEvent(reason: String, state: DetectionState, automatic: Boolean) {
         if (!::cameraController.isInitialized) return
-
+        val now = SystemClock.elapsedRealtime()
+        if (!automatic && now - lastManualCaptureAt < 900L) return
+        if (!automatic) lastManualCaptureAt = now
+        var pendingBundleName: String? = null
         try {
             val eventElapsed = SystemClock.elapsedRealtime()
             val interruptionGeneration = captureInterruptionGeneration
             val captureSessionId = sessionRecorder.currentSessionId
             val captureEpochMs = System.currentTimeMillis()
             val bundle = eventRepository.createEventBundle(reason)
+            pendingBundleName = bundle.name
+            CaptureProgress.started(bundle.name)
+            captureStatusText.text = CaptureProgress.summary()
             val completion = CaptureCompletion { videoStatus ->
                 submitIo {
+                    try {
                     java.io.File(bundle, "capture_status.json").writeText(org.json.JSONObject().apply {
                         put("state", "sealed")
                         put("video", videoStatus)
@@ -680,7 +717,12 @@ class MainActivity : AppCompatActivity() {
                     }.toString(2))
                     EvidenceIntegrity.refreshManifest(bundle, Brand.VERSION)
                     EvidenceSigner.signIntegrityManifest(bundle)
-                    runOnUiThread { if (!isDestroyed) bufferText.text = "EVENT SEALED: ${bundle.name}" }
+                    CaptureProgress.sealed(bundle.name)
+                    runOnUiThread { if (!isDestroyed) captureStatusText.text = CaptureProgress.summary() }
+                    } catch (error: Exception) {
+                        CaptureProgress.failed(bundle.name)
+                        throw error
+                    }
                 }
             }
             if (rollingBuffer == null) completion.videoReady("unavailable")
@@ -735,23 +777,27 @@ class MainActivity : AppCompatActivity() {
                                     completion.windowReady()
                                 } catch (error: Exception) {
                                     completion.fail()
+                                    CaptureProgress.failed(bundle.name)
                                     runOnUiThread { if (!isDestroyed) bufferText.text = "CAPTURE INCOMPLETE: ${error.message}" }
                                 }
                             }, 10_500L, java.util.concurrent.TimeUnit.MILLISECONDS)
-                            runOnUiThread { if (!isDestroyed) bufferText.text = "EVENT SAVING POST-WINDOW: ${bundle.name}" }
+                            runOnUiThread { if (!isDestroyed) captureStatusText.text = CaptureProgress.summary() }
                         } catch (error: Exception) {
                             completion.fail()
+                            CaptureProgress.failed(bundle.name)
                             runOnUiThread { if (!isDestroyed) bufferText.text = "CAPTURE INCOMPLETE: ${error.message}" }
                         }
                     }
 
                     override fun onError(exception: ImageCaptureException) {
                         completion.fail()
+                        CaptureProgress.failed(bundle.name)
                         runOnUiThread { bufferText.text = "CAPTURE FAILED: ${exception.message ?: "unknown"}" }
                     }
                 }
             )
         } catch (error: Exception) {
+            pendingBundleName?.let { CaptureProgress.failed(it) }
             bufferText.text = "CAPTURE FAILED: ${error.message ?: error.javaClass.simpleName}"
         }
     }
@@ -822,6 +868,13 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
+        fun toolSection(title: String) {
+            panel.addView(TextView(this).apply {
+                text = title; textSize = 15f; setTextColor(Color.WHITE)
+                setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(16), 0, dp(5))
+            })
+        }
+        toolSection("Scanning & capture")
         toolButton("PROFILE: ${currentProfile.label.uppercase()}") {
             currentProfile = currentProfile.next()
             consensusGate.reset()
@@ -856,8 +909,10 @@ class MainActivity : AppCompatActivity() {
             root.removeView(shade)
             showToolsPanel()
         }
+        toolSection("Signer trust")
         toolButton("TRUST LAST IMPORTED SIGNER") { trustLastImportedSigner() }
         toolButton("TRUSTED SIGNERS") { showTextPanel("TRUSTED SIGNERS", trustedSignerStore.render()) }
+        toolSection("Device & help")
         toolButton("DEVICE SUPPORT") { showDeviceSupport() }
         toolButton("DEVICE HEALTH") { showDeviceHealth() }
         toolButton("AR DEPTH SUPPORT") { showArDepthSupport() }
@@ -869,6 +924,7 @@ class MainActivity : AppCompatActivity() {
         toolButton("CRASH DIAGNOSTICS") { showTextPanel("CRASH DIAGNOSTICS", CrashDiagnostics.lastCrashSummary(this)) }
         toolButton("EXPORT DIAGNOSTICS") { exportDiagnostics() }
         toolButton("SELF-TEST") { runSelfTest() }
+        toolSection("Evidence & sessions")
         toolButton("EVIDENCE REVIEW") { showEvidenceReview() }
         toolButton("SENSOR ADAPTERS") { showSensorAdapters() }
         toolButton("SESSION REPLAY") { showSessionReplay() }
@@ -1064,7 +1120,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showTextPanel(title: String, bodyText: String) {
+    private fun showTextPanel(title: String, bodyText: String, photoFile: java.io.File? = null) {
         val root = findViewById<ViewGroup>(android.R.id.content)
         val shade = FrameLayout(this).apply {
             setBackgroundColor(0xE6000000.toInt())
@@ -1084,11 +1140,30 @@ class MainActivity : AppCompatActivity() {
         val body = TextView(this).apply {
             text = bodyText
             setTextColor(0xFFD7E7ED.toInt())
-            textSize = 11f
+            textSize = 14f
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
             setPadding(0, dp(10), 0, dp(12))
         }
-        val scroll = ScrollView(this).apply { addView(body) }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (photoFile != null) {
+            val photo = android.widget.ImageView(this).apply {
+                adjustViewBounds = true
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                contentDescription = "Capture preview; use Verify to check integrity"
+            }
+            content.addView(photo, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
+            submitIo {
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, bounds)
+                val options = android.graphics.BitmapFactory.Options().apply {
+                    inSampleSize = maxOf(1, maxOf(bounds.outWidth, bounds.outHeight) / 720)
+                }
+                val bitmap = android.graphics.BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                runOnUiThread { if (!isDestroyed) photo.setImageBitmap(bitmap) }
+            }
+        }
+        content.addView(body)
+        val scroll = ScrollView(this).apply { addView(content) }
         panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         panel.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         shade.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
@@ -1102,6 +1177,14 @@ class MainActivity : AppCompatActivity() {
         val bundle = eventRepository.latestBundle()
         if (bundle == null) {
             Toast.makeText(this, "No evidence bundle saved yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        verifyEvidence(bundle)
+    }
+
+    private fun verifyEvidence(bundle: java.io.File) {
+        if (CaptureProgress.isPending(bundle.name)) {
+            showTextPanel("EVIDENCE SAVING", "This capture is still collecting its post-event window and video. Wait for Sealed in Events, then verify it.")
             return
         }
         submitIo {
@@ -1131,7 +1214,16 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "No evidence bundle saved yet", Toast.LENGTH_SHORT).show()
             return
         }
+        exportEvidence(bundle)
+    }
+
+    private fun exportEvidence(bundle: java.io.File) {
+        if (CaptureProgress.isPending(bundle.name)) {
+            showTextPanel("EVIDENCE SAVING", "Wait for this capture to seal before sharing. No incomplete export has been created.")
+            return
+        }
         bufferText.text = "VERIFYING & PACKAGING EVIDENCE…"
+        Toast.makeText(this, "Checking evidence before sharing…", Toast.LENGTH_SHORT).show()
         submitIo {
             try {
                 val verification = EvidenceVerifier.verifyBundle(bundle, requireLocalSigner = true)
@@ -1152,69 +1244,50 @@ class MainActivity : AppCompatActivity() {
                     mainHandler.postDelayed({ clearZip.delete() }, 10 * 60 * 1000L)
                 }
             } catch (t: Throwable) {
-                runOnUiThread { bufferText.text = "EXPORT FAILED: ${t.message ?: "unknown"}" }
+                runOnUiThread {
+                    bufferText.text = "EXPORT FAILED: ${t.message ?: "unknown"}"
+                    showTextPanel("EXPORT FAILED", "No evidence was shared.\n\n${t.message ?: "Unknown error"}")
+                }
             }
         }
     }
 
     private fun showHistory() {
         val root = findViewById<ViewGroup>(android.R.id.content)
-        val shade = FrameLayout(this).apply {
-            setBackgroundColor(0xE6000000.toInt())
-            isClickable = true
+        lateinit var history: EvidenceHistoryView
+        history = EvidenceHistoryView(this, eventRepository, ::reviewEvent, ::verifyEvidence, ::exportEvidence) {
+            root.removeView(history)
         }
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(16))
-            background = roundedPanel(0xFF10161D.toInt())
-        }
-        panel.addView(TextView(this).apply {
-            text = "SENSEVEIL EVENT LOG"
-            setTextColor(Brand.CYAN)
-            textSize = 18f
-            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
-        })
+        root.addView(history, matchParent())
+    }
 
-        val recent = eventRepository.recent(30)
-        val body = TextView(this).apply {
-            setTextColor(0xFFD7E7ED.toInt())
-            textSize = 11f
-            setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
-            text = if (recent.isEmpty()) "No saved events yet." else recent.joinToString("\n\n") { event ->
-                val distance = event.estimatedDistanceMetres?.let { "  ~%.1fm".format(it) } ?: ""
-                val time = java.text.SimpleDateFormat("dd MMM HH:mm:ss", java.util.Locale.UK)
-                    .format(java.util.Date(event.timestampEpochMs))
-                buildString {
-                    append(time).append("  ").append(event.type.uppercase()).append("  ")
-                        .append(event.confidence).append("%  ").append(event.trackLabel ?: "--").append(distance).append('\n')
-                    append("PROFILE ").append(event.profile ?: "--")
-                    append("  Q ").append(event.sceneQualityPercent?.let { "$it%" } ?: "--")
-                    append("  CONS ").append(event.consensusRatio?.let { "%.0f%%".format(it * 100f) } ?: "--")
-                    append("  MAG ").append(event.magneticMicroTesla?.let { "%.1fµT".format(it) } ?: "--")
-                    append("  AUDIO ").append(event.audioDbfs?.let { "%.1fdB".format(it) } ?: "--").append('\n')
-                    if (!event.anomalyReason.isNullOrBlank()) append("WHY: ").append(event.anomalyReason).append('\n')
-                    if (!event.explanationSummary.isNullOrBlank()) append("TRACE: ").append(event.explanationSummary).append('\n')
-                    if (!event.sessionId.isNullOrBlank()) append("SESSION: ").append(event.sessionId).append('\n')
-                    append(event.note)
-                }
+    private fun reviewEvent(event: ScanEvent) {
+        submitIo {
+            val bundle = eventRepository.bundleFor(event)
+            val photo = bundle?.listFiles()?.firstOrNull { it.extension.equals("jpg", true) }
+            val captureInfo = bundle?.let { java.io.File(it, "capture_status.json") }?.takeIf { it.isFile }
+                ?.let { runCatching { org.json.JSONObject(it.readText()).toString(2) }.getOrNull() }
+            val time = java.text.SimpleDateFormat("dd MMM yyyy • HH:mm:ss", java.util.Locale.UK)
+                .format(java.util.Date(event.timestampEpochMs))
+            val body = buildString {
+                append(time).append("\n\n")
+                append("Fusion score: ${event.confidence}% (not a probability)\n")
+                append("Profile: ${event.profile ?: "Unknown"}\n")
+                append("Track: ${event.trackLabel ?: "None"}\n")
+                append("Scene quality: ${event.sceneQualityPercent?.let { "$it%" } ?: "Unknown"}\n")
+                event.estimatedDistanceMetres?.let { append("Recorded range estimate: ~%.1f m; not measured depth\n".format(it)) }
+                append("\n${event.anomalyReason ?: "No sustained detector disagreement recorded"}\n")
+                append("\n${event.explanationSummary ?: event.note}\n")
+                append("\nMagnetic: ${event.magneticMicroTesla ?: "Unavailable"} µT\n")
+                append("Light: ${event.lightLux ?: "Unavailable"} lx\n")
+                append("Audio: ${event.audioDbfs?.let { "$it dBFS" } ?: "Off / unavailable"}\n")
+                append("\nSession: ${event.sessionId ?: "Unknown"}\n")
+                append("\nBundle: ${event.bundleName ?: "Unavailable"}\n")
+                captureInfo?.let { append("\nCapture completion\n$it\n") }
+                append("\nA preview does not verify integrity. Use Verify on this event to check its files and signature.")
             }
+            runOnUiThread { if (!isDestroyed) showTextPanel("EVENT REVIEW", body, photo) }
         }
-        val scroll = ScrollView(this).apply { addView(body) }
-        panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(compactButton("SHARE LAST") { exportLatestEvidence() }, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            setMargins(0, 0, dp(3), 0)
-        })
-        actions.addView(compactButton("CLOSE") { root.removeView(shade) }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        panel.addView(actions)
-
-        shade.addView(
-            panel,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                setMargins(dp(18), dp(55), dp(18), dp(45))
-            }
-        )
-        root.addView(shade, matchParent())
     }
 
     private fun vibrateDetection() {

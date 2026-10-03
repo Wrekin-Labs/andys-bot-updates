@@ -102,6 +102,16 @@ class EventRepository(private val context: Context) {
         // Finalization changes modification time; the name retains capture order.
         ?.maxByOrNull { it.name }
 
+    /** History is input data. Only direct local event directories may be opened or shared. */
+    fun bundleFor(event: ScanEvent): File? {
+        val name = event.bundleName ?: return null
+        if (!name.startsWith("Event_") || name.contains('/') || name.contains('\\') || name.contains("..")) return null
+        val file = File(eventRoot, name).canonicalFile
+        return file.takeIf { it.parentFile == eventRoot.canonicalFile && it.isDirectory }
+    }
+
+    fun isSealed(bundle: File): Boolean = File(bundle, "integrity.sig.json").isFile && File(bundle, "integrity.json").isFile
+
     fun exportFileFor(bundle: File): File = File(eventRoot, "exports/${bundle.name}.zip")
 
     fun secureVaultFileFor(bundle: File): File = File(eventRoot, "vault/${bundle.name}.sve")

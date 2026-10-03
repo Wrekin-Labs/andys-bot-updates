@@ -2,28 +2,22 @@ package uk.co.wrekinlabs.senseveil
 
 import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseLandmark
-import kotlin.math.abs
-import kotlin.math.tan
+import com.google.mlkit.vision.face.Face
 
 object DistanceEstimator {
-    private const val ASSUMED_SHOULDER_WIDTH_M = 0.42f
-    private const val APPROX_HORIZONTAL_FOV_DEG = 65f
-
     /**
      * Coarse monocular estimate only. This is not ARCore Depth and is labelled EST in the UI.
      */
-    fun estimateFromPose(pose: Pose?, viewWidthPx: Int): Float? {
-        if (pose == null || viewWidthPx <= 0) return null
+    fun estimateFromPose(pose: Pose?, faces: List<Face>, viewWidthPx: Int, viewHeightPx: Int): Float? {
+        if (pose == null) return null
         val left = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER) ?: return null
         val right = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER) ?: return null
-        if (left.inFrameLikelihood < 0.55f || right.inFrameLikelihood < 0.55f) return null
-
-        val shoulderPx = abs(left.position.x - right.position.x)
-        if (shoulderPx < 12f) return null
-
-        val focalPx = viewWidthPx / (2f * tan(Math.toRadians(APPROX_HORIZONTAL_FOV_DEG / 2.0)).toFloat())
-        val distance = ASSUMED_SHOULDER_WIDTH_M * focalPx / shoulderPx
-        return distance.coerceIn(0.35f, 25f)
+        val nose = pose.getPoseLandmark(PoseLandmark.NOSE) ?: return null
+        // Never borrow another person's frontal face to validate this pose.
+        val face = faces.firstOrNull { it.boundingBox.contains(nose.position.x.toInt(), nose.position.y.toInt()) } ?: return null
+        return MonocularRange.estimate(left.position.x, left.position.y, right.position.x, right.position.y,
+            left.inFrameLikelihood, right.inFrameLikelihood, viewWidthPx, viewHeightPx,
+            face.headEulerAngleY, face.headEulerAngleZ)
     }
 
     fun horizontalOffset(pose: Pose?, viewWidthPx: Int): Float {
