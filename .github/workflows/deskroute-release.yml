@@ -1,0 +1,30 @@
+name: DeskRoute release checks
+on:
+  push:
+    branches: [deskroute-v6-production]
+    paths: ['deskroute/**', '.github/workflows/deskroute-release.yml']
+  pull_request:
+    paths: ['deskroute/**', '.github/workflows/deskroute-release.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm --prefix deskroute run check
+      - run: node deskroute/tests/api.test.mjs
+      - run: python deskroute/scripts/build_site.py
+      - run: python deskroute/scripts/check_links.py
+      - run: python deskroute/scripts/build_preview.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deskroute-6.1-preview
+          path: deskroute-preview-public
