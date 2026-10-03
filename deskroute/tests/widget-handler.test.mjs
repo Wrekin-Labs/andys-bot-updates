@@ -6,6 +6,7 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {canSendAutomatically} from '../backend/answer-policy.js';
+import {literalGroundingCheck} from '../backend/literal-grounding.js';
 import {questionDate,datedKnowledge} from '../backend/dated-knowledge.js';
 const source=stripTypeScriptTypes((await readFile(new URL('../backend/cxroute-widget-chat.ts',import.meta.url),'utf8')).replace(/^import .*;\s*$/gm,''));
 async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true}={}){
@@ -22,7 +23,7 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
   },
   async rpc(name,p){calls.push({name,p});if(name==='cxroute_take_widget_rate_limit')return {data:1};if(name.startsWith('cxroute_search_approved_facts'))return {data:facts};if(name==='cxroute_record_knowledge_gap')return {data:'qa-gap'};throw Error('Unexpected RPC '+name);}
  };
- runInNewContext(source,{Deno:{env:{get:name=>({SUPABASE_URL:'https://fixture.invalid',SUPABASE_SECRET_KEYS:'{"default":"test-only"}',OPENAI_API_KEY:provider==='absent'?undefined:'test-only'})[name]},serve:fn=>handler=fn},createClient:()=>admin,canSendAutomatically,questionDate,datedKnowledge,crypto:webcrypto,TextEncoder,URL,Response,console,fetch:async()=>provider==='failure'?new Response('{"error":{"message":"Provider unavailable"}}',{status:503}):new Response(JSON.stringify({output_text:JSON.stringify(reply)}))});
+ runInNewContext(source,{Deno:{env:{get:name=>({SUPABASE_URL:'https://fixture.invalid',SUPABASE_SECRET_KEYS:'{"default":"test-only"}',OPENAI_API_KEY:provider==='absent'?undefined:'test-only'})[name]},serve:fn=>handler=fn},createClient:()=>admin,canSendAutomatically,literalGroundingCheck,questionDate,datedKnowledge,crypto:webcrypto,TextEncoder,URL,Response,console,fetch:async()=>provider==='failure'?new Response('{"error":{"message":"Provider unavailable"}}',{status:503}):new Response(JSON.stringify({output_text:JSON.stringify(reply)}))});
  const response=await handler(new Request('https://fixture.invalid/widget',{method:'POST',headers:{Origin:'https://release.example','Content-Type':'application/json'},body:JSON.stringify({widgetKey:'qa-key',conversationId:conversation.id,message:question})}));
  assert.equal(response.status,200);return {body:await response.json(),writes,calls};
 }
@@ -52,6 +53,7 @@ test('first human handoff creates a staff notification',async()=>{
 });
 test('unknown question with no approved facts creates a gap and human assignment',async()=>{const r=await exercise('Is a lift available?',[]);assert.equal(r.body.needsHuman,true);assert.equal(r.body.knowledgeGapId,'qa-gap');assert.equal(r.body.assignedUserId,'qa-agent');});
 test('validated grounded answer still reaches the visitor',async()=>{const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};const r=await exercise('What is the current price?',[price],{provider:'ready',reply});assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.author_type==='ai'));});
+test('fabricated literal in a grounded-looking model answer is never auto-sent',async()=>{const reply={answer:'Rehearsal room hire is £20 per hour.',grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};const r=await exercise('What is the current price?',[price],{provider:'ready',reply});assert.equal(r.body.needsHuman,true);assert.ok(r.writes.some(w=>w.table==='cxroute_ai_drafts'&&w.body.proposed_reply.includes('£20')));assert.ok(!r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.author_type==='ai'));});
 
 test('November question drafts the November price and retains human review even with a confident provider',async()=>{
  const future={...price,id:'november',organisation_id:'qa-org',brand_id:'qa-brand',review_status:'approved',category:'pricing',fact_key:'rehearsal_price_from_2026_11_01',fact_value:'From 1 November 2026 rehearsal room hire is £16 per hour.',valid_from:'2026-11-01T00:00:00Z',valid_until:null};

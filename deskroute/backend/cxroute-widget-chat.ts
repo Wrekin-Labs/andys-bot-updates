@@ -2,6 +2,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { canSendAutomatically } from "./answer-policy.js";
+import { literalGroundingCheck } from "./literal-grounding.js";
 import { questionDate, datedKnowledge } from "./dated-knowledge.js";
 
 type Body={
@@ -950,7 +951,14 @@ Deno.serve(async(req:Request)=>{
     }
 
     if(!llm&&!llmError)llmError=datedSearchIncomplete?"dated_knowledge_incomplete":dateContext.requiresHuman?"dated_answer_requires_review":"grounding_not_available";
-    const modelAutomaticAllowed=!dateContext.requiresHuman&&canSendAutomatically(aiMode,llm,minConfidence,relevance);
+    const usedModelEvidence=llm
+      ?evidence.filter((fact:Evidence)=>llm.used_fact_ids.includes(fact.id))
+      :[];
+    const literalCheck=llm
+      ?literalGroundingCheck(llm.answer,usedModelEvidence)
+      :{ok:false,claims:[],missing:[]};
+    if(llm&&!literalCheck.ok&&!llmError)llmError="literal_grounding_failed";
+    const modelAutomaticAllowed=!dateContext.requiresHuman&&literalCheck.ok&&canSendAutomatically(aiMode,llm,minConfidence,relevance);
     const directAutomaticAllowed=
       !dateContext.requiresHuman&&
       aiMode==="automatic"&&
