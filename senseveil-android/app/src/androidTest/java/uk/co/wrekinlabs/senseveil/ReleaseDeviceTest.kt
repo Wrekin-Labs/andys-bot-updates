@@ -158,6 +158,9 @@ class ReleaseDeviceTest {
             scenario.onActivity { it.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             device.waitForIdle()
             assertTrue(device.findObject(UiSelector().text("TOOLS")).waitForExists(10000))
+            assertTrue("A camera frame is analysed after rotation before the audit capture",
+                device.findObject(UiSelector().textContains("Fusion score")).waitForExists(45000))
+            device.waitForIdle()
             device.takeScreenshot(File(screenshots,"scanner-landscape.png"))
             device.findObject(UiSelector().text("TOOLS")).click()
             assertTrue(DiagnosticsBundle.create(context,OperatorPreferences(context),SecurityPreferences(context)).length() > 0)
