@@ -1,4 +1,4 @@
-export const VERSION = '6.1.0-rc.1';
+export const VERSION = '6.1.0-rc.2';
 export const API_URL = 'https://dbhwjzznwhukoogjewfl.supabase.co';
 export const PUBLIC_KEY = 'sb_publishable_7V8ety_rhgOhOEUc7_rsiw_lDWkB8YF';
 export class ApiError extends Error { constructor(message, status = 0) { super(message); this.status = status; } }

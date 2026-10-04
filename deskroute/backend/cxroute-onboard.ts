@@ -1,9 +1,10 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server";
+import { isAllowedPushEndpoint } from "./push-dispatch.js";
 
 type Body = {
-  action?: "create"|"me"|"health"|"notifications"|"register_device"|"device_heartbeat"|"mark_notification_read"|"analytics";
+  action?: "create"|"me"|"health"|"notifications"|"register_device"|"device_heartbeat"|"mark_notification_read"|"analytics"|"push_config"|"test_push";
   displayName?: string;
   websiteUrl?: string;
   supportEmail?: string;
@@ -71,10 +72,22 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
     const organisationId=String(body?.organisationId||"");
     const installationId=String(body?.installationId||"").trim();
     const platform=String(body?.platform||"").trim();
+    const notificationMode=String(body?.notificationMode||"poll").trim();
+    const allowedModes=["poll","webpush","fcm","apns"];
+    const pushSubscription=(body?.pushSubscription&&typeof body.pushSubscription==="object") ? body.pushSubscription : {};
     const allowedPlatforms=["web","android","ios","windows","macos","linux"];
 
-    if(!organisationId||!installationId||!allowedPlatforms.includes(platform)){
-      return Response.json({error:"organisationId, installationId and valid platform are required"},{status:400});
+    if(notificationMode==="webpush"){
+      const endpoint=String((pushSubscription as any)?.endpoint||"");
+      const p256dh=String((pushSubscription as any)?.keys?.p256dh||"");
+      const auth=String((pushSubscription as any)?.keys?.auth||"");
+      if(!isAllowedPushEndpoint(endpoint)||!p256dh||!auth){
+        return Response.json({error:"Invalid Web Push subscription"},{status:400});
+      }
+    }
+
+    if(!organisationId||!installationId||!allowedPlatforms.includes(platform)||!allowedModes.includes(notificationMode)){
+      return Response.json({error:"organisationId, installationId, platform and notification mode are required"},{status:400});
     }
 
     const {data:membership}=await ctx.supabase
@@ -126,6 +139,81 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
 
     if(error||!device) return Response.json({error:"Device not found"},{status:404});
     return Response.json({ok:true,device});
+  }
+
+  if (action === "push_config") {
+    const organisationId=String(body?.organisationId||"");
+    if(!organisationId) return Response.json({error:"organisationId required"},{status:400});
+
+    const {data:membership}=await ctx.supabase
+      .from("cxroute_org_members")
+      .select("role")
+      .eq("organisation_id",organisationId)
+      .eq("user_id",userId)
+      .maybeSingle();
+    if(!membership) return Response.json({error:"Not authorised"},{status:403});
+
+    const base=Deno.env.get("SUPABASE_URL");
+    const workerToken=Deno.env.get("CXROUTE_EMAIL_INGEST_TOKEN");
+    if(!base||!workerToken) return Response.json({error:"Push service is not configured"},{status:503});
+
+    const response=await fetch(base+"/functions/v1/cxroute-email-ingest",{
+      method:"POST",
+      headers:{
+        "content-type":"application/json",
+        "x-cxroute-ingest-token":workerToken
+      },
+      body:JSON.stringify({action:"cxroute_internal_push_init_v1"})
+    });
+    const data=await response.json().catch(()=>null);
+    if(!response.ok||!data?.vapidPublicKey) return Response.json({error:"Push service is unavailable"},{status:503});
+    return Response.json({ok:true,vapidPublicKey:String(data.vapidPublicKey)});
+  }
+
+  if (action === "test_push") {
+    const organisationId=String(body?.organisationId||"");
+    if(!organisationId) return Response.json({error:"organisationId required"},{status:400});
+
+    const {data:membership}=await ctx.supabase
+      .from("cxroute_org_members")
+      .select("role")
+      .eq("organisation_id",organisationId)
+      .eq("user_id",userId)
+      .maybeSingle();
+    if(!membership) return Response.json({error:"Not authorised"},{status:403});
+
+    const created=await ctx.supabaseAdmin
+      .from("cxroute_staff_notifications")
+      .insert({
+        organisation_id:organisationId,
+        user_id:userId,
+        conversation_id:null,
+        kind:"system",
+        title:"DeskRoute test alert",
+        body_preview:null
+      })
+      .select("id")
+      .single();
+
+    if(created.error||!created.data) return Response.json({error:"Could not create test alert"},{status:500});
+
+    const base=Deno.env.get("SUPABASE_URL");
+    if(base){
+      try{
+        EdgeRuntime.waitUntil(
+          fetch(base+"/functions/v1/cxroute-email-ingest",{
+            method:"POST",
+            headers:{
+              "content-type":"application/json",
+              "x-cxroute-ingest-token":Deno.env.get("CXROUTE_EMAIL_INGEST_TOKEN")||""
+            },
+            body:JSON.stringify({action:"cxroute_internal_push_dispatch_v1"})
+          }).catch(()=>null)
+        );
+      }catch{}
+    }
+
+    return Response.json({ok:true,notificationId:created.data.id});
   }
 
   if (action === "notifications") {

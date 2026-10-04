@@ -25,12 +25,12 @@ function assertInjected(sourceText,context){
  if(missing.length)throw new Error('widget-handler harness missing injections: '+missing.join(', '));
 }
 
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,budgetResult=null,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,budgetResult=null,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1,isOpen=null}={}){
  const writes=[],calls=[];let handler,providerCalls=0;
  const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:conversationTags,priority:conversationPriority,visitor_token_hash:legacyUnsecured?null:visitorTokenHash};
  const records={
   cxroute_knowledge_facts:knowledgeFacts,
-  cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example']},
+  cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example'],offline_message:'We are closed right now. The team will reply when support reopens.'},
   cxroute_channel_ai_policies:{enabled:true,mode:'automatic',min_confidence:.9},
   cxroute_settings:{monthly_ai_call_hard_limit:10000},
   cxroute_conversations:conversation,
@@ -57,6 +57,7 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
     if(bucket==='chat:global')return {data:globalRateCount,error:null};
     throw Error('Unexpected rate-limit bucket '+bucket);
    }
+   if(name==='cxroute_is_open')return {data:isOpen,error:null};
    if(name==='cxroute_reserve_ai_call_v2')return {data:budgetResult??(budgetAllowed?'ok':'monthly'),error:null};
    if(name.startsWith('cxroute_search_approved_facts'))return {data:facts};
    if(name==='cxroute_record_knowledge_gap')return {data:'qa-gap'};
@@ -297,4 +298,12 @@ test('per-conversation AI cap degrades without another provider call',async()=>{
  assert.equal(r.providerCalls,0);
  const event=r.writes.find(w=>w.table==='cxroute_ai_events');
  assert.equal(event.body.error_code,'budget_conversation');
+});
+
+
+test('closed-hours human handoff uses the configured offline message',async()=>{
+ const r=await exercise('Is there somewhere to park?',[],{isOpen:false});
+ assert.equal(r.body.needsHuman,true);
+ assert.equal(r.body.answer,'We are closed right now. The team will reply when support reopens.');
+ assert.ok(r.calls.some(c=>c.name==='cxroute_is_open'));
 });

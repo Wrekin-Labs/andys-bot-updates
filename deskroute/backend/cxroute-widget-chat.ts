@@ -390,6 +390,14 @@ Deno.serve(async(req:Request)=>{
         return json({error:"Origin not allowed"},403,origin);
       }
 
+      const hours=await admin.rpc("cxroute_is_open",{
+        p_organisation_id:config.organisation_id,
+        p_at:new Date().toISOString()
+      });
+      const isOpen=hours.error||hours.data===null
+        ?null
+        :Boolean(hours.data);
+
       let locale=requestedLocale||"en-GB";
       let translation:any=null;
 
@@ -427,6 +435,7 @@ Deno.serve(async(req:Request)=>{
         privacy_url:config.privacy_url||null,
         prechat_message:translation?.prechat_message||config.prechat_message,
         offline_message:translation?.offline_message||config.offline_message,
+        is_open:isOpen,
         widget_version:String(config.widget_version||"6.1.0-rc.1"),
         locale
       },200,origin);
@@ -517,7 +526,7 @@ Deno.serve(async(req:Request)=>{
     const {data:config}=await admin
       .from("cxroute_widget_configs")
       .select(
-        "id,organisation_id,brand_id,enabled,allowed_origins"
+        "id,organisation_id,brand_id,enabled,allowed_origins,offline_message"
       )
       .eq("public_key",widgetKey)
       .eq("enabled",true)
@@ -547,6 +556,17 @@ Deno.serve(async(req:Request)=>{
         origin
       );
     }
+
+    const hours=await admin.rpc("cxroute_is_open",{
+      p_organisation_id:config.organisation_id,
+      p_at:new Date().toISOString()
+    });
+    const isOpen=hours.error||hours.data===null
+      ?null
+      :Boolean(hours.data);
+    const humanHolding=isOpen===false
+      ?String(config.offline_message||"Thanks — the team will get back to you as soon as possible.")
+      :null;
 
     const ip=(
       req.headers.get("x-forwarded-for")||
@@ -1149,10 +1169,11 @@ Deno.serve(async(req:Request)=>{
           ?"widget_grounded_ai_draft_created"
           :"widget_ai_draft_created";
 
-      answer=
+      answer=humanHolding||(
         aiMode==="suggest"
           ?"Thanks — I’ve passed your question to the team."
-          :"Thanks — I’ve prepared an answer for the team to approve.";
+          :"Thanks — I’ve prepared an answer for the team to approve."
+      );
 
       await admin
         .from("cxroute_messages")
@@ -1166,7 +1187,7 @@ Deno.serve(async(req:Request)=>{
           author_type:"system"
         });
     }else{
-      answer=
+      answer=humanHolding||
         "I’m not certain about that from the approved information I have. I’ve flagged it for the team.";
 
       await admin

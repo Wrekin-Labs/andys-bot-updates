@@ -43,7 +43,7 @@
       var r=await fetch(endpoint+'?key='+encodeURIComponent(key)+'&lang='+encodeURIComponent(navigator.language||'en-GB'));
       var j=await r.json();
       if(!r.ok)throw new Error(j.error||'Support unavailable');
-      cfg=j;head.textContent=j.display_name||title;pre.textContent=j.welcome_message||'Hi! How can we help?';
+      cfg=j;head.textContent=j.display_name||title;pre.textContent=j.is_open===false?(j.offline_message||'The team is currently offline. Send a message and they will reply when support reopens.'):(j.welcome_message||'Hi! How can we help?');
       if((j.require_name||j.require_email)&&!conversationId)fields.classList.remove('dr-hidden');
       nameIn.required=!!j.require_name&&!conversationId;emailIn.required=!!j.require_email&&!conversationId;
       if(conversationId)compactComposer();
