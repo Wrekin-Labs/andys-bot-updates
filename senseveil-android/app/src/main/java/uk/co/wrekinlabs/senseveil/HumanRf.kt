@@ -44,6 +44,7 @@ class HumanRfInterpreter(
     private val samples = ArrayDeque<Sample>()
     private var lastAtMs = Long.MIN_VALUE
 
+    @Synchronized
     fun reset() {
         samples.clear()
         lastAtMs = Long.MIN_VALUE
