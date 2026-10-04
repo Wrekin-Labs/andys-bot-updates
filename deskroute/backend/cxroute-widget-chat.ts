@@ -704,20 +704,6 @@ Deno.serve(async(req:Request)=>{
         0.85
       );
 
-    const {data:organisationSettings}=await admin
-      .from("cxroute_settings")
-      .select("monthly_ai_call_hard_limit")
-      .eq("organisation_id",config.organisation_id)
-      .maybeSingle();
-
-    const aiCallLimit=Math.max(
-      1,
-      Math.min(
-        1000000,
-        Number(organisationSettings?.monthly_ai_call_hard_limit||10000)
-      )
-    );
-
     let matches:any[]=[];
     let searchError:any=null;
     const dateContext=questionDate(message);
@@ -1000,28 +986,33 @@ Deno.serve(async(req:Request)=>{
     let llm:Grounded|null=null;
     let llmError:string|null=null;
     let aiBudgetReserved=false;
+    let aiBudgetReason:string|null=null;
 
     if(evidence.length&&aiEnabled&&!sensitive&&!globalAiSuppressed&&Deno.env.get("OPENAI_API_KEY")){
       try{
         const reservation=await admin.rpc(
-          "cxroute_reserve_ai_call",
+          "cxroute_reserve_ai_call_v2",
           {
             p_organisation_id:config.organisation_id,
-            p_limit:aiCallLimit
+            p_conversation_id:conversationId
           }
         );
 
         if(reservation.error){
           llmError="budget_check_failed";
-        }else if(reservation.data!==true){
-          llmError="budget_exceeded";
         }else{
-          aiBudgetReserved=true;
-          llm=await groundedReply(
-            message,
-            evidence,
-            locale
-          );
+          aiBudgetReason=String(reservation.data||"invalid");
+
+          if(aiBudgetReason!=="ok"){
+            llmError="budget_exceeded";
+          }else{
+            aiBudgetReserved=true;
+            llm=await groundedReply(
+              message,
+              evidence,
+              locale
+            );
+          }
         }
       }catch(error){
         llmError=
@@ -1325,7 +1316,7 @@ Deno.serve(async(req:Request)=>{
           locale:locale||null,
           llm_used:Boolean(llm),
           ai_budget_reserved:aiBudgetReserved,
-          ai_call_limit:aiCallLimit,
+          ai_budget_reason:aiBudgetReason,
           global_ai_suppressed:globalAiSuppressed,
           llm_model:
             llm?.model||null,
@@ -1407,7 +1398,10 @@ Deno.serve(async(req:Request)=>{
           model:llm?.model||null,
           model_confidence:llm?.confidence??null,
           latency_total_ms:Math.max(0,Date.now()-requestStartedAt),
-          error_code:llmError||null
+          error_code:
+            llmError==="budget_exceeded"&&aiBudgetReason
+              ?`budget_${aiBudgetReason}`
+              :llmError||null
         });
     }catch(error){
       console.error("cxroute-ai-event-log",error);

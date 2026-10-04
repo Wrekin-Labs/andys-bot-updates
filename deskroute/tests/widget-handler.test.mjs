@@ -25,7 +25,7 @@ function assertInjected(sourceText,context){
  if(missing.length)throw new Error('widget-handler harness missing injections: '+missing.join(', '));
 }
 
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,budgetResult=null,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1}={}){
  const writes=[],calls=[];let handler,providerCalls=0;
  const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:conversationTags,priority:conversationPriority,visitor_token_hash:legacyUnsecured?null:visitorTokenHash};
  const records={
@@ -57,7 +57,7 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
     if(bucket==='chat:global')return {data:globalRateCount,error:null};
     throw Error('Unexpected rate-limit bucket '+bucket);
    }
-   if(name==='cxroute_reserve_ai_call')return {data:budgetAllowed,error:null};
+   if(name==='cxroute_reserve_ai_call_v2')return {data:budgetResult??(budgetAllowed?'ok':'monthly'),error:null};
    if(name.startsWith('cxroute_search_approved_facts'))return {data:facts};
    if(name==='cxroute_record_knowledge_gap')return {data:'qa-gap'};
    throw Error('Unexpected RPC '+name);
@@ -110,7 +110,7 @@ for(const [question,fact] of [['What is the rehearsal room price from 1 November
  });
 }
 test('AI outage still answers a strong customer-safe approved fact',async()=>{const r=await exercise('What is the price?',[price],{provider:'failure'});assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.writes.some(w=>w.table==='cxroute_messages'&&w.body.direction==='outbound'&&w.body.body===price.fact_value));});
-test('AI budget exhaustion degrades to a safe approved fact without breaking chat',async()=>{const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};const r=await exercise('What is the price?',[price],{provider:'ready',reply,budgetAllowed:false});assert.equal(r.body.llmUsed,false);assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));const event=r.writes.find(w=>w.table==='cxroute_ai_events');assert.equal(event?.body?.outcome,'budget_exceeded');assert.equal(event?.body?.failed_gate,'budget_exceeded');});
+test('AI budget exhaustion degrades to a safe approved fact without breaking chat',async()=>{const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};const r=await exercise('What is the price?',[price],{provider:'ready',reply,budgetAllowed:false});assert.equal(r.body.llmUsed,false);assert.equal(r.body.needsHuman,false);assert.equal(r.body.answer,price.fact_value);assert.ok(r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));const event=r.writes.find(w=>w.table==='cxroute_ai_events');assert.equal(event?.body?.outcome,'budget_exceeded');assert.equal(event?.body?.failed_gate,'budget_exceeded');});
 const recording={id:'recording',organisation_id:'qa-org',brand_id:'qa-brand',review_status:'approved',fact_key:'recording_bookings_status',fact_value:'Recording studio bookings are currently paused.',category:'services',confidence:.99,valid_from:null,valid_until:null};
 test('recording question falls back to approved brand knowledge when search RPC misses it',async()=>{
  const r=await exercise('What days do u do recording',[],{knowledgeFacts:[recording]});
@@ -150,7 +150,7 @@ test('sensitive safeguarding bypasses AI, learning gaps, and notification previe
  assert.equal(r.body.needsHuman,true);
  assert.equal(r.body.knowledgeGapId,null);
  assert.equal(r.providerCalls,0);
- assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));
  assert.ok(!r.calls.some(c=>c.name==='cxroute_record_knowledge_gap'));
  assert.ok(!r.writes.some(w=>w.table==='cxroute_ai_drafts'));
  assert.ok(!r.writes.some(w=>w.table==='cxroute_learning_suggestions'));
@@ -186,7 +186,7 @@ test('sensitive status is sticky and never lowers an existing urgent priority',a
  });
  assert.equal(r.body.needsHuman,true);
  assert.equal(r.providerCalls,0);
- assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));
  assert.ok(!r.calls.some(c=>c.name==='cxroute_record_knowledge_gap'));
  const update=r.writes.find(w=>w.table==='cxroute_conversations'&&w.operation==='update'&&w.body.tags);
  assert.equal(update.body.priority,'urgent');
@@ -230,7 +230,7 @@ test('visitor chat abuse is rate limited without reaching AI',async()=>{
  });
  assert.match(r.body.error,/Too many messages/);
  assert.equal(r.providerCalls,0);
- assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));
 });
 
 test('rotating user agent cannot bypass the per-IP chat limit',async()=>{
@@ -241,7 +241,7 @@ test('rotating user agent cannot bypass the per-IP chat limit',async()=>{
  });
  assert.match(r.body.error,/Too many messages/);
  assert.equal(r.providerCalls,0);
- assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));
 });
 
 test('global traffic guard keeps chat available and suppresses paid AI',async()=>{
@@ -254,7 +254,7 @@ test('global traffic guard keeps chat available and suppresses paid AI',async()=
  assert.equal(r.body.needsHuman,false);
  assert.equal(r.body.answer,price.fact_value);
  assert.equal(r.providerCalls,0);
- assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));
  const event=r.writes.find(w=>w.table==='cxroute_ai_events');
  assert.equal(event.body.failed_gate,'rate_guard');
  assert.equal(event.body.error_code,'global_rate_guard');
@@ -269,7 +269,32 @@ test('global traffic guard hands unknown questions to a person without teaching 
  assert.equal(r.body.needsHuman,true);
  assert.equal(r.providerCalls,0);
  assert.equal(r.body.knowledgeGapId,null);
- assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call_v2'));
  assert.ok(!r.calls.some(c=>c.name==='cxroute_record_knowledge_gap'));
  assert.ok(r.writes.some(w=>w.table==='cxroute_staff_notifications'));
+});
+
+
+test('daily AI cap degrades to a safe direct fact and records the reason',async()=>{
+ const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};
+ const r=await exercise('What is the price?',[price],{provider:'ready',reply,budgetResult:'daily'});
+ assert.equal(r.body.needsHuman,false);
+ assert.equal(r.body.answer,price.fact_value);
+ assert.equal(r.providerCalls,0);
+ const call=r.calls.find(c=>c.name==='cxroute_reserve_ai_call_v2');
+ assert.equal(call.p.p_conversation_id,'qa-conversation');
+ const event=r.writes.find(w=>w.table==='cxroute_ai_events');
+ assert.equal(event.body.outcome,'budget_exceeded');
+ assert.equal(event.body.failed_gate,'budget_exceeded');
+ assert.equal(event.body.error_code,'budget_daily');
+});
+
+test('per-conversation AI cap degrades without another provider call',async()=>{
+ const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};
+ const r=await exercise('What is the price?',[price],{provider:'ready',reply,budgetResult:'conversation'});
+ assert.equal(r.body.needsHuman,false);
+ assert.equal(r.body.answer,price.fact_value);
+ assert.equal(r.providerCalls,0);
+ const event=r.writes.find(w=>w.table==='cxroute_ai_events');
+ assert.equal(event.body.error_code,'budget_conversation');
 });
