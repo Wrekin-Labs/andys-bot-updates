@@ -6,7 +6,7 @@ Verifies ZIP bundles exported by SenseVeil. Encrypted .sve vaults remain device-
 and should be decrypted/exported by the originating Android installation first.
 """
 from __future__ import annotations
-import argparse, base64, hashlib, json, os, re, shutil, stat, subprocess, sys, tempfile, zipfile
+import argparse, base64, hashlib, json, os, re, shutil, stat, subprocess, sys, tempfile, unicodedata, zipfile
 from pathlib import Path
 
 MAX_ENTRIES = 512
@@ -20,9 +20,22 @@ def sha256(path: Path) -> str:
             h.update(block)
     return h.hexdigest()
 
+# Exit codes: 0 verified against a pinned signer, 1 failed, 2 error, 3 self-consistent but signer NOT pinned.
+EXIT_UNPINNED = 3
+_WINDOWS_RESERVED = re.compile(r'^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$', re.IGNORECASE)
+_CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+
+def alias_key(name: str) -> str:
+    """Key under which two names would collide on Windows/macOS (case-insensitive, Unicode-normalising)."""
+    return unicodedata.normalize('NFC', name).casefold()
+
 def checked_path(root: Path, name: str) -> Path:
-    if not name or "\\" in name or ":" in name or any(p in ("", ".", "..") for p in name.split("/")):
-        raise ValueError("unsafe path: " + name)
+    if not name or "\\" in name or ":" in name or _CONTROL.search(name) or any(p in ("", ".", "..") for p in name.split("/")):
+        raise ValueError("unsafe path: " + repr(name))
+    for part in name.split("/"):
+        # "report.txt." and "report.txt " alias "report.txt" on Windows; "nul.txt" is a device.
+        if part != part.rstrip(". ") or _WINDOWS_RESERVED.match(part):
+            raise ValueError("non-portable path: " + repr(name))
     target = (root / name).resolve()
     if not target.is_relative_to(root.resolve()):
         raise ValueError("path outside bundle")
@@ -35,10 +48,13 @@ def safe_extract(zf: zipfile.ZipFile, dst: Path) -> None:
         raise RuntimeError('archive has too many entries')
     seen = set()
     for info in infos:
-        target = checked_path(dst, info.filename.rstrip('/'))
-        if target in seen or stat.S_ISLNK(info.external_attr >> 16):
-            raise RuntimeError('duplicate or symlink archive entry')
-        seen.add(target)
+        name = info.filename.rstrip('/')
+        target = checked_path(dst, name)
+        # Case/Unicode aliases would silently overwrite each other on Windows/macOS, letting the
+        # verified file differ from the one a user later opens from the same ZIP.
+        if alias_key(name) in seen or stat.S_ISLNK(info.external_attr >> 16):
+            raise RuntimeError('duplicate, case-aliased or symlink archive entry: ' + repr(name))
+        seen.add(alias_key(name))
         if info.is_dir():
             target.mkdir(parents=True, exist_ok=True)
             continue
@@ -53,6 +69,8 @@ def safe_extract(zf: zipfile.ZipFile, dst: Path) -> None:
                 output.write(block)
 
 def locate_bundle(root: Path) -> Path:
+    """SenseVeil exports put integrity.json at the ZIP root (as the Android importer requires).
+    A single wrapper folder is tolerated; anything outside it is reported by outside_files()."""
     if (root / 'integrity.json').exists():
         return root
     candidates = [p.parent for p in root.rglob('integrity.json')]
@@ -60,15 +78,27 @@ def locate_bundle(root: Path) -> Path:
         raise RuntimeError(f'expected exactly one evidence bundle, found {len(candidates)}')
     return candidates[0]
 
+def outside_files(root: Path, bundle: Path) -> list[str]:
+    if bundle == root:
+        return []
+    return [f'{p.relative_to(root).as_posix()}: outside the signed bundle'
+            for p in root.rglob('*') if p.is_file() and not p.is_relative_to(bundle)]
+
+def _no_duplicate_keys(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError('duplicate JSON key in manifest')
+    return dict(pairs)
+
 def verify_hashes(bundle: Path) -> tuple[int, list[str]]:
     manifest_path = bundle / 'integrity.json'
     if manifest_path.stat().st_size > 1024*1024:
         raise ValueError('manifest too large')
-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'), object_pairs_hook=_no_duplicate_keys)
     rows = manifest.get('files')
     if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_ENTRIES:
         return 0, ['invalid manifest file list']
-    failures, listed = [], set()
+    failures, listed, aliases = [], set(), set()
     checked = 0
     controls = {'integrity.json', 'integrity.sig.json'}
     for row in rows:
@@ -78,16 +108,17 @@ def verify_hashes(bundle: Path) -> tuple[int, list[str]]:
         rel = row.get('path', '')
         try:
             target = checked_path(bundle, rel)
-            if rel in controls or rel in listed:
-                raise ValueError('duplicate or reserved path')
+            if not isinstance(rel, str) or alias_key(rel) in controls or alias_key(rel) in aliases:
+                raise ValueError('duplicate, case-aliased or reserved path')
             listed.add(rel)
+            aliases.add(alias_key(rel))
             expected = row.get('sha256', '')
             if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', expected):
                 raise ValueError('invalid SHA-256')
             checked += 1
             if not target.is_file():
                 failures.append(f'{rel}: missing')
-            elif 'bytes' in row and row['bytes'] != target.stat().st_size:
+            elif 'bytes' in row and (type(row['bytes']) is not int or row['bytes'] != target.stat().st_size):
                 failures.append(f'{rel}: size mismatch')
             elif sha256(target).lower() != expected.lower():
                 failures.append(f'{rel}: hash mismatch')
@@ -143,8 +174,15 @@ def verify_signature(bundle: Path) -> tuple[bool, str | None, str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('evidence_zip', type=Path)
-    ap.add_argument('--expect-fingerprint', help='optional 64-hex signer fingerprint to require')
+    ap.add_argument('--expect-fingerprint', help='64-hex signer fingerprint to require (colons allowed). '
+                    'Without it the result can only be SELF-CONSISTENT (exit 3), never VERIFIED.')
     args = ap.parse_args()
+    expected = None
+    if args.expect_fingerprint:
+        expected = args.expect_fingerprint.lower().replace(':', '')
+        if not re.fullmatch(r'[0-9a-f]{64}', expected):
+            print('ERROR: --expect-fingerprint must be 64 hex characters', file=sys.stderr)
+            return 2
     if args.evidence_zip.suffix.lower() == '.sve':
         print('ERROR: .sve is Android-Keystore encrypted. Export a clear verification ZIP from the originating installation first.', file=sys.stderr)
         return 2
@@ -153,21 +191,27 @@ def main() -> int:
             safe_extract(zf, Path(td))
         bundle = locate_bundle(Path(td))
         checked, failures = verify_hashes(bundle)
+        failures += outside_files(Path(td), bundle)
         sig_ok, fp, sig_msg = verify_signature(bundle)
-        expected_ok = True
-        if args.expect_fingerprint:
-            expected_ok = fp is not None and fp.lower() == args.expect_fingerprint.lower().replace(':','')
+        expected_ok = expected is not None and fp is not None and fp.lower() == expected
         print(f'Files checked: {checked}')
         print(f'Hash status: {"PASS" if not failures else "FAIL"}')
         for failure in failures:
             print(f'  - {failure}')
         print(f'Signature: {"PASS" if sig_ok else "FAIL"} ({sig_msg})')
         print(f'Signer fingerprint: {fp or "unknown"}')
-        if args.expect_fingerprint:
+        if expected is not None:
             print(f'Expected signer: {"MATCH" if expected_ok else "MISMATCH"}')
-        ok = not failures and sig_ok and expected_ok
-        print(f'OVERALL: {"VERIFIED" if ok else "NOT VERIFIED"}')
-        return 0 if ok else 1
+        if failures or not sig_ok or (expected is not None and not expected_ok):
+            print('OVERALL: NOT VERIFIED')
+            return 1
+        if expected is None:
+            # Same semantics as the Android verifier: a valid signature from an unknown key proves
+            # only internal consistency. Anyone can re-sign altered evidence with their own key.
+            print('OVERALL: SELF-CONSISTENT (signer not pinned; re-run with --expect-fingerprint to verify origin)')
+            return EXIT_UNPINNED
+        print('OVERALL: VERIFIED')
+        return 0
 
 if __name__ == '__main__':
     try:
