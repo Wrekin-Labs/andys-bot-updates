@@ -10,8 +10,8 @@ android {
         applicationId = "uk.co.wrekinlabs.senseveil"
         minSdk = 24
         targetSdk = 37
-        versionCode = 13
-        versionName = "1.0.0-rc4"
+        versionCode = 14
+        versionName = "1.0.0-rc5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["additionalTestOutputDir"] = "/sdcard/Android/media/uk.co.wrekinlabs.senseveil/qa"
     }

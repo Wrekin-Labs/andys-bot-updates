@@ -1,4 +1,4 @@
-# SenseVeil AI — v1.0.0-rc4
+# SenseVeil AI — v1.0.0-rc5
 
 **See the signal. Verify the source.**
 
@@ -58,14 +58,14 @@ The scanner has clearer Field overlays and a direction-only vision map; detailed
 
 ## Verification and limitations
 
-`RC4_RELEASE_STATUS.md` records the latest verified build, tests and remaining physical-device checks; `RELEASE_STATUS.md` retains the RC1–RC3 history. A debug build is a tester deliverable, not a Play production-signed release. Real camera quality, thermal/battery behaviour, radar/thermal devices and AR depth require compatible physical hardware.
+`RC5_RELEASE_STATUS.md` records the latest verified build, tests and remaining physical-device checks; `RELEASE_STATUS.md` retains the RC1–RC3 history. A debug build is a tester deliverable, not a Play production-signed release. Real camera quality, thermal/battery behaviour, radar/thermal devices and AR depth require compatible physical hardware.
 
 The root repository workflow `.github/workflows/senseveil-android.yml` builds and tests this subproject, uploads the debug APK and runs Android device tests. No credentials, device evidence, signing keys or local SDK paths belong in Git.
 
 
-## RC4 Wi-Fi / CSI RF evidence
+## RC5 Wi-Fi / CSI RF evidence
 
-RC4 adds optional aggregate Wi-Fi surveys and a paired local-network RF/CSI bridge. Open **Tools → Wi-Fi / RF sensing** to enable them. Both are off by default and their permissions are requested only when enabled.
+RC5 adds optional aggregate Wi-Fi surveys and a paired local-network RF/CSI bridge. Open **Tools → Wi-Fi / RF sensing** to enable them. Both are off by default and their permissions are requested only when enabled.
 
 The phone survey records AP counts and aggregate RSSI/band statistics only; it does not store SSIDs/BSSIDs. The CSI bridge uses a generated pair code, stationary baseline, sample-rate/staleness checks, motion suppression and sustained-change gating. RF observations are written into signed session/evidence data but are deliberately excluded from person-detection fusion and automatic human confidence.
 

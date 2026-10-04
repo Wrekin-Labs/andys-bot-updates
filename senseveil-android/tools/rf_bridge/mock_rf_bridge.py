@@ -92,7 +92,11 @@ def send_session(conn, args, key=None):
 
 
 def serve(args, server):
-    key = bytes.fromhex(open(args.key_file, encoding="utf-8").read().strip()) if args.key_file else None
+    if args.key_file:
+        with open(args.key_file, encoding="utf-8") as key_file:
+            key = bytes.fromhex(key_file.read().strip())
+    else:
+        key = None
     if key is not None and len(key) < 16:
         raise SystemExit("v2 key must be at least 16 bytes (32 hex chars)")
     while True:

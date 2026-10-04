@@ -1,6 +1,6 @@
-# SenseVeil Wi-Fi / CSI RF sensing (RC4)
+# SenseVeil Wi-Fi / CSI RF sensing (RC5)
 
-SenseVeil RC4 adds two **opt-in** radio-sensing inputs. They are evidence channels, not person-detection channels.
+SenseVeil RC5 includes two **opt-in** radio-sensing inputs. They are evidence channels, not person-detection channels.
 
 ## 1. Phone Wi-Fi survey
 
