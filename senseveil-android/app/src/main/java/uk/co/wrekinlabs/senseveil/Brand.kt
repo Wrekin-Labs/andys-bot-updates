@@ -3,7 +3,7 @@ package uk.co.wrekinlabs.senseveil
 object Brand {
     const val APP_NAME = "SenseVeil AI"
     const val TAGLINE = "See the signal. Verify the source."
-    const val VERSION = "1.0.0-rc5"
+    const val VERSION = "1.0.0-rc6"
 
     const val CYAN = 0xFF42E8FF.toInt()
     const val GREEN = 0xFF71F79F.toInt()

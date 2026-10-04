@@ -38,6 +38,11 @@ class OperatorPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_RF_BRIDGE, false)
         set(value) = prefs.edit().putBoolean(KEY_RF_BRIDGE, value).apply()
 
+    /** Experimental interpretation only; never feeds FusionScorer/person confidence. */
+    var humanRfModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_HUMAN_RF_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_HUMAN_RF_MODE, value).apply()
+
     var rfBridgeHost: String
         get() = prefs.getString(KEY_RF_HOST, "192.168.4.1") ?: "192.168.4.1"
         set(value) = prefs.edit().putString(KEY_RF_HOST, value.trim().take(255)).apply()
@@ -87,6 +92,7 @@ class OperatorPreferences(context: Context) {
         private const val KEY_PERFORMANCE = "performance_mode"
         private const val KEY_WIFI_SURVEY = "wifi_survey_enabled"
         private const val KEY_RF_BRIDGE = "rf_bridge_enabled"
+        private const val KEY_HUMAN_RF_MODE = "human_rf_mode_enabled"
         private const val KEY_RF_HOST = "rf_bridge_host"
         private const val KEY_RF_PORT = "rf_bridge_port"
         private const val KEY_RF_PAIR = "rf_pair_code"

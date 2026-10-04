@@ -11,12 +11,12 @@ data class SchemaMigrationReport(
 object AppSchema {
     const val SETTINGS_SCHEMA_VERSION = 1
     /**
-     * 3 = RC4 (RF/Wi-Fi fields). 4 = RC5: additive only — rfSynthetic, rfAuth, rfAlgorithm in events;
-     * rfSynthetic/rfAuth/rfMeasuredRateHz/rfPacketLossPct in session rows; six columns appended to
-     * rf_*.csv; wifiVisibleNetworks is null (not 0) when the scan result was unknown.
-     * Readers treat every schema-4 field as optional, so schema 1-3 evidence parses unchanged.
+     * 3 = RC4 (RF/Wi-Fi fields). 4 = RC5 RF provenance/hardening.
+     * 5 = RC6: additive Human RF research fields (state, pattern confidence, algorithm).
+     * Human RF remains interpretation-only and does not alter FusionScorer/person confidence.
+     * Readers treat newer fields as optional, so schema 1-4 evidence parses unchanged.
      */
-    const val EVIDENCE_SCHEMA_VERSION = 4
+    const val EVIDENCE_SCHEMA_VERSION = 5
     const val EVIDENCE_FORMAT = "senseveil-evidence-v1"
 
     fun migrate(context: Context): SchemaMigrationReport {

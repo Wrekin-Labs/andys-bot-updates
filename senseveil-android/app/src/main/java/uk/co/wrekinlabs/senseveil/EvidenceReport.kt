@@ -47,11 +47,14 @@ object EvidenceReport {
             append("RF RSSI: ").append(event.rfRssiDbm?.let { "%.1f dBm".format(it) } ?: "--").append('\n')
             append("CSI amplitude: ").append(event.rfCsiAmplitude?.let { "%.4f".format(it) } ?: "--").append('\n')
             append("CSI variance: ").append(event.rfCsiVariance?.let { "%.4f".format(it) } ?: "--").append('\n')
+            append("Human RF research state: ").append(event.humanRfState ?: "--").append('\n')
+            append("Human RF pattern confidence: ").append(event.humanRfPatternConfidence?.let { "%.0f%%".format(it * 100f) } ?: "--").append('\n')
+            append("Human RF algorithm: ").append(event.humanRfAlgorithm ?: "--").append('\n')
             append("Visible Wi-Fi networks: ").append(event.wifiVisibleNetworks?.toString() ?: "--").append('\n')
             append("Strongest aggregate RSSI: ").append(event.wifiStrongestRssiDbm?.let { "$it dBm" } ?: "--").append('\n')
             append("Median aggregate RSSI: ").append(event.wifiMedianRssiDbm?.let { "$it dBm" } ?: "--").append('\n')
             append("\nINTERPRETATION NOTICE\n")
-            append("An anomaly is a detector/sensor disagreement or sustained unusual signal. RF change records environmental radio variation only and must not be interpreted as identifying a person or seeing through a wall. It is not evidence of paranormal activity. Integrity hashes and signatures verify file consistency relative to the recorded signing key; they do not provide an external trusted timestamp or prove the identity of the operator.\n")
+            append("An anomaly is a detector/sensor disagreement or sustained unusual signal. RF change records environmental radio variation. Human RF research labels human-compatible motion patterns only; it is not proof of occupancy and can be triggered by doors, fans, pets, moving equipment or multipath changes. It must not be interpreted as identifying a person or seeing an image through a wall. It is not evidence of paranormal activity. Integrity hashes and signatures verify file consistency relative to the recorded signing key; they do not provide an external trusted timestamp or prove the identity of the operator.\n")
         }
         File(bundle, "report.txt").writeText(report)
     }

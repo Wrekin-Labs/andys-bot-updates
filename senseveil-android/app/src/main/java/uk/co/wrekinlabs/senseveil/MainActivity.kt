@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private val sensorTimeline = SensorTimeline()
     private val detectionTimeline = DetectionTimeline()
     private val rfTimeline = RfTimeline()
+    private val humanRfInterpreter = HumanRfInterpreter()
     private lateinit var sensorFusion: SensorFusionEngine
     private lateinit var audioMonitor: AudioLevelMonitor
     private lateinit var wifiRfBridge: WifiRfBridge
@@ -106,6 +107,7 @@ class MainActivity : AppCompatActivity() {
     private var sensorSnapshot = SensorSnapshot()
     // Written on the RF worker / main thread, read on the analysis and IO threads.
     @Volatile private var wifiRfReading = WifiRfReading()
+    @Volatile private var humanRfReading = HumanRfReading()
     @Volatile private var wifiSurveyReading = WifiSurveyReading()
     @Volatile private var lastRfUiRefreshAt = 0L
     /** RF-only motion gate with settle time; camera detection keeps its own instantaneous test. */
@@ -486,16 +488,20 @@ class MainActivity : AppCompatActivity() {
         audioMonitor = AudioLevelMonitor(this) { db -> sensorFusion.setAudioDbfs(db) }
         wifiRfBridge = WifiRfBridge(this, operatorPreferences) { reading ->
             val previous = wifiRfReading
+            val previousHuman = humanRfReading
             wifiRfReading = reading
+            humanRfReading = humanRfInterpreter.accept(reading, operatorPreferences.humanRfModeEnabled)
             rfTimeline.addRf(reading) // evidence keeps every reading; only the UI is throttled
             val transition = reading.status != previous.status
+            val humanTransition = humanRfReading.state != previousHuman.state
             val now = SystemClock.elapsedRealtime()
-            if (transition || now - lastRfUiRefreshAt >= operatorPreferences.performanceMode.rfUiRefreshMs) {
+            if (transition || humanTransition || now - lastRfUiRefreshAt >= operatorPreferences.performanceMode.rfUiRefreshMs) {
                 lastRfUiRefreshAt = now
                 runOnUiThread {
                     if (!isDestroyed) {
                         updateSensorText(sensorSnapshot)
                         if (transition) announceRfTransition(reading)
+                        if (humanTransition) announceHumanRfTransition(humanRfReading)
                     }
                 }
             }
@@ -654,7 +660,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 latestDetection = state
                 detectionTimeline.add(state)
-                runCatching { sessionRecorder.append(state, sensorSnapshot, ext, wifiRfReading, surveyForEvidence()) }.onFailure { error ->
+                runCatching { sessionRecorder.append(state, sensorSnapshot, ext, wifiRfReading, surveyForEvidence(), humanRfReading.takeIf { operatorPreferences.humanRfModeEnabled }) }.onFailure { error ->
                     runOnUiThread { if (!isDestroyed) bufferText.text = "SESSION WRITE FAILED: ${error.message}" }
                 }
 
@@ -767,6 +773,11 @@ class MainActivity : AppCompatActivity() {
                 (rf.measuredRateHz ?: rf.sampleRateHz)?.let { append(" ").append("%.1fHz".format(it)) }
                 if (rf.novelty > 0f) append(" Δ").append((rf.novelty * 100f).roundToInt()).append('%')
                 if (rf.synthetic) append(" SYNTHETIC")
+                if (operatorPreferences.humanRfModeEnabled) {
+                    val human = humanRfReading
+                    append("\nHUMAN RF ").append(human.state.name.replace('_', ' '))
+                    if (human.patternConfidence > 0f) append(" ").append((human.patternConfidence * 100f).roundToInt()).append("%")
+                }
             }
             if (operatorPreferences.wifiSurveyEnabled) {
                 append("  WIFI ").append(wifiSurveyReading.visibleNetworks?.let { "$it AP" } ?: "--")
@@ -806,6 +817,7 @@ class MainActivity : AppCompatActivity() {
             val captureEpochMs = System.currentTimeMillis()
             val capturedSensors = sensorSnapshot
             val capturedRf = wifiRfReading
+            val capturedHumanRf = humanRfReading.takeIf { operatorPreferences.humanRfModeEnabled }
             val capturedWifiSurvey = surveyForEvidence()
             val capturedProfile = currentProfile.label
             val bundle = eventRepository.createEventBundle(reason)
@@ -869,6 +881,9 @@ class MainActivity : AppCompatActivity() {
                                 rfSynthetic = capturedRf.synthetic.takeIf { capturedRf.status != WifiRfStatus.OFF },
                                 rfAuth = capturedRf.auth?.name,
                                 rfAlgorithm = capturedRf.algorithm.takeIf { capturedRf.status != WifiRfStatus.OFF },
+                                humanRfState = capturedHumanRf?.state?.name,
+                                humanRfPatternConfidence = capturedHumanRf?.patternConfidence,
+                                humanRfAlgorithm = capturedHumanRf?.algorithm,
                                 wifiVisibleNetworks = capturedWifiSurvey.visibleNetworks,
                                 wifiStrongestRssiDbm = capturedWifiSurvey.strongestRssiDbm,
                                 wifiMedianRssiDbm = capturedWifiSurvey.medianRssiDbm,
@@ -1033,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
         }
         toolSection("Wi-Fi / RF sensing (opt-in)")
         panel.addView(TextView(this).apply {
-            text = "Wi-Fi surveys store aggregate signal counts only. CSI/RF records environmental radio change and never feeds person-detection confidence. RF change ≠ person detected."
+            text = "Wi-Fi surveys store aggregate signal counts only. CSI/RF records environmental radio change. Human RF research mode can label human-compatible motion patterns, but it never feeds person-detection confidence and is not proof of occupancy."
             setTextColor(Brand.TEXT_MUTED)
             textSize = 11f
             setPadding(0, dp(2), 0, dp(6))
@@ -1045,6 +1060,10 @@ class MainActivity : AppCompatActivity() {
         toolButton("RF BRIDGE: " + if (operatorPreferences.rfBridgeEnabled) "ON" else "OFF") {
             root.removeView(shade)
             toggleRfBridge()
+        }
+        toolButton("HUMAN RF RESEARCH: " + if (operatorPreferences.humanRfModeEnabled) "ON" else "OFF") {
+            root.removeView(shade)
+            toggleHumanRfMode()
         }
         toolButton("RF BRIDGE SETUP") {
             root.removeView(shade)
@@ -1165,6 +1184,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun toggleHumanRfMode() {
+        operatorPreferences.humanRfModeEnabled = !operatorPreferences.humanRfModeEnabled
+        humanRfInterpreter.reset()
+        humanRfReading = if (operatorPreferences.humanRfModeEnabled) {
+            HumanRfReading(
+                state = HumanRfState.CALIBRATING,
+                reason = if (operatorPreferences.rfBridgeEnabled)
+                    "Waiting for RF baseline and suitable CSI data"
+                else
+                    "Enable RF bridge to supply CSI/RF data"
+            )
+        } else HumanRfReading()
+        bufferText.text = if (operatorPreferences.humanRfModeEnabled)
+            "HUMAN RF RESEARCH: ON • EXPERIMENTAL, NOT PERSON PROOF"
+        else
+            "HUMAN RF RESEARCH: OFF"
+        updateSensorText(sensorSnapshot)
+    }
+
     private fun toggleRfBridge() {
         if (operatorPreferences.rfBridgeEnabled) {
             operatorPreferences.rfBridgeEnabled = false
@@ -1267,6 +1305,13 @@ class MainActivity : AppCompatActivity() {
                 append("Sustained RF change: ").append(rf.sustainedChange).append(" (RF change ≠ person detected)\n")
                 append("Algorithm: ").append(rf.algorithm).append('\n')
                 append("Detail: ").append(rf.message).append("\n\n")
+                val human = humanRfReading
+                append("Human RF research: ").append(if (operatorPreferences.humanRfModeEnabled) "enabled" else "off").append('\n')
+                append("Human RF state: ").append(human.state.name).append('\n')
+                append("Pattern confidence: ").append("%.0f%%".format(human.patternConfidence * 100f)).append('\n')
+                append("Human RF algorithm: ").append(human.algorithm).append('\n')
+                append("Human RF detail: ").append(human.reason).append('\n')
+                append("Research warning: human-compatible RF motion is not proof of a person; doors, fans, pets and multipath can look similar.\n\n")
                 append("Phone Wi-Fi survey: ").append(if (operatorPreferences.wifiSurveyEnabled) "enabled" else "off").append('\n')
                 append("Survey status: ").append(wifi.status).append('\n')
                 append("Visible networks: ").append(wifi.visibleNetworks?.toString() ?: "unknown").append('\n')
@@ -1636,6 +1681,21 @@ class MainActivity : AppCompatActivity() {
         } ?: return
         if (reading.status == WifiRfStatus.RF_CHANGE) {
             bufferText.text = "RF CHANGE RECORDED • ENVIRONMENTAL, NOT A PERSON" + if (reading.synthetic) " • SYNTHETIC" else ""
+        }
+        @Suppress("DEPRECATION")
+        sensorText.announceForAccessibility(spoken)
+    }
+
+    private fun announceHumanRfTransition(reading: HumanRfReading) {
+        if (!operatorPreferences.humanRfModeEnabled) return
+        val spoken = when (reading.state) {
+            HumanRfState.HUMAN_COMPATIBLE_MOTION -> "Human compatible RF motion pattern. Experimental result, not proof of a person."
+            HumanRfState.MOTION_LIKE_VARIATION -> "Motion like RF variation."
+            HumanRfState.SYNTHETIC_TEST -> "Synthetic Human RF test result."
+            else -> null
+        } ?: return
+        if (reading.state == HumanRfState.HUMAN_COMPATIBLE_MOTION) {
+            bufferText.text = "HUMAN-COMPATIBLE RF MOTION • EXPERIMENTAL • NOT PERSON PROOF"
         }
         @Suppress("DEPRECATION")
         sensorText.announceForAccessibility(spoken)

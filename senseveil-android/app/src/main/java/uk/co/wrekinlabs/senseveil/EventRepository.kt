@@ -31,6 +31,10 @@ data class ScanEvent(
     /** Schema 4: PAIR_CODE_ONLY (not authenticated) or HMAC_V2. Null in schema <= 3 evidence. */
     val rfAuth: String? = null,
     val rfAlgorithm: String? = null,
+    /** Schema 5: experimental Human RF interpretation; never the camera/person confidence. */
+    val humanRfState: String? = null,
+    val humanRfPatternConfidence: Float? = null,
+    val humanRfAlgorithm: String? = null,
     val wifiVisibleNetworks: Int? = null,
     val wifiStrongestRssiDbm: Int? = null,
     val wifiMedianRssiDbm: Int? = null,
@@ -66,6 +70,9 @@ data class ScanEvent(
         put("rfSynthetic", rfSynthetic ?: JSONObject.NULL)
         put("rfAuth", rfAuth ?: JSONObject.NULL)
         put("rfAlgorithm", rfAlgorithm ?: JSONObject.NULL)
+        put("humanRfState", humanRfState ?: JSONObject.NULL)
+        put("humanRfPatternConfidence", humanRfPatternConfidence ?: JSONObject.NULL)
+        put("humanRfAlgorithm", humanRfAlgorithm ?: JSONObject.NULL)
         put("wifiVisibleNetworks", wifiVisibleNetworks ?: JSONObject.NULL)
         put("wifiStrongestRssiDbm", wifiStrongestRssiDbm ?: JSONObject.NULL)
         put("wifiMedianRssiDbm", wifiMedianRssiDbm ?: JSONObject.NULL)
@@ -151,7 +158,7 @@ class EventRepository(private val context: Context) {
     private fun parse(line: String): ScanEvent? = parseLine(line)
 
     companion object {
-        /** Parses one events.jsonl line of any schema (1-4). Missing newer fields become null. */
+        /** Parses one events.jsonl line of any schema (1-5). Missing newer fields become null. */
         internal fun parseLine(line: String): ScanEvent? = try {
             val j = JSONObject(line)
             ScanEvent(
@@ -175,6 +182,9 @@ class EventRepository(private val context: Context) {
                 rfSynthetic = if (j.has("rfSynthetic") && !j.isNull("rfSynthetic")) j.optBoolean("rfSynthetic") else null,
                 rfAuth = j.optNullableString("rfAuth"),
                 rfAlgorithm = j.optNullableString("rfAlgorithm"),
+                humanRfState = j.optNullableString("humanRfState"),
+                humanRfPatternConfidence = j.optFloatOrNull("humanRfPatternConfidence"),
+                humanRfAlgorithm = j.optNullableString("humanRfAlgorithm"),
                 wifiVisibleNetworks = j.optInt("wifiVisibleNetworks").takeIf { j.has("wifiVisibleNetworks") && !j.isNull("wifiVisibleNetworks") },
                 wifiStrongestRssiDbm = j.optInt("wifiStrongestRssiDbm").takeIf { j.has("wifiStrongestRssiDbm") && !j.isNull("wifiStrongestRssiDbm") },
                 wifiMedianRssiDbm = j.optInt("wifiMedianRssiDbm").takeIf { j.has("wifiMedianRssiDbm") && !j.isNull("wifiMedianRssiDbm") },

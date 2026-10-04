@@ -55,7 +55,8 @@ class SessionRecorder(private val context: Context) {
         sensor: SensorSnapshot,
         external: ExternalPresenceReading?,
         wifiRf: WifiRfReading? = null,
-        wifiSurvey: WifiSurveyReading? = null
+        wifiSurvey: WifiSurveyReading? = null,
+        humanRf: HumanRfReading? = null
     ) {
         if (stopped) return
         val nowElapsed = SystemClock.elapsedRealtime()
@@ -101,6 +102,9 @@ class SessionRecorder(private val context: Context) {
             put("rfAuth", wifiRf?.auth?.name ?: JSONObject.NULL)
             put("rfMeasuredRateHz", wifiRf?.measuredRateHz ?: JSONObject.NULL)
             put("rfPacketLossPct", wifiRf?.packetLossPercent ?: JSONObject.NULL)
+            put("humanRfState", humanRf?.state?.name ?: JSONObject.NULL)
+            put("humanRfPatternConfidence", humanRf?.patternConfidence ?: JSONObject.NULL)
+            put("humanRfAlgorithm", humanRf?.algorithm ?: JSONObject.NULL)
             put("wifiVisibleNetworks", wifiSurvey?.visibleNetworks ?: JSONObject.NULL)
             put("wifiStrongestRssiDbm", wifiSurvey?.strongestRssiDbm ?: JSONObject.NULL)
             put("wifiMedianRssiDbm", wifiSurvey?.medianRssiDbm ?: JSONObject.NULL)

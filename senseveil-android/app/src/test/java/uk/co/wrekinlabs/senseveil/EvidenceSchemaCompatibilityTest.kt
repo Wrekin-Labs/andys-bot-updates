@@ -22,10 +22,18 @@ class EvidenceSchemaCompatibilityTest {
         assertEquals(true, e.rfSustainedChange)
         assertEquals(0.84f, e.rfCsiAmplitude!!, 1e-6f)
         assertNull(e.rfSynthetic); assertNull(e.rfAuth); assertNull(e.rfAlgorithm)
+        assertNull(e.humanRfState); assertNull(e.humanRfPatternConfidence); assertNull(e.humanRfAlgorithm)
     }
 
-    @Test fun schema4RoundTripAndReportLabelsSyntheticAndUnauthenticated() {
-        val e = EventRepository.parseLine(rc4)!!.copy(rfSynthetic = true, rfAuth = "PAIR_CODE_ONLY", rfAlgorithm = WifiRfAnalyzer.ALGORITHM)
+    @Test fun schema5RoundTripPreservesHumanRfResearchFields() {
+        val e = EventRepository.parseLine(rc4)!!.copy(
+            rfSynthetic = true,
+            rfAuth = "PAIR_CODE_ONLY",
+            rfAlgorithm = WifiRfAnalyzer.ALGORITHM,
+            humanRfState = HumanRfState.HUMAN_COMPATIBLE_MOTION.name,
+            humanRfPatternConfidence = 0.72f,
+            humanRfAlgorithm = HumanRfInterpreter.ALGORITHM
+        )
         val json = e.toJson()
         assertEquals(AppSchema.EVIDENCE_SCHEMA_VERSION, json.optInt("schemaVersion"))
         assertEquals(e, EventRepository.parseLine(json.toString()))
@@ -35,7 +43,8 @@ class EvidenceSchemaCompatibilityTest {
             val report = File(dir, "report.txt").readText()
             assertTrue(report.contains("SYNTHETIC TEST DATA"))
             assertTrue(report.contains("not authenticated"))
-            assertTrue(report.contains("must not be interpreted as identifying a person"))
+            assertTrue(report.contains("Human RF research state: HUMAN_COMPATIBLE_MOTION"))
+            assertTrue(report.contains("not proof of occupancy"))
         } finally { dir.deleteRecursively() }
     }
 
