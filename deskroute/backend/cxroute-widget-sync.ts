@@ -30,8 +30,15 @@ Deno.serve(async(req:Request)=>{
   if(req.method==="OPTIONS") return json({ok:true},200,origin);
   if(req.method!=="POST") return json({error:"Method not allowed"},405,origin);
 
+  const requestId=crypto.randomUUID();
+
   try{
-    const body=await req.json();
+    let body:any;
+    try{
+      body=await req.json();
+    }catch{
+      return json({error:"Invalid request"},400,origin);
+    }
     const widgetKey=String(body?.widgetKey||"").trim();
     const conversationId=String(body?.conversationId||"").trim();
     const visitorToken=String(body?.visitorToken||"").trim();
@@ -89,7 +96,13 @@ Deno.serve(async(req:Request)=>{
     if(error) return json({error:"Could not load messages"},500,origin);
 
     return json({messages:messages||[]},200,origin);
-  }catch{
-    return json({error:"Invalid request"},400,origin);
+  }catch(error){
+    console.error(JSON.stringify({
+      fn:"cxroute-widget-sync",
+      request_id:requestId,
+      error:error instanceof Error?error.name:"Error",
+      msg:error instanceof Error?error.message.slice(0,200):"Unexpected error"
+    }));
+    return json({error:"Internal error"},500,origin);
   }
 });

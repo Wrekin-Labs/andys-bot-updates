@@ -21,6 +21,7 @@ async function exercise(body={},overrides={}){
   ...overrides.records
  };
  const admin={from(table){
+  if(overrides.explode)throw Error('Fixture internal failure');
   const filters=[];let single=false,columns=null,ordering=null,limit=Infinity;
   const query=new Proxy({}, {get(_,key){
    if(key==='then')return resolve=>{
@@ -43,7 +44,10 @@ async function exercise(body={},overrides={}){
   }});return query;
  }};
  runInNewContext(source,{Deno:{serve:fn=>handler=fn,env:{get:name=>({SUPABASE_SECRET_KEYS:'{"default":"fixture-only"}',SUPABASE_URL:'https://fixture.invalid'})[name]}},createClient:()=>admin,Response,crypto:webcrypto,TextEncoder});
- const response=await handler(new Request('https://fixture.invalid/sync',{method:'POST',headers:{Origin:overrides.origin||'https://qa.example','Content-Type':'application/json'},body:JSON.stringify({widgetKey:'qa-widget',conversationId:conversation,...body})}));
+ const requestBody=Object.prototype.hasOwnProperty.call(overrides,'rawBody')
+  ?overrides.rawBody
+  :JSON.stringify({widgetKey:'qa-widget',conversationId:conversation,...body});
+ const response=await handler(new Request('https://fixture.invalid/sync',{method:'POST',headers:{Origin:overrides.origin||'https://qa.example','Content-Type':'application/json'},body:requestBody}));
  return {status:response.status,body:await response.json(),reads};
 }
 
@@ -92,4 +96,16 @@ test('visitor token is required once a conversation has been secured',async()=>{
  const ok=await exercise({visitorToken}, {records:{cxroute_conversations:[secured]}});
  assert.equal(ok.status,200);
  assert.deepEqual(ok.body.messages.map(m=>m.id),['reply']);
+});
+
+
+test('malformed visitor JSON is a 400 validation error',async()=>{
+ const r=await exercise({}, {rawBody:'{'});
+ assert.equal(r.status,400);
+ assert.equal(r.body.error,'Invalid request');
+});
+test('unexpected sync exceptions are 500 internal errors',async()=>{
+ const r=await exercise({}, {explode:true});
+ assert.equal(r.status,500);
+ assert.equal(r.body.error,'Internal error');
 });

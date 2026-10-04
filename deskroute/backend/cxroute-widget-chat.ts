@@ -3,6 +3,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { canSendAutomatically } from "./answer-policy.js";
 import { literalGroundingCheck } from "./literal-grounding.js";
+import { SENSITIVE_TOPICS, sensitiveTopic, sensitiveTopicFromTags } from "./sensitive-topics.js";
+import { holdingCopy } from "./holding-copy.js";
 import { questionDate, datedKnowledge } from "./dated-knowledge.js";
 
 type Body={
@@ -442,10 +444,16 @@ Deno.serve(async(req:Request)=>{
     return json({error:"Method not allowed"},405,origin);
   }
 
+  const requestId=crypto.randomUUID();
+
   try{
     const requestStartedAt=Date.now();
-    const requestId=crypto.randomUUID();
-    const body=await req.json() as Body;
+    let body:Body;
+    try{
+      body=await req.json() as Body;
+    }catch{
+      return json({error:"Invalid request"},400,origin);
+    }
 
     const widgetKey=
       String(body.widgetKey||"").trim();
@@ -474,6 +482,8 @@ Deno.serve(async(req:Request)=>{
         origin
       );
     }
+
+    const detectedSensitiveTopic=sensitiveTopic(message);
 
     const secret=JSON.parse(
       Deno.env.get("SUPABASE_SECRET_KEYS")||
@@ -673,7 +683,9 @@ Deno.serve(async(req:Request)=>{
     const dateContext=questionDate(message);
     let datedSearchIncomplete=false;
 
-    if(dateContext.date){
+    if(detectedSensitiveTopic){
+      matches=[];
+    }else if(dateContext.date){
       const result=await datedKnowledge(admin,config,message,dateContext);
       matches=Array.isArray(result.data)?result.data:[];
       searchError=result.error;
@@ -785,11 +797,12 @@ Deno.serve(async(req:Request)=>{
       body.visitorToken
         ?String(body.visitorToken).trim()
         :"";
+    let priorSensitiveTopic:string|null=null;
 
     if(conversationId){
       const {data:existing}=await admin
         .from("cxroute_conversations")
-        .select("id,brand_id,visitor_token_hash")
+        .select("id,brand_id,visitor_token_hash,tags,priority")
         .eq("id",conversationId)
         .eq(
           "organisation_id",
@@ -832,6 +845,8 @@ Deno.serve(async(req:Request)=>{
           return json({error:"Could not secure conversation"},500,origin);
         }
       }
+
+      priorSensitiveTopic=sensitiveTopicFromTags(existing.tags);
     }
 
     if(!conversationId){
@@ -920,6 +935,9 @@ Deno.serve(async(req:Request)=>{
         conversation.id;
     }
 
+    const sensitive=detectedSensitiveTopic||priorSensitiveTopic;
+    const sensitiveMeta=sensitive?SENSITIVE_TOPICS[sensitive]:null;
+
     const inbound=await admin
       .from("cxroute_messages")
       .insert({
@@ -952,7 +970,7 @@ Deno.serve(async(req:Request)=>{
     let llmError:string|null=null;
     let aiBudgetReserved=false;
 
-    if(evidence.length&&aiEnabled&&Deno.env.get("OPENAI_API_KEY")){
+    if(evidence.length&&aiEnabled&&!sensitive&&Deno.env.get("OPENAI_API_KEY")){
       try{
         const reservation=await admin.rpc(
           "cxroute_reserve_ai_call",
@@ -982,6 +1000,7 @@ Deno.serve(async(req:Request)=>{
       }
     }
 
+    if(sensitive&&!llmError)llmError="sensitive_topic";
     if(!llm&&!llmError)llmError=datedSearchIncomplete?"dated_knowledge_incomplete":dateContext.requiresHuman?"dated_answer_requires_review":"grounding_not_available";
     const usedModelEvidence=llm
       ?evidence.filter((fact:Evidence)=>llm.used_fact_ids.includes(fact.id))
@@ -990,8 +1009,9 @@ Deno.serve(async(req:Request)=>{
       ?literalGroundingCheck(llm.answer,usedModelEvidence)
       :{ok:false,claims:[],missing:[]};
     if(llm&&!literalCheck.ok&&!llmError)llmError="literal_grounding_failed";
-    const modelAutomaticAllowed=!dateContext.requiresHuman&&literalCheck.ok&&canSendAutomatically(aiMode,llm,minConfidence,relevance);
+    const modelAutomaticAllowed=!sensitive&&!dateContext.requiresHuman&&literalCheck.ok&&canSendAutomatically(aiMode,llm,minConfidence,relevance);
     const directAutomaticAllowed=
+      !sensitive&&
       !dateContext.requiresHuman&&
       aiMode==="automatic"&&
       !llm&&
@@ -1008,7 +1028,21 @@ Deno.serve(async(req:Request)=>{
       "widget_escalated";
     let usedFactIds:string[]=[];
 
-    if(automaticAllowed){
+    if(sensitive){
+      answer=holdingCopy(sensitive,{locale});
+      needsHuman=true;
+      auditAction="widget_sensitive_handoff";
+
+      await admin
+        .from("cxroute_messages")
+        .insert({
+          organisation_id:config.organisation_id,
+          conversation_id:conversationId,
+          direction:"outbound",
+          body:answer,
+          author_type:"system"
+        });
+    }else if(automaticAllowed){
       answer=String(
         llm?.answer||
         best?.fact_value||
@@ -1127,7 +1161,7 @@ Deno.serve(async(req:Request)=>{
 
     let knowledgeGapId:string|null=null;
 
-    if(needsHuman&&(!hasUsableFact||!llm||llm.needs_human||dateContext.requiresHuman)&&config.brand_id){
+    if(!sensitive&&needsHuman&&(!hasUsableFact||!llm||llm.needs_human||dateContext.requiresHuman)&&config.brand_id){
       try{
         const gap=await admin.rpc("cxroute_record_knowledge_gap",{
           p_organisation_id:config.organisation_id,
@@ -1165,7 +1199,7 @@ Deno.serve(async(req:Request)=>{
 
         const currentResult=await admin
           .from("cxroute_conversations")
-          .select("assigned_user_id,tags")
+          .select("assigned_user_id,tags,priority")
           .eq("id",conversationId)
           .eq("organisation_id",config.organisation_id)
           .maybeSingle();
@@ -1179,7 +1213,17 @@ Deno.serve(async(req:Request)=>{
           ?currentResult.data.tags.map((x:any)=>String(x))
           :[];
 
-        const nextTags=[...new Set([...existingTags,"ai-needs-human"])];
+        const nextTags=[...new Set([
+          ...existingTags,
+          "ai-needs-human",
+          ...(sensitive?["sensitive-"+sensitive]:[])
+        ])];
+        const rank:{[key:string]:number}={low:0,normal:1,high:2,urgent:3};
+        const currentPriority=String(currentResult.data?.priority||"normal");
+        const requestedPriority=String(sensitiveMeta?.priority||currentPriority);
+        const nextPriority=(rank[requestedPriority]??1)>(rank[currentPriority]??1)
+          ?requestedPriority
+          :currentPriority;
 
         if(targetUserId){
           humanAssigneeId=targetUserId;
@@ -1189,6 +1233,7 @@ Deno.serve(async(req:Request)=>{
             .update({
               assigned_user_id:targetUserId,
               tags:nextTags,
+              priority:nextPriority,
               updated_at:new Date().toISOString()
             })
             .eq("id",conversationId)
@@ -1201,8 +1246,14 @@ Deno.serve(async(req:Request)=>{
               user_id:targetUserId,
               conversation_id:conversationId,
               kind:"system",
-              title:"DeskRoute needs a human reply",
-              body_preview:message.slice(0,180)
+              title:sensitive==="safeguarding"
+                ?"Urgent: a customer may need support now"
+                :sensitive
+                  ?"DeskRoute needs a human reply ("+String(sensitiveMeta?.label||"Sensitive")+")"
+                  :"DeskRoute needs a human reply",
+              body_preview:sensitiveMeta?.notifyPreview===false
+                ?null
+                :message.slice(0,180)
             });
         }
       }catch(error){
@@ -1261,6 +1312,8 @@ Deno.serve(async(req:Request)=>{
             usedFactIds,
           needs_human:
             needsHuman,
+          sensitive_topic:
+            sensitive||null,
           knowledge_gap_id:
             knowledgeGapId,
           assigned_user_id:
@@ -1271,9 +1324,11 @@ Deno.serve(async(req:Request)=>{
     try{
       const secondRelevance=Number(evidence[1]?.relevance||0);
       const failedGate=
-        llmError==="literal_grounding_failed"
-          ?"literal_grounding"
-          :llmError==="budget_exceeded"
+        llmError==="sensitive_topic"
+          ?"sensitive_topic"
+          :llmError==="literal_grounding_failed"
+            ?"literal_grounding"
+            :llmError==="budget_exceeded"
             ?"budget_exceeded"
             :llmError==="budget_check_failed"
               ?"budget_check_failed"
@@ -1355,15 +1410,12 @@ Deno.serve(async(req:Request)=>{
       origin
     );
   }catch(error){
-    return json(
-      {
-        error:
-          error instanceof Error
-            ?error.message
-            :"Invalid request"
-      },
-      400,
-      origin
-    );
+    console.error(JSON.stringify({
+      fn:"cxroute-widget-chat",
+      request_id:requestId,
+      error:error instanceof Error?error.name:"Error",
+      msg:error instanceof Error?error.message.slice(0,200):"Unexpected error"
+    }));
+    return json({error:"Internal error"},500,origin);
   }
 });
