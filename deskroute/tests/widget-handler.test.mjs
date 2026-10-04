@@ -25,7 +25,7 @@ function assertInjected(sourceText,context){
  if(missing.length)throw new Error('widget-handler harness missing injections: '+missing.join(', '));
 }
 
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1}={}){
  const writes=[],calls=[];let handler,providerCalls=0;
  const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:conversationTags,priority:conversationPriority,visitor_token_hash:legacyUnsecured?null:visitorTokenHash};
  const records={
@@ -50,7 +50,13 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
   },
   async rpc(name,p){
    calls.push({name,p});
-   if(name==='cxroute_take_widget_rate_limit')return {data:1};
+   if(name==='cxroute_take_widget_rate_limit'){
+    const bucket=String(p?.p_visitor_hash||'');
+    if(bucket.startsWith('chat:visitor:'))return {data:visitorRateCount,error:null};
+    if(bucket.startsWith('chat:ip:'))return {data:ipRateCount,error:null};
+    if(bucket==='chat:global')return {data:globalRateCount,error:null};
+    throw Error('Unexpected rate-limit bucket '+bucket);
+   }
    if(name==='cxroute_reserve_ai_call')return {data:budgetAllowed,error:null};
    if(name.startsWith('cxroute_search_approved_facts'))return {data:facts};
    if(name==='cxroute_record_knowledge_gap')return {data:'qa-gap'};
@@ -202,4 +208,68 @@ test('legacy unsecured chat conversation cannot be claimed by conversation id',a
  const r=await exercise('Hello',[],{legacyUnsecured:true,expectedStatus:403});
  assert.equal(r.body.reset,true);
  assert.equal(r.body.error,'Conversation access denied');
+});
+
+
+test('chat rate limiting uses separate visitor, IP and global buckets',async()=>{
+ const r=await exercise('Is a lift available?',[]);
+ const buckets=r.calls
+  .filter(c=>c.name==='cxroute_take_widget_rate_limit')
+  .map(c=>String(c.p.p_visitor_hash));
+ assert.equal(buckets.length,3);
+ assert.ok(buckets.some(x=>x.startsWith('chat:visitor:')));
+ assert.ok(buckets.some(x=>x.startsWith('chat:ip:')));
+ assert.ok(buckets.includes('chat:global'));
+});
+
+test('visitor chat abuse is rate limited without reaching AI',async()=>{
+ const r=await exercise('What is the price?',[price],{
+  provider:'ready',
+  visitorRateCount:31,
+  expectedStatus:429
+ });
+ assert.match(r.body.error,/Too many messages/);
+ assert.equal(r.providerCalls,0);
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+});
+
+test('rotating user agent cannot bypass the per-IP chat limit',async()=>{
+ const r=await exercise('What is the price?',[price],{
+  provider:'ready',
+  ipRateCount:121,
+  expectedStatus:429
+ });
+ assert.match(r.body.error,/Too many messages/);
+ assert.equal(r.providerCalls,0);
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+});
+
+test('global traffic guard keeps chat available and suppresses paid AI',async()=>{
+ const reply={answer:price.fact_value,grounded:true,needs_human:false,confidence:.99,used_fact_ids:['price']};
+ const r=await exercise('What is the price?',[price],{
+  provider:'ready',
+  reply,
+  globalRateCount:301
+ });
+ assert.equal(r.body.needsHuman,false);
+ assert.equal(r.body.answer,price.fact_value);
+ assert.equal(r.providerCalls,0);
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ const event=r.writes.find(w=>w.table==='cxroute_ai_events');
+ assert.equal(event.body.failed_gate,'rate_guard');
+ assert.equal(event.body.error_code,'global_rate_guard');
+ assert.ok(r.writes.some(w=>w.table==='cxroute_audit_log'&&w.body.action==='widget_global_ai_guard'));
+});
+
+test('global traffic guard hands unknown questions to a person without teaching the flood',async()=>{
+ const r=await exercise('Can you tell me the secret back door width?',[],{
+  provider:'ready',
+  globalRateCount:350
+ });
+ assert.equal(r.body.needsHuman,true);
+ assert.equal(r.providerCalls,0);
+ assert.equal(r.body.knowledgeGapId,null);
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_reserve_ai_call'));
+ assert.ok(!r.calls.some(c=>c.name==='cxroute_record_knowledge_gap'));
+ assert.ok(r.writes.some(w=>w.table==='cxroute_staff_notifications'));
 });

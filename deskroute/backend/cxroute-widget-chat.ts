@@ -565,6 +565,9 @@ Deno.serve(async(req:Request)=>{
     const visitorHash=await sha256Hex(
       `${secret.slice(-24)}|${widgetKey}|${ip}|${ua}`
     );
+    const ipHash=await sha256Hex(
+      `${secret.slice(-24)}|${widgetKey}|${ip}`
+    );
 
     const windowMs=10*60*1000;
 
@@ -574,13 +577,14 @@ Deno.serve(async(req:Request)=>{
 
     const [
       visitorLimit,
+      ipLimit,
       globalLimit
     ]=await Promise.all([
       admin.rpc(
         "cxroute_take_widget_rate_limit",
         {
           p_widget_id:config.id,
-          p_visitor_hash:visitorHash,
+          p_visitor_hash:`chat:visitor:${visitorHash}`,
           p_window_start:windowStart,
           p_limit:30
         }
@@ -589,7 +593,16 @@ Deno.serve(async(req:Request)=>{
         "cxroute_take_widget_rate_limit",
         {
           p_widget_id:config.id,
-          p_visitor_hash:"__all__",
+          p_visitor_hash:`chat:ip:${ipHash}`,
+          p_window_start:windowStart,
+          p_limit:120
+        }
+      ),
+      admin.rpc(
+        "cxroute_take_widget_rate_limit",
+        {
+          p_widget_id:config.id,
+          p_visitor_hash:"chat:global",
           p_window_start:windowStart,
           p_limit:300
         }
@@ -598,6 +611,7 @@ Deno.serve(async(req:Request)=>{
 
     if(
       visitorLimit.error||
+      ipLimit.error||
       globalLimit.error
     ){
       return json(
@@ -610,10 +624,16 @@ Deno.serve(async(req:Request)=>{
       );
     }
 
+    const visitorRateCount=Number(visitorLimit.data||0);
+    const ipRateCount=Number(ipLimit.data||0);
+    const globalRateCount=Number(globalLimit.data||0);
+
     if(
-      Number(visitorLimit.data||0)>30||
-      Number(globalLimit.data||0)>300
+      visitorRateCount>30||
+      ipRateCount>120
     ){
+      const scope=visitorRateCount>30?"visitor":"ip";
+
       await admin
         .from("cxroute_audit_log")
         .insert({
@@ -625,6 +645,7 @@ Deno.serve(async(req:Request)=>{
           entity_id:config.id,
           safe_metadata:{
             window_minutes:10,
+            scope,
             brand_id:
               config.brand_id||null
           }
@@ -638,6 +659,25 @@ Deno.serve(async(req:Request)=>{
         429,
         origin
       );
+    }
+
+    const globalAiSuppressed=globalRateCount>300;
+
+    if(globalRateCount===301){
+      await admin
+        .from("cxroute_audit_log")
+        .insert({
+          organisation_id:config.organisation_id,
+          actor_type:"system",
+          action:"widget_global_ai_guard",
+          entity_type:"widget",
+          entity_id:config.id,
+          safe_metadata:{
+            window_minutes:10,
+            brand_id:config.brand_id||null,
+            behaviour:"ai_suppressed_chat_remains_available"
+          }
+        });
     }
 
     const {data:channelPolicy}=config.brand_id
@@ -961,7 +1001,7 @@ Deno.serve(async(req:Request)=>{
     let llmError:string|null=null;
     let aiBudgetReserved=false;
 
-    if(evidence.length&&aiEnabled&&!sensitive&&Deno.env.get("OPENAI_API_KEY")){
+    if(evidence.length&&aiEnabled&&!sensitive&&!globalAiSuppressed&&Deno.env.get("OPENAI_API_KEY")){
       try{
         const reservation=await admin.rpc(
           "cxroute_reserve_ai_call",
@@ -992,6 +1032,7 @@ Deno.serve(async(req:Request)=>{
     }
 
     if(sensitive&&!llmError)llmError="sensitive_topic";
+    if(globalAiSuppressed&&!sensitive&&!llmError)llmError="global_rate_guard";
     if(!llm&&!llmError)llmError=datedSearchIncomplete?"dated_knowledge_incomplete":dateContext.requiresHuman?"dated_answer_requires_review":"grounding_not_available";
     const usedModelEvidence=llm
       ?evidence.filter((fact:Evidence)=>llm.used_fact_ids.includes(fact.id))
@@ -1152,7 +1193,7 @@ Deno.serve(async(req:Request)=>{
 
     let knowledgeGapId:string|null=null;
 
-    if(!sensitive&&needsHuman&&(!hasUsableFact||!llm||llm.needs_human||dateContext.requiresHuman)&&config.brand_id){
+    if(!sensitive&&!globalAiSuppressed&&needsHuman&&(!hasUsableFact||!llm||llm.needs_human||dateContext.requiresHuman)&&config.brand_id){
       try{
         const gap=await admin.rpc("cxroute_record_knowledge_gap",{
           p_organisation_id:config.organisation_id,
@@ -1285,6 +1326,7 @@ Deno.serve(async(req:Request)=>{
           llm_used:Boolean(llm),
           ai_budget_reserved:aiBudgetReserved,
           ai_call_limit:aiCallLimit,
+          global_ai_suppressed:globalAiSuppressed,
           llm_model:
             llm?.model||null,
           llm_error:
@@ -1317,7 +1359,9 @@ Deno.serve(async(req:Request)=>{
       const failedGate=
         llmError==="sensitive_topic"
           ?"sensitive_topic"
-          :llmError==="literal_grounding_failed"
+          :llmError==="global_rate_guard"
+            ?"rate_guard"
+            :llmError==="literal_grounding_failed"
             ?"literal_grounding"
             :llmError==="budget_exceeded"
             ?"budget_exceeded"
