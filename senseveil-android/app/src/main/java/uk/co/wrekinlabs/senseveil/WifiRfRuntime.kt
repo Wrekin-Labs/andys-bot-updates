@@ -4,113 +4,81 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.PrintWriter
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.net.SocketTimeoutException
-import java.util.concurrent.atomic.AtomicBoolean
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 
+/**
+ * Android adapter around [RfBridgeClient]. Public API is unchanged from RC4
+ * (start / stop / setDeviceMoving / resetBaseline) so MainActivity wiring stays the same.
+ * Holds only the application context, so a worker that outlives an Activity cannot leak it.
+ */
 class WifiRfBridge(
     context: Context,
     private val preferences: OperatorPreferences,
-    private val onReading: (WifiRfReading) -> Unit
+    onReading: (WifiRfReading) -> Unit
 ) {
-    private val analyzer = WifiRfAnalyzer()
-    private val running = AtomicBoolean(false)
-    @Volatile private var deviceMoving = false
-    @Volatile private var worker: Thread? = null
-    @Volatile private var generation = 0L
+    private val appContext = context.applicationContext
+    private val client = RfBridgeClient(
+        config = {
+            val key = preferences.rfBridgeKey
+            RfBridgeConfig(
+                host = preferences.rfBridgeHost,
+                port = preferences.rfBridgePort,
+                pairCode = preferences.rfPairCode,
+                allowNonLocalHost = preferences.rfAllowNonLocalHost,
+                v2Key = key,
+                requireV2 = key != null // once a key exists, never silently downgrade to plaintext v1
+            )
+        },
+        hasPermission = { hasLocalNetworkPermission(appContext) },
+        onReading = onReading
+    )
 
-    fun start() {
-        if (!running.compareAndSet(false, true)) return
-        val runGeneration = ++generation
-        onReading(WifiRfReading(status = WifiRfStatus.CONNECTING, message = "connecting to paired RF bridge"))
-        worker = Thread({ loop(runGeneration) }, "SenseVeil-RF").apply {
-            isDaemon = true
-            start()
-        }
-    }
+    fun start() = client.start()
+    fun stop() = client.stop()
+    fun setDeviceMoving(value: Boolean) = client.setDeviceMoving(value)
+    fun resetBaseline() = client.resetBaseline()
 
-    fun stop() {
-        generation++
-        running.set(false)
-        worker?.interrupt()
-        worker = null
-        onReading(WifiRfReading(status = WifiRfStatus.OFF, message = "RF bridge off"))
-    }
+    companion object {
+        const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
 
-    fun setDeviceMoving(value: Boolean) {
-        if (value && !deviceMoving) analyzer.invalidateBaseline()
-        deviceMoving = value
-    }
-
-    fun resetBaseline() {
-        analyzer.reset()
-        onReading(WifiRfReading(status = WifiRfStatus.CALIBRATING, message = "RF baseline reset"))
-    }
-
-    private fun loop(runGeneration: Long) {
-        while (running.get() && generation == runGeneration) {
-            try {
-                Socket().use { socket ->
-                    socket.connect(InetSocketAddress(preferences.rfBridgeHost, preferences.rfBridgePort), 2_500)
-                    analyzer.reset()
-                    onReading(WifiRfReading(status = WifiRfStatus.CALIBRATING, message = "RF bridge connected; recalibrating baseline"))
-                    socket.soTimeout = 3_500
-                    val output = PrintWriter(socket.getOutputStream(), true)
-                    output.println(JSONObject().put("type", "senseveil_hello").put("v", 1).put("pair", preferences.rfPairCode).toString())
-                    val input = BufferedReader(InputStreamReader(socket.getInputStream()))
-                    while (running.get() && generation == runGeneration) {
-                        try {
-                            val line = input.readLine() ?: break
-                            val frame = WifiRfProtocol.parse(line, preferences.rfPairCode) ?: continue
-                            onReading(analyzer.accept(frame, deviceMoving))
-                        } catch (_: SocketTimeoutException) {
-                            analyzer.stale(SystemClock.elapsedRealtime())?.let(onReading)
-                        }
-                    }
-                }
-            } catch (_: SecurityException) {
-                onReading(WifiRfReading(status = WifiRfStatus.UNAVAILABLE, message = "local network permission required"))
-            } catch (error: Exception) {
-                if (running.get() && generation == runGeneration) {
-                    onReading(WifiRfReading(
-                        status = WifiRfStatus.UNAVAILABLE,
-                        message = "RF bridge unavailable: " + error.javaClass.simpleName
-                    ))
-                }
-            }
-            if (running.get() && generation == runGeneration) {
-                try {
-                    Thread.sleep(1_500L)
-                } catch (_: InterruptedException) {
-                }
-            }
-        }
+        /** Android 17 enforces local-network access; denial shows up as a connect TIMEOUT, not an exception. */
+        fun hasLocalNetworkPermission(context: Context) =
+            Build.VERSION.SDK_INT < 37 ||
+                ContextCompat.checkSelfPermission(context, LOCAL_NETWORK_PERMISSION) == PackageManager.PERMISSION_GRANTED
     }
 }
 
+/**
+ * Opt-in aggregate Wi-Fi survey. Only (frequency, level) pairs are read from scan results;
+ * SSID and BSSID never leave this class. Unknown is reported as unknown (visibleNetworks = null),
+ * never as "0 networks", because Android returns an empty list when Location Services are off.
+ * All callbacks run on the main looper.
+ */
 class PhoneWifiSurvey(
     context: Context,
+    private val intervalMs: () -> Long = { DEFAULT_INTERVAL_MS },
     private val onReading: (WifiSurveyReading) -> Unit
 ) {
     private val appContext = context.applicationContext
     private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    private val location = appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
     private val handler = Handler(Looper.getMainLooper())
     private var registered = false
     private var running = false
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            publishResults()
+            if (!running) return
+            val updated = intent?.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false) == true
+            publishResults(if (updated) null else "scan not refreshed (throttled or failed); cached results")
         }
     }
 
@@ -118,7 +86,7 @@ class PhoneWifiSurvey(
         override fun run() {
             if (!running) return
             requestScan()
-            handler.postDelayed(this, SCAN_INTERVAL_MS)
+            handler.postDelayed(this, intervalMs().coerceAtLeast(MIN_SCAN_GAP_MS))
         }
     }
 
@@ -131,19 +99,18 @@ class PhoneWifiSurvey(
         running = true
         try {
             if (Build.VERSION.SDK_INT >= 33) {
-                appContext.registerReceiver(
-                    receiver,
-                    IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION),
-                    Context.RECEIVER_NOT_EXPORTED
-                )
+                appContext.registerReceiver(receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION), Context.RECEIVER_NOT_EXPORTED)
             } else {
                 @Suppress("DEPRECATION")
                 appContext.registerReceiver(receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION))
             }
             registered = true
-            requestScan()
-            handler.postDelayed(scanTask, SCAN_INTERVAL_MS)
+            // Resume/rotation must not burn the 4-scans-per-2-minutes foreground budget.
+            val sinceLast = SystemClock.elapsedRealtime() - lastScanRequestElapsed
+            if (lastScanRequestElapsed == 0L || sinceLast >= MIN_SCAN_GAP_MS) requestScan() else publishResults("using recent scan")
+            handler.postDelayed(scanTask, intervalMs().coerceAtLeast(MIN_SCAN_GAP_MS))
         } catch (_: SecurityException) {
+            running = false
             onReading(WifiSurveyReading(status = "Wi-Fi scan permission required"))
         }
     }
@@ -155,31 +122,39 @@ class PhoneWifiSurvey(
         registered = false
     }
 
+    private fun blockedReason(): String? {
+        val manager = wifi ?: return "Wi-Fi hardware unavailable"
+        if (ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return "Wi-Fi scan permission required"
+        }
+        if (location != null && !LocationManagerCompat.isLocationEnabled(location)) return "Location Services off; Android hides scan results"
+        @Suppress("DEPRECATION")
+        if (!manager.isWifiEnabled && !manager.isScanAlwaysAvailable) return "Wi-Fi is off"
+        return null
+    }
+
     private fun requestScan() {
-        val manager = wifi ?: run {
-            onReading(WifiSurveyReading(status = "Wi-Fi hardware unavailable"))
-            return
-        }
-        if (!manager.isWifiEnabled) {
-            onReading(WifiSurveyReading(status = "Wi-Fi is off"))
-            return
-        }
+        blockedReason()?.let { onReading(WifiSurveyReading(status = it)); return }
         try {
+            lastScanRequestElapsed = SystemClock.elapsedRealtime()
             @Suppress("DEPRECATION")
-            val started = manager.startScan()
-            if (!started) publishResults("scan throttled or unavailable")
+            val started = wifi!!.startScan()
+            if (!started) publishResults("scan throttled; cached results")
         } catch (_: SecurityException) {
             onReading(WifiSurveyReading(status = "Wi-Fi scan permission required"))
         }
     }
 
     private fun publishResults(statusOverride: String? = null) {
+        blockedReason()?.let { onReading(WifiSurveyReading(status = it)); return }
         try {
-            val manager = wifi ?: run {
-                onReading(WifiSurveyReading(status = "Wi-Fi hardware unavailable"))
-                return
-            }
-            val aggregate = WifiSurveyAggregator.aggregate(manager.scanResults.map { it.frequency to it.level })
+            val nowMicros = SystemClock.elapsedRealtime() * 1_000L
+            // ScanResult.timestamp is microseconds since boot. Drop entries Android kept from old scans.
+            val fresh = wifi!!.scanResults
+                .map { (nowMicros - it.timestamp) / 1_000L to (it.frequency to it.level) }
+                .filter { it.first in 0..MAX_RESULT_AGE_MS }
+            val newestAge = fresh.minOfOrNull { it.first }
+            val aggregate = WifiSurveyAggregator.aggregate(fresh.map { it.second }, newestResultAgeMs = newestAge)
             onReading(if (statusOverride == null) aggregate else aggregate.copy(status = statusOverride))
         } catch (_: SecurityException) {
             onReading(WifiSurveyReading(status = "Wi-Fi scan permission required"))
@@ -187,6 +162,11 @@ class PhoneWifiSurvey(
     }
 
     companion object {
-        private const val SCAN_INTERVAL_MS = 30_000L
+        const val DEFAULT_INTERVAL_MS = 30_000L
+        /** Android 9+ allows a foreground app 4 scans per 2 minutes. */
+        const val MIN_SCAN_GAP_MS = 30_000L
+        const val MAX_RESULT_AGE_MS = 120_000L
+        /** Process-wide, so a rotated Activity does not immediately rescan. Main thread only. */
+        private var lastScanRequestElapsed = 0L
     }
 }
