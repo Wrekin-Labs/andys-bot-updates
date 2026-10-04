@@ -104,8 +104,12 @@ class MainActivity : AppCompatActivity() {
     private var externalHub: ExternalSensorHub = NoExternalSensorHub()
     private var externalReading: ExternalPresenceReading? = null
     private var sensorSnapshot = SensorSnapshot()
-    private var wifiRfReading = WifiRfReading()
-    private var wifiSurveyReading = WifiSurveyReading()
+    // Written on the RF worker / main thread, read on the analysis and IO threads.
+    @Volatile private var wifiRfReading = WifiRfReading()
+    @Volatile private var wifiSurveyReading = WifiSurveyReading()
+    @Volatile private var lastRfUiRefreshAt = 0L
+    /** RF-only motion gate with settle time; camera detection keeps its own instantaneous test. */
+    private val rfMotionGate = MotionGate()
     private var latestDetection = DetectionState()
 
     private var labMode = false
@@ -114,7 +118,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAutoCaptureAt = 0L
     private var anomalyEpisodeLatched = false
     @Volatile private var captureInterruptionGeneration = 0L
-    private val localNetworkPermissionName = "android.permission.ACCESS_LOCAL_NETWORK"
+    private val localNetworkPermissionName = WifiRfBridge.LOCAL_NETWORK_PERMISSION
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -150,6 +154,10 @@ class MainActivity : AppCompatActivity() {
                 bufferText.text = "WI-FI SURVEY: ON"
             } else {
                 bufferText.text = "WI-FI SURVEY: PRECISE LOCATION PERMISSION NOT GRANTED"
+                if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    showPermissionSettingsHint("Wi-Fi survey",
+                        "Android only shares Wi-Fi scan results with apps that hold Precise location. SenseVeil stores aggregate counts only (no network names or addresses). Enable it in Settings → Permissions → Location → Use precise location.")
+                }
             }
         }
 
@@ -161,6 +169,10 @@ class MainActivity : AppCompatActivity() {
                 bufferText.text = "RF BRIDGE: CONNECTING"
             } else {
                 bufferText.text = "RF BRIDGE: LOCAL NETWORK PERMISSION NOT GRANTED"
+                if (!shouldShowRequestPermissionRationale(localNetworkPermissionName)) {
+                    showPermissionSettingsHint("RF bridge",
+                        "The RF bridge needs Local network access to reach your ESP32/PC sensor. Enable it in Settings → Permissions → Nearby devices.")
+                }
             }
         }
 
@@ -466,20 +478,29 @@ class MainActivity : AppCompatActivity() {
         sensorFusion = SensorFusionEngine(this) { snapshot ->
             sensorSnapshot = snapshot
             sensorTimeline.add(snapshot)
-            val deviceMoving = snapshot.accelerationMs2?.let { abs(it - 9.81f) > 1.8f } == true
-            if (::wifiRfBridge.isInitialized) wifiRfBridge.setDeviceMoving(deviceMoving)
+            if (rfMotionGate.update(snapshot.accelerationMs2, SystemClock.elapsedRealtime()) && ::wifiRfBridge.isInitialized) {
+                wifiRfBridge.setDeviceMoving(rfMotionGate.moving)
+            }
             runOnUiThread { updateSensorText(snapshot) }
         }
         audioMonitor = AudioLevelMonitor(this) { db -> sensorFusion.setAudioDbfs(db) }
         wifiRfBridge = WifiRfBridge(this, operatorPreferences) { reading ->
+            val previous = wifiRfReading
             wifiRfReading = reading
-            rfTimeline.addRf(reading)
-            runOnUiThread {
-                updateSensorText(sensorSnapshot)
-                if (reading.sustainedChange) bufferText.text = "RF CHANGE RECORDED • " + (reading.source ?: "bridge")
+            rfTimeline.addRf(reading) // evidence keeps every reading; only the UI is throttled
+            val transition = reading.status != previous.status
+            val now = SystemClock.elapsedRealtime()
+            if (transition || now - lastRfUiRefreshAt >= operatorPreferences.performanceMode.rfUiRefreshMs) {
+                lastRfUiRefreshAt = now
+                runOnUiThread {
+                    if (!isDestroyed) {
+                        updateSensorText(sensorSnapshot)
+                        if (transition) announceRfTransition(reading)
+                    }
+                }
             }
         }
-        phoneWifiSurvey = PhoneWifiSurvey(this) { reading ->
+        phoneWifiSurvey = PhoneWifiSurvey(this, { operatorPreferences.performanceMode.wifiSurveyIntervalMs }) { reading ->
             wifiSurveyReading = reading
             rfTimeline.addSurvey(reading)
             runOnUiThread { updateSensorText(sensorSnapshot) }
@@ -633,7 +654,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 latestDetection = state
                 detectionTimeline.add(state)
-                runCatching { sessionRecorder.append(state, sensorSnapshot, ext, wifiRfReading, wifiSurveyReading) }.onFailure { error ->
+                runCatching { sessionRecorder.append(state, sensorSnapshot, ext, wifiRfReading, surveyForEvidence()) }.onFailure { error ->
                     runOnUiThread { if (!isDestroyed) bufferText.text = "SESSION WRITE FAILED: ${error.message}" }
                 }
 
@@ -740,12 +761,15 @@ class MainActivity : AppCompatActivity() {
             append("  AUDIO ").append(f(s.audioDbfs, "dB", 1))
             if (labMode) append("  PRESS ").append(f(s.pressureHpa, "hPa", 1))
             if (operatorPreferences.rfBridgeEnabled) {
-                append("\nRF ").append(wifiRfReading.status.name)
-                if (wifiRfReading.sampleRateHz != null) append(" ").append("%.1fHz".format(wifiRfReading.sampleRateHz))
-                if (wifiRfReading.novelty > 0f) append(" Δ").append((wifiRfReading.novelty * 100f).roundToInt()).append('%')
+                val rf = wifiRfReading
+                append("\nRF ").append(rf.status.name)
+                if (rf.status == WifiRfStatus.CALIBRATING) append(' ').append(rf.baselineSamples).append('/').append(rf.baselineTarget)
+                (rf.measuredRateHz ?: rf.sampleRateHz)?.let { append(" ").append("%.1fHz".format(it)) }
+                if (rf.novelty > 0f) append(" Δ").append((rf.novelty * 100f).roundToInt()).append('%')
+                if (rf.synthetic) append(" SYNTHETIC")
             }
             if (operatorPreferences.wifiSurveyEnabled) {
-                append("  WIFI ").append(wifiSurveyReading.visibleNetworks).append(" AP")
+                append("  WIFI ").append(wifiSurveyReading.visibleNetworks?.let { "$it AP" } ?: "--")
             }
         }
         if (!torchEnabled && s.lightLux != null && s.lightLux < 2f) {
@@ -782,7 +806,7 @@ class MainActivity : AppCompatActivity() {
             val captureEpochMs = System.currentTimeMillis()
             val capturedSensors = sensorSnapshot
             val capturedRf = wifiRfReading
-            val capturedWifiSurvey = wifiSurveyReading
+            val capturedWifiSurvey = surveyForEvidence()
             val capturedProfile = currentProfile.label
             val bundle = eventRepository.createEventBundle(reason)
             pendingBundleName = bundle.name
@@ -842,7 +866,10 @@ class MainActivity : AppCompatActivity() {
                                 rfRssiDbm = capturedRf.rssiDbm,
                                 rfCsiAmplitude = capturedRf.csiAmplitude,
                                 rfCsiVariance = capturedRf.csiVariance,
-                                wifiVisibleNetworks = capturedWifiSurvey.visibleNetworks.takeIf { operatorPreferences.wifiSurveyEnabled },
+                                rfSynthetic = capturedRf.synthetic.takeIf { capturedRf.status != WifiRfStatus.OFF },
+                                rfAuth = capturedRf.auth?.name,
+                                rfAlgorithm = capturedRf.algorithm.takeIf { capturedRf.status != WifiRfStatus.OFF },
+                                wifiVisibleNetworks = capturedWifiSurvey.visibleNetworks,
                                 wifiStrongestRssiDbm = capturedWifiSurvey.strongestRssiDbm,
                                 wifiMedianRssiDbm = capturedWifiSurvey.medianRssiDbm,
                                 note = if (automatic) "automatic detector-disagreement capture" else "manual capture",
@@ -1006,7 +1033,7 @@ class MainActivity : AppCompatActivity() {
         }
         toolSection("Wi-Fi / RF sensing (opt-in)")
         panel.addView(TextView(this).apply {
-            text = "Wi-Fi surveys store aggregate signal counts only. CSI/RF records environmental radio change and never feeds person-detection confidence."
+            text = "Wi-Fi surveys store aggregate signal counts only. CSI/RF records environmental radio change and never feeds person-detection confidence. RF change ≠ person detected."
             setTextColor(Brand.TEXT_MUTED)
             textSize = 11f
             setPadding(0, dp(2), 0, dp(6))
@@ -1024,8 +1051,12 @@ class MainActivity : AppCompatActivity() {
             showRfBridgeSetup()
         }
         toolButton("RF BASELINE RESET") {
-            wifiRfBridge.resetBaseline()
-            bufferText.text = "RF BASELINE RESET • HOLD PHONE STILL"
+            if (!operatorPreferences.rfBridgeEnabled) {
+                bufferText.text = "RF BRIDGE IS OFF"
+            } else {
+                wifiRfBridge.resetBaseline()
+                bufferText.text = "RF BASELINE RESET • HOLD PHONE STILL"
+            }
         }
         toolButton("RF STATUS") {
             root.removeView(shade)
@@ -1171,16 +1202,28 @@ class MainActivity : AppCompatActivity() {
             text = "Pair code: " + operatorPreferences.rfPairCode + "\nUse this exact code in the ESP32/PC bridge. It prevents accidental cross-feed; it is not transport encryption."
             setPadding(0, dp(12), 0, 0)
         }
+        val allowNonLocal = android.widget.CheckBox(this).apply {
+            text = "Allow non-local host (advanced)"
+            isChecked = operatorPreferences.rfAllowNonLocalHost
+        }
         box.addView(host)
         box.addView(port)
+        box.addView(allowNonLocal)
         box.addView(pair)
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("RF bridge setup")
             .setMessage("Enter the local CSI bridge endpoint. Android 17 asks for Local Network access only when RF bridge sensing is enabled.")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
-                operatorPreferences.rfBridgeHost = host.text.toString()
-                operatorPreferences.rfBridgePort = port.text.toString().toIntOrNull() ?: 8765
+                val hostText = host.text.toString().trim()
+                val portNumber = port.text.toString().trim().toIntOrNull()
+                if (!RfHostPolicy.isSyntacticallyValid(hostText) || portNumber == null || portNumber !in 1..65535) {
+                    bufferText.text = "RF BRIDGE SETUP NOT SAVED • CHECK HOST AND PORT (1-65535)"
+                    return@setPositiveButton
+                }
+                operatorPreferences.rfBridgeHost = hostText
+                operatorPreferences.rfBridgePort = portNumber
+                operatorPreferences.rfAllowNonLocalHost = allowNonLocal.isChecked
                 if (operatorPreferences.rfBridgeEnabled) {
                     wifiRfBridge.stop()
                     if (hasLocalNetworkPermission()) wifiRfBridge.start()
@@ -1209,12 +1252,24 @@ class MainActivity : AppCompatActivity() {
                 append("Endpoint: ").append(operatorPreferences.rfBridgeHost).append(':').append(operatorPreferences.rfBridgePort).append('\n')
                 append("State: ").append(rf.status.name).append('\n')
                 append("Source: ").append(rf.source ?: "--").append('\n')
-                append("Sample rate: ").append(rf.sampleRateHz?.let { "%.1f Hz".format(it) } ?: "--").append('\n')
+                if (rf.synthetic) append("SYNTHETIC TEST SOURCE — not real CSI, not evidence of presence\n")
+                append("Baseline: ").append(rf.baselineSamples).append('/').append(rf.baselineTarget).append('\n')
+                append("Declared rate: ").append(rf.sampleRateHz?.let { "%.1f Hz".format(it) } ?: "--").append('\n')
+                append("Measured rate: ").append(rf.measuredRateHz?.let { "%.1f Hz".format(it) } ?: "--").append('\n')
+                append("Packet loss: ").append(rf.packetLossPercent?.let { "%.0f%%".format(it) } ?: "--").append('\n')
+                append("Link authentication: ").append(when (rf.auth) {
+                    RfAuth.HMAC_V2 -> "HMAC-SHA256 (v2)"
+                    RfAuth.PAIR_CODE_ONLY -> "none — pair code only"
+                    null -> "--"
+                }).append('\n')
+                append("Sensor clock: ").append(when (rf.sensorClockSynced) { true -> "synchronised"; false -> "not synchronised (relative timing only)"; null -> "--" }).append('\n')
                 append("Novelty: ").append("%.0f%%".format(rf.novelty * 100f)).append('\n')
-                append("Sustained RF change: ").append(rf.sustainedChange).append('\n')
+                append("Sustained RF change: ").append(rf.sustainedChange).append(" (RF change ≠ person detected)\n")
+                append("Algorithm: ").append(rf.algorithm).append('\n')
                 append("Detail: ").append(rf.message).append("\n\n")
                 append("Phone Wi-Fi survey: ").append(if (operatorPreferences.wifiSurveyEnabled) "enabled" else "off").append('\n')
-                append("Visible networks: ").append(wifi.visibleNetworks).append('\n')
+                append("Survey status: ").append(wifi.status).append('\n')
+                append("Visible networks: ").append(wifi.visibleNetworks?.toString() ?: "unknown").append('\n')
                 append("Strongest RSSI: ").append(wifi.strongestRssiDbm?.let { it.toString() + " dBm" } ?: "--").append('\n')
                 append("Median RSSI: ").append(wifi.medianRssiDbm?.let { it.toString() + " dBm" } ?: "--").append('\n')
                 append("Bands: 2.4GHz ").append(wifi.band24Count).append(" • 5GHz ").append(wifi.band5Count).append(" • 6GHz ").append(wifi.band6Count).append("\n\n")
@@ -1560,9 +1615,43 @@ class MainActivity : AppCompatActivity() {
     private fun hasWifiSurveyPermission() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-    private fun hasLocalNetworkPermission() =
-        Build.VERSION.SDK_INT < 37 ||
-            ContextCompat.checkSelfPermission(this, localNetworkPermissionName) == PackageManager.PERMISSION_GRANTED
+    private fun hasLocalNetworkPermission() = WifiRfBridge.hasLocalNetworkPermission(this)
+
+    /** Survey values enter evidence only if enabled, trustworthy and recent; otherwise they are recorded as unknown. */
+    private fun surveyForEvidence(): WifiSurveyReading {
+        val survey = wifiSurveyReading
+        val fresh = System.currentTimeMillis() - survey.epochMs <= SURVEY_EVIDENCE_MAX_AGE_MS
+        return if (operatorPreferences.wifiSurveyEnabled && survey.valid && fresh) survey
+        else WifiSurveyReading(status = if (operatorPreferences.wifiSurveyEnabled) "unavailable or stale at record time" else "off")
+    }
+
+    private fun announceRfTransition(reading: WifiRfReading) {
+        val spoken = when (reading.status) {
+            WifiRfStatus.RF_CHANGE -> "RF change recorded. Environmental radio change, not a person detection."
+            WifiRfStatus.STALE -> "RF bridge data stale."
+            WifiRfStatus.UNAVAILABLE -> "RF bridge unavailable. " + reading.message
+            WifiRfStatus.PAUSED_MOVING -> "RF paused while phone moves."
+            WifiRfStatus.READY -> "RF baseline ready."
+            else -> null
+        } ?: return
+        if (reading.status == WifiRfStatus.RF_CHANGE) {
+            bufferText.text = "RF CHANGE RECORDED • ENVIRONMENTAL, NOT A PERSON" + if (reading.synthetic) " • SYNTHETIC" else ""
+        }
+        @Suppress("DEPRECATION")
+        sensorText.announceForAccessibility(spoken)
+    }
+
+    private fun showPermissionSettingsHint(title: String, message: String) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("Open settings") { _, _ ->
+                startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", packageName, null)))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
 
     private fun refreshCaptureStatus() {
         if (!::captureButton.isInitialized) return
@@ -1607,6 +1696,10 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Not now", null)
             .show()
+    }
+
+    private companion object {
+        const val SURVEY_EVIDENCE_MAX_AGE_MS = 120_000L
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
