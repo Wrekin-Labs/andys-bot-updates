@@ -10,3 +10,5 @@ local.properties
 __pycache__/
 .idea/
 *.iml
+humanrf-test.log
+humanrf-test.exit
