@@ -119,22 +119,31 @@ Deno.serve(async(req:Request)=>{
     preview?.action==="cxroute_internal_push_dispatch_v1"||
     preview?.action==="cxroute_internal_push_init_v1"
   )){
-    if(
-      preview?.action==="cxroute_internal_push_dispatch_v1"&&
-      (!expected||!supplied||supplied!==expected)
-    ) return json({error:"Unauthorised"},401);
     const secret=JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS")||"{}")["default"];
     const url=Deno.env.get("SUPABASE_URL");
     if(!url||!secret) return json({error:"Server configuration unavailable"},503);
     const admin=createClient(url,secret,{auth:{persistSession:false,autoRefreshToken:false}});
+
+    if(preview?.action==="cxroute_internal_push_dispatch_v1"){
+      const worker=await admin.rpc("cxroute_worker_get_secret",{p_name:"deskroute-worker-secret"});
+      const storedToken=worker.error?"":String(worker.data||"");
+      const authorised=Boolean(supplied)&&(
+        (Boolean(expected)&&supplied===expected)||
+        (Boolean(storedToken)&&supplied===storedToken)
+      );
+      if(!authorised) return json({error:"Unauthorised"},401);
+    }
+
     const vapid=await ensureVapid(admin);
 
     if(preview.action==="cxroute_internal_push_init_v1"){
-      await admin.rpc("cxroute_worker_store_secret",{
-        p_name:"deskroute-worker-secret",
-        p_value:expected,
-        p_description:"DeskRoute internal notification worker token"
-      });
+      if(expected){
+        await admin.rpc("cxroute_worker_store_secret",{
+          p_name:"deskroute-worker-secret",
+          p_value:expected,
+          p_description:"DeskRoute internal notification worker token"
+        });
+      }
       return json({ok:true,vapidPublicKey:vapid.publicKey},200);
     }
 
