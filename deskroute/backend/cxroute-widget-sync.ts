@@ -72,11 +72,12 @@ Deno.serve(async(req:Request)=>{
     const {data:conversation}=await conversationQuery.maybeSingle();
     if(!conversation) return json({error:"Conversation not found"},404,origin);
 
-    if(conversation.visitor_token_hash){
-      if(!visitorToken) return json({error:"Conversation access denied"},403,origin);
-      const hash=await sha256Hex(visitorToken);
-      if(hash!==String(conversation.visitor_token_hash)) return json({error:"Conversation access denied"},403,origin);
+    if(!conversation.visitor_token_hash){
+      return json({error:"Conversation access denied",reset:true},403,origin);
     }
+    if(!visitorToken) return json({error:"Conversation access denied"},403,origin);
+    const hash=await sha256Hex(visitorToken);
+    if(hash!==String(conversation.visitor_token_hash)) return json({error:"Conversation access denied"},403,origin);
 
     let query=admin.from("cxroute_messages")
       .select("id,body,author_type,direction,created_at")

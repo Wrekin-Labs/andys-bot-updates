@@ -825,25 +825,16 @@ Deno.serve(async(req:Request)=>{
         return json({error:"Conversation access denied"},403,origin);
       }
 
-      if(existing.visitor_token_hash){
-        if(
-          !visitorToken||
-          await sha256Hex(visitorToken)!==
-            String(existing.visitor_token_hash)
-        ){
-          return json({error:"Conversation access denied"},403,origin);
-        }
-      }else{
-        visitorToken=createVisitorToken();
-        const tokenHash=await sha256Hex(visitorToken);
-        const legacyUpdate=await admin
-          .from("cxroute_conversations")
-          .update({visitor_token_hash:tokenHash})
-          .eq("id",conversationId)
-          .eq("organisation_id",config.organisation_id);
-        if(legacyUpdate.error){
-          return json({error:"Could not secure conversation"},500,origin);
-        }
+      if(!existing.visitor_token_hash){
+        return json({error:"Conversation access denied",reset:true},403,origin);
+      }
+
+      if(
+        !visitorToken||
+        await sha256Hex(visitorToken)!==
+          String(existing.visitor_token_hash)
+      ){
+        return json({error:"Conversation access denied"},403,origin);
       }
 
       priorSensitiveTopic=sensitiveTopicFromTags(existing.tags);

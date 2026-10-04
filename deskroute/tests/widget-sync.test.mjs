@@ -7,6 +7,8 @@ import {runInNewContext} from 'node:vm';
 import {webcrypto,createHash} from 'node:crypto';
 const source=stripTypeScriptTypes((await readFile(new URL('../backend/cxroute-widget-sync.ts',import.meta.url),'utf8')).replace(/^import .*;\s*$/gm,''));
 const org='qa-org',brand='qa-brand',conversation='qa-conversation';
+const visitorToken='qa-secret-token';
+const visitorTokenHash=createHash('sha256').update(visitorToken).digest('hex');
 const fixtureMessages=[
  {id:'customer',direction:'inbound',author_type:'customer',body:'Can a person help?',created_at:'2026-10-03T15:00:00Z'},
  {id:'private',direction:'internal',author_type:'agent',body:'PRIVATE NOTE MUST NOT REACH THE VISITOR',created_at:'2026-10-03T15:01:00Z'},
@@ -16,7 +18,7 @@ async function exercise(body={},overrides={}){
  let handler;const reads=[];
  const records={
   cxroute_widget_configs:[{public_key:'qa-widget',organisation_id:org,brand_id:brand,enabled:true,allowed_origins:['https://qa.example']}],
-  cxroute_conversations:[{id:conversation,organisation_id:org,brand_id:brand,channel:'website_chat'}],
+  cxroute_conversations:[{id:conversation,organisation_id:org,brand_id:brand,channel:'website_chat',visitor_token_hash:visitorTokenHash}],
   cxroute_messages:fixtureMessages,
   ...overrides.records
  };
@@ -46,7 +48,7 @@ async function exercise(body={},overrides={}){
  runInNewContext(source,{Deno:{serve:fn=>handler=fn,env:{get:name=>({SUPABASE_SECRET_KEYS:'{"default":"fixture-only"}',SUPABASE_URL:'https://fixture.invalid'})[name]}},createClient:()=>admin,Response,crypto:webcrypto,TextEncoder});
  const requestBody=Object.prototype.hasOwnProperty.call(overrides,'rawBody')
   ?overrides.rawBody
-  :JSON.stringify({widgetKey:'qa-widget',conversationId:conversation,...body});
+  :JSON.stringify({widgetKey:'qa-widget',conversationId:conversation,visitorToken,...body});
  const response=await handler(new Request('https://fixture.invalid/sync',{method:'POST',headers:{Origin:overrides.origin||'https://qa.example','Content-Type':'application/json'},body:requestBody}));
  return {status:response.status,body:await response.json(),reads};
 }
@@ -82,12 +84,9 @@ test('disabled widget and disallowed origin fail before messages are read',async
 test('database failure is reported rather than represented as an empty successful sync',async()=>{
  const r=await exercise({}, {failTable:'cxroute_messages'});assert.equal(r.status,500);assert.equal(r.body.messages,undefined);
 });
-
-const visitorToken='qa-secret-token';
-const visitorTokenHash=createHash('sha256').update(visitorToken).digest('hex');
 test('visitor token is required once a conversation has been secured',async()=>{
  const secured={id:conversation,organisation_id:org,brand_id:brand,channel:'website_chat',visitor_token_hash:visitorTokenHash};
- const missing=await exercise({}, {records:{cxroute_conversations:[secured]}});
+ const missing=await exercise({visitorToken:''}, {records:{cxroute_conversations:[secured]}});
  assert.equal(missing.status,403);
  assert.ok(!missing.reads.includes('cxroute_messages'));
  const wrong=await exercise({visitorToken:'wrong-token'}, {records:{cxroute_conversations:[secured]}});
@@ -108,4 +107,13 @@ test('unexpected sync exceptions are 500 internal errors',async()=>{
  const r=await exercise({}, {explode:true});
  assert.equal(r.status,500);
  assert.equal(r.body.error,'Internal error');
+});
+
+
+test('legacy unsecured sync conversation never returns history or accepts a claim',async()=>{
+ const legacy={id:conversation,organisation_id:org,brand_id:brand,channel:'website_chat',visitor_token_hash:null};
+ const r=await exercise({}, {records:{cxroute_conversations:[legacy]}});
+ assert.equal(r.status,403);
+ assert.equal(r.body.reset,true);
+ assert.ok(!r.reads.includes('cxroute_messages'));
 });

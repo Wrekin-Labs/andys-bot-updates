@@ -4,13 +4,15 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
-import {webcrypto} from 'node:crypto';
+import {webcrypto,createHash} from 'node:crypto';
 import {canSendAutomatically} from '../backend/answer-policy.js';
 import {literalGroundingCheck} from '../backend/literal-grounding.js';
 import {SENSITIVE_TOPICS,sensitiveTopic,sensitiveTopicFromTags} from '../backend/sensitive-topics.js';
 import {holdingCopy} from '../backend/holding-copy.js';
 import {questionDate,datedKnowledge} from '../backend/dated-knowledge.js';
 
+const visitorToken='qa-secret-token';
+const visitorTokenHash=createHash('sha256').update(visitorToken).digest('hex');
 const handlerSource=await readFile(new URL('../backend/cxroute-widget-chat.ts',import.meta.url),'utf8');
 const source=stripTypeScriptTypes(handlerSource.replace(/^import .*;\s*$/gm,''));
 
@@ -23,9 +25,9 @@ function assertInjected(sourceText,context){
  if(missing.length)throw new Error('widget-handler harness missing injections: '+missing.join(', '));
 }
 
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false}={}){
  const writes=[],calls=[];let handler,providerCalls=0;
- const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:conversationTags,priority:conversationPriority,visitor_token_hash:null};
+ const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:conversationTags,priority:conversationPriority,visitor_token_hash:legacyUnsecured?null:visitorTokenHash};
  const records={
   cxroute_knowledge_facts:knowledgeFacts,
   cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example']},
@@ -83,7 +85,7 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
  const response=await handler(new Request('https://fixture.invalid/widget',{
   method:'POST',
   headers:{Origin:'https://release.example','Content-Type':'application/json'},
-  body:rawBody===null?JSON.stringify({widgetKey:'qa-key',conversationId:conversation.id,message:question}):rawBody
+  body:rawBody===null?JSON.stringify({widgetKey:'qa-key',conversationId:conversation.id,visitorToken,message:question}):rawBody
  }));
  assert.equal(response.status,expectedStatus);
  return {body:await response.json(),writes,calls,providerCalls};
@@ -193,4 +195,11 @@ test('malformed chat JSON stays a 400 validation error',async()=>{
 test('unexpected chat exceptions surface as 500 internal errors',async()=>{
  const r=await exercise('Hello',[],{explode:true,expectedStatus:500});
  assert.equal(r.body.error,'Internal error');
+});
+
+
+test('legacy unsecured chat conversation cannot be claimed by conversation id',async()=>{
+ const r=await exercise('Hello',[],{legacyUnsecured:true,expectedStatus:403});
+ assert.equal(r.body.reset,true);
+ assert.equal(r.body.error,'Conversation access denied');
 });
