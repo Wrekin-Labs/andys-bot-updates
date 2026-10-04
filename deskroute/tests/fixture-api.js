@@ -1,5 +1,5 @@
 // Synthetic preview data only. This adapter makes no network calls.
-export const VERSION='6.1.0-rc.1 · DEMO';
+export const VERSION='6.1.0-rc.2 · DEMO';
 const id=n=>`e6100000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const org=id(10),brand=id(20),owner=id(1),agent=id(2),now=new Date().toISOString();
 const row=(n,data)=>({id:id(n),organisation_id:org,brand_id:brand,created_at:new Date(Date.now()+n).toISOString(),updated_at:now,...data});

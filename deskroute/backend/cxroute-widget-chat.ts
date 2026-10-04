@@ -557,6 +557,33 @@ Deno.serve(async(req:Request)=>{
       );
     }
 
+    const subscription=await admin
+      .from("cxroute_subscriptions")
+      .select("plan_code,status,current_period_end")
+      .eq("organisation_id",config.organisation_id)
+      .maybeSingle();
+
+    const subscriptionStatus=String(subscription.data?.status||"");
+    const trialStillValid=subscriptionStatus!=="trialing"||
+      !subscription.data?.current_period_end||
+      new Date(subscription.data.current_period_end).getTime()>Date.now();
+    const billingActive=Boolean(
+      subscription.data &&
+      ["active","trialing","beta"].includes(subscriptionStatus) &&
+      trialStillValid
+    );
+
+    if(subscription.error||!billingActive){
+      return json(
+        {
+          error:"DeskRoute subscription required",
+          code:"subscription_required"
+        },
+        402,
+        origin
+      );
+    }
+
     const hours=await admin.rpc("cxroute_is_open",{
       p_organisation_id:config.organisation_id,
       p_at:new Date().toISOString()

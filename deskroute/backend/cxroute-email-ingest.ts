@@ -3,6 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import webpush from "npm:web-push@3.6.7";
 import { isAllowedPushEndpoint, buildPushPayload, classifyPushResult, retryDelayMs } from "./push-dispatch.js";
+import { verifyStripeSignature, isUuid, stripeTimestamp, invoiceSubscriptionId, mapStripeSubscriptionStatus } from "./stripe-webhook.js";
 
 type Body={
   organisationId?:string;emailAccountId?:string;externalEventId?:string;providerThreadId?:string;
@@ -111,7 +112,92 @@ async function dispatchPush(admin:any,row:any,vapid:any){
   }
 }
 
+
+async function handleStripeWebhook(req:Request,admin:any){
+  const raw=await req.text();
+  const signature=req.headers.get("stripe-signature")||"";
+
+  let event:any;
+  try{event=JSON.parse(raw);}catch{return json({error:"Invalid payload"},400);}
+  const secretName=Boolean(event?.livemode)
+    ?"deskroute-stripe-live-webhook-secret"
+    :"deskroute-stripe-test-webhook-secret";
+  const secretResult=await admin.rpc("cxroute_billing_get_secret",{p_name:secretName});
+  const webhookSecret=secretResult.error?null:String(secretResult.data||"");
+  if(!webhookSecret) return json({error:"Webhook not configured"},503);
+  if(!(await verifyStripeSignature(raw,signature,webhookSecret))) return json({error:"Invalid signature"},400);
+
+  const eventId=String(event?.id||"");
+  const eventType=String(event?.type||"");
+  if(!eventId||!eventType) return json({error:"Invalid event"},400);
+
+  const existing=await admin.from("cxroute_billing_events").select("event_id").eq("event_id",eventId).maybeSingle();
+  if(existing.data) return json({ok:true,duplicate:true});
+
+  const object=event?.data?.object||{};
+  let organisationId:string|null=null;
+  let subscriptionId:string|null=null;
+
+  if(["checkout.session.completed","checkout.session.async_payment_succeeded"].includes(eventType)){
+    organisationId=isUuid(object?.client_reference_id)?String(object.client_reference_id):null;
+    subscriptionId=typeof object?.subscription==="string"?object.subscription:null;
+    const planCode=String(object?.metadata?.deskroute_plan_code||"");
+    if(organisationId&&planCode&&["starter","growth","pro","beta"].includes(planCode)){
+      const paid=["paid","no_payment_required"].includes(String(object?.payment_status||""));
+      await admin.from("cxroute_subscriptions").upsert({
+        organisation_id:organisationId,
+        plan_code:planCode,
+        status:paid?"active":"past_due",
+        billing_provider:"stripe",
+        external_customer_id:typeof object?.customer==="string"?object.customer:null,
+        external_subscription_id:subscriptionId,
+        updated_at:new Date().toISOString()
+      },{onConflict:"organisation_id"});
+    }
+  }
+
+  if(eventType.startsWith("customer.subscription.")){
+    subscriptionId=typeof object?.id==="string"?object.id:null;
+    if(subscriptionId){
+      const update:any={
+        status:mapStripeSubscriptionStatus(object?.status),
+        current_period_start:stripeTimestamp(object?.current_period_start),
+        current_period_end:stripeTimestamp(object?.current_period_end),
+        cancel_at_period_end:Boolean(object?.cancel_at_period_end),
+        updated_at:new Date().toISOString()
+      };
+      const planCode=String(object?.metadata?.deskroute_plan_code||"");
+      if(["starter","growth","pro","beta"].includes(planCode)) update.plan_code=planCode;
+      await admin.from("cxroute_subscriptions").update(update).eq("external_subscription_id",subscriptionId);
+    }
+  }
+
+  if(eventType==="invoice.paid"||eventType==="invoice.payment_failed"){
+    subscriptionId=invoiceSubscriptionId(object);
+    if(subscriptionId){
+      await admin.from("cxroute_subscriptions")
+        .update({status:eventType==="invoice.paid"?"active":"past_due",updated_at:new Date().toISOString()})
+        .eq("external_subscription_id",subscriptionId);
+    }
+  }
+
+  await admin.from("cxroute_billing_events").insert({
+    event_id:eventId,
+    event_type:eventType,
+    livemode:Boolean(event?.livemode),
+    safe_metadata:{organisation_id:organisationId,subscription_id:subscriptionId}
+  });
+  return json({ok:true});
+}
+
 Deno.serve(async(req:Request)=>{
+  if(req.method==="POST"&&req.headers.has("stripe-signature")){
+    const serviceKey=JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS")||"{}")["default"];
+    const url=Deno.env.get("SUPABASE_URL");
+    if(!url||!serviceKey) return json({error:"Server configuration unavailable"},503);
+    const admin=createClient(url,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}});
+    return handleStripeWebhook(req,admin);
+  }
   const preview=await req.clone().json().catch(()=>null) as any;
   const expected=Deno.env.get("CXROUTE_EMAIL_INGEST_TOKEN");
   const supplied=req.headers.get("x-cxroute-ingest-token");

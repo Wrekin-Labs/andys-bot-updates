@@ -4,8 +4,8 @@
   "version": "6.1.0-rc.2",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/api.test.mjs tests/answer-policy.test.mjs tests/literal-grounding.test.mjs tests/widget-handler.test.mjs tests/recovery.test.mjs tests/dated-knowledge.test.mjs tests/onboard-handler.test.mjs tests/widget-sync.test.mjs tests/website-scan.test.mjs tests/sensitive-topics.test.mjs tests/push-dispatch.test.mjs",
-    "check": "node --check control-panel/app.js && node --check control-panel/api.js && node --check control-panel/help/help.js && node --check control-panel/sw.js && node --check widget/deskroute-widget.js && node --check control-panel/recovery-api.js && node --check control-panel/recovery.js && node --check backend/dated-knowledge.js && node --check backend/literal-grounding.js && node --check widget/deskroute-loader.js && node --check backend/sensitive-topics.js && node --check backend/holding-copy.js && node --check backend/push-dispatch.js",
+    "test": "node --test tests/api.test.mjs tests/answer-policy.test.mjs tests/literal-grounding.test.mjs tests/widget-handler.test.mjs tests/recovery.test.mjs tests/dated-knowledge.test.mjs tests/onboard-handler.test.mjs tests/widget-sync.test.mjs tests/website-scan.test.mjs tests/sensitive-topics.test.mjs tests/push-dispatch.test.mjs tests/stripe-webhook.test.mjs",
+    "check": "node --check control-panel/app.js && node --check control-panel/api.js && node --check control-panel/signup.js && node --check control-panel/help/help.js && node --check control-panel/sw.js && node --check widget/deskroute-widget.js && node --check control-panel/recovery-api.js && node --check control-panel/recovery.js && node --check backend/dated-knowledge.js && node --check backend/literal-grounding.js && node --check widget/deskroute-loader.js && node --check backend/sensitive-topics.js && node --check backend/holding-copy.js && node --check backend/push-dispatch.js && node --check backend/stripe-webhook.js",
     "test:browser": "node tests/browser.mjs"
   },
   "devDependencies": {

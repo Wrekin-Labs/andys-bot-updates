@@ -2,13 +2,13 @@
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
-import {resolve,extname} from 'node:path';
+import {resolve,extname,relative,isAbsolute} from 'node:path';
 import assert from 'node:assert/strict';
 const require=createRequire(import.meta.url),{chromium}=require('playwright');
 const root=resolve(import.meta.dirname,'../../deskroute-preview-public');
 const output=resolve(import.meta.dirname,'../release/screenshots');await mkdir(output,{recursive:true});
 const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.woff2':'font/woff2','.webmanifest':'application/manifest+json'};
-const server=createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');let path=decodeURIComponent(url.pathname);if(path.endsWith('/'))path+='index.html';const file=resolve(root,'.'+path);if(!file.startsWith(root+'/')){res.writeHead(403).end();return;}try{res.setHeader('Content-Type',types[extname(file)]||'application/octet-stream');res.end(await readFile(file));}catch{res.writeHead(404).end('Not found');}});
+const server=createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost');let path=decodeURIComponent(url.pathname);if(path.endsWith('/'))path+='index.html';const file=resolve(root,'.'+path),rel=relative(root,file);if(rel.startsWith('..')||isAbsolute(rel)){res.writeHead(403).end();return;}try{res.setHeader('Content-Type',types[extname(file)]||'application/octet-stream');res.end(await readFile(file));}catch{res.writeHead(404).end('Not found');}});
 await new Promise((done,fail)=>{server.once('error',fail);server.listen(0,'127.0.0.1',done);});const base='http://127.0.0.1:'+server.address().port;
 let browser;const checks=[];
 try{
@@ -49,7 +49,7 @@ try{
  await go('human');await page.locator('#toast').waitFor({state:'hidden'});await page.screenshot({path:output+'/02-mobile-human-queue.png',fullPage:true});
  await page.locator('#menuButton').click();await page.locator('#sidebar.open').waitFor();await page.keyboard.press('Escape');await page.locator('#sidebar.open').waitFor({state:'hidden'});checks.push('Mobile menu opens and Escape closes it');
  await page.locator('.human-card').click();await page.locator('#replyText').waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await page.getByRole('button',{name:'← Inbox',exact:true}).click();await page.locator('.ticket-list').waitFor();checks.push('Mobile human queue to conversation and back');
- await page.setViewportSize({width:1440,height:1000});await page.goto(base+'/site/');await page.getByRole('heading',{name:'Clear answers. A calmer inbox.'}).waitFor();await page.screenshot({path:output+'/03-website-desktop.png',fullPage:true});
+ await page.setViewportSize({width:1440,height:1000});await page.goto(base+'/site/');await page.getByRole('heading',{name:'Customer support that knows when to hand over.'}).waitFor();await page.screenshot({path:output+'/03-website-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/04-website-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);checks.push('Website desktop/mobile');
  await page.goto(base+'/site/docs/');await page.getByRole('heading',{name:'Your first successful handoff'}).waitFor();checks.push('Documentation accessible');
  // Real recovery page, isolated synthetic auth responses. No email or live credential request.

@@ -71,3 +71,35 @@ test('notifications remain scoped to the verified user and their workspace',asyn
  const denied=await exercise({action:'notifications',organisationId:'another-org'});
  assert.equal(denied.status,403);assert.equal(denied.queries.length,1);
 });
+
+test('self-service create makes a default brand, selected-plan trial and branded widget',async()=>{
+ let handler;const inserts=[];const deleted=[];
+ const makeMutation=(table)=>{
+  let payload=null,selected=false;
+  const query=new Proxy({}, {get(_,key){
+   if(key==='then')return resolve=>{
+    let data=null;
+    if(table==='cxroute_organisations')data={id:'11111111-1111-4111-8111-111111111111',name:payload?.name};
+    if(table==='cxroute_brands')data={id:'22222222-2222-4222-8222-222222222222',name:payload?.name,code:payload?.code,website_url:payload?.website_url,support_email:payload?.support_email,enabled:true,is_default:true};
+    if(table==='cxroute_widget_configs')data={id:'33333333-3333-4333-8333-333333333333',brand_id:payload?.brand_id,public_key:'public-test-key',display_name:payload?.display_name,welcome_message:payload?.welcome_message,allowed_origins:payload?.allowed_origins};
+    resolve({data,error:null});
+   };
+   return (...args)=>{
+    if(key==='insert'){payload=args[0];inserts.push({table,payload});}
+    if(key==='delete')deleted.push(table);
+    return query;
+   };
+  }});return query;
+ };
+ const supabaseAdmin={from:makeMutation};
+ runInNewContext(source,{Deno:{serve:fn=>handler=fn},Response,URL,console,
+  withSupabase:(config,fn)=>{assert.equal(config.auth,'user');return fn;}
+ });
+ const ctx={userClaims:{id:owner,email:'owner@example.invalid',user_metadata:{full_name:'QA Owner'}},supabase:{},supabaseAdmin};
+ const response=await handler(new Request('https://fixture.invalid/onboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create',displayName:'Acme Support',websiteUrl:'https://acme.example/help',supportEmail:'help@acme.example',industry:'repairs',timezone:'Europe/London',planCode:'growth',aiMode:'approve'})}),ctx);
+ assert.equal(response.status,201);const body=await response.json();assert.equal(body.workspace.planCode,'growth');assert.ok(body.workspace.trialEndsAt);assert.equal(body.brand.code,'default');assert.equal(body.brand.is_default,true);assert.equal(body.widget.brand_id,body.brand.id);
+ const sub=inserts.find(x=>x.table==='cxroute_subscriptions')?.payload;assert.equal(sub.plan_code,'growth');assert.equal(sub.status,'trialing');assert.ok(new Date(sub.current_period_end)>new Date(sub.current_period_start));
+ const brand=inserts.find(x=>x.table==='cxroute_brands')?.payload;assert.equal(brand.is_default,true);assert.equal(brand.website_url,'https://acme.example/help');
+ const widget=inserts.find(x=>x.table==='cxroute_widget_configs')?.payload;assert.equal(widget.brand_id,'22222222-2222-4222-8222-222222222222');assert.equal(Array.from(widget.allowed_origins).join(','),'https://acme.example');
+ assert.deepEqual(deleted,[]);
+});

@@ -25,7 +25,7 @@ function assertInjected(sourceText,context){
  if(missing.length)throw new Error('widget-handler harness missing injections: '+missing.join(', '));
 }
 
-async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,budgetResult=null,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1,isOpen=null}={}){
+async function exercise(question,facts,{provider='absent',reply,datedFacts=[],knowledgeFacts=datedFacts,assigned=true,budgetAllowed=true,budgetResult=null,conversationTags=[],conversationPriority='normal',rawBody=null,explode=false,expectedStatus=200,legacyUnsecured=false,visitorRateCount=1,ipRateCount=1,globalRateCount=1,isOpen=null,subscription={plan_code:'beta',status:'beta',current_period_end:null}}={}){
  const writes=[],calls=[];let handler,providerCalls=0;
  const conversation={id:'qa-conversation',brand_id:'qa-brand',assigned_user_id:assigned?'qa-agent':null,tags:conversationTags,priority:conversationPriority,visitor_token_hash:legacyUnsecured?null:visitorTokenHash};
  const records={
@@ -33,6 +33,7 @@ async function exercise(question,facts,{provider='absent',reply,datedFacts=[],kn
   cxroute_widget_configs:{id:'qa-widget',organisation_id:'qa-org',brand_id:'qa-brand',enabled:true,allowed_origins:['https://release.example'],offline_message:'We are closed right now. The team will reply when support reopens.'},
   cxroute_channel_ai_policies:{enabled:true,mode:'automatic',min_confidence:.9},
   cxroute_settings:{monthly_ai_call_hard_limit:10000},
+  cxroute_subscriptions:subscription,
   cxroute_conversations:conversation,
   cxroute_org_members:{user_id:'qa-agent',role:'owner'}
  };
@@ -307,3 +308,5 @@ test('closed-hours human handoff uses the configured offline message',async()=>{
  assert.equal(r.body.answer,'We are closed right now. The team will reply when support reopens.');
  assert.ok(r.calls.some(c=>c.name==='cxroute_is_open'));
 });
+
+test('expired trial cannot continue serving website chat',async()=>{const expired={plan_code:'starter',status:'trialing',current_period_end:'2020-01-01T00:00:00.000Z'};const r=await exercise('Hello',[],{subscription:expired,expectedStatus:402});assert.equal(r.body.code,'subscription_required');});

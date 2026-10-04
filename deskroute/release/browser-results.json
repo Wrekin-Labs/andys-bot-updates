@@ -1,5 +1,5 @@
 {
-  "time": "2026-10-03T09:56:33.301Z",
+  "time": "2026-10-04T17:34:44.657Z",
   "scope": "Synthetic preview only; no live delivery/auth assertion",
   "checks": [
     "Demo workspace loads",
@@ -40,8 +40,13 @@
     "Mobile human queue to conversation and back",
     "Website desktop/mobile",
     "Documentation accessible",
+    "Recovery request and responsive layout at 390px",
+    "Recovery request and responsive layout at 1440px",
+    "Expired recovery link is cleared and rejected",
+    "Validated recovery, mismatch guard, password save and session cleanup",
     "Widget opens, sends, receives, fits and restores focus at 1440px",
     "Widget opens, sends, receives, fits and restores focus at 390px",
-    "Widget opens, sends, receives, fits and restores focus at 360px"
+    "Widget opens, sends, receives, fits and restores focus at 360px",
+    "PWA public shell installs and loads offline on mobile width"
   ]
 }

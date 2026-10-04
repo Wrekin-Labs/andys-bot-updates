@@ -1,0 +1,7 @@
+import {DeskRouteAPI} from './api.js';
+const api=new DeskRouteAPI();
+const $=s=>document.querySelector(s);
+const params=new URLSearchParams(location.search);
+const plan=(params.get('plan')||'').toLowerCase();
+if(['starter','growth','pro'].includes(plan)){localStorage.setItem('dr-plan',plan);$('#planText').textContent='Selected plan: '+plan.charAt(0).toUpperCase()+plan.slice(1)+'. You can review it before any payment.';}else{$('#planText').textContent='Create your account first. You can choose a plan inside Billing.';}
+$('#signupForm').onsubmit=async event=>{event.preventDefault();const submit=$('button[type="submit"]');$('#signupError').classList.add('hidden');$('#signupStatus').classList.add('hidden');if($('#password').value!==$('#confirm').value){$('#signupError').textContent='Passwords do not match.';$('#signupError').classList.remove('hidden');return;}submit.disabled=true;try{const redirect=new URL('./',location.href).href;const data=await api.signup($('#email').value.trim(),$('#password').value,redirect);$('#password').value='';$('#confirm').value='';if(data?.access_token){location.href='./#billing';return;}$('#signupStatus').innerHTML='Account created. Check your email for the confirmation link, then <a href="./">sign in</a> to create your workspace.';$('#signupStatus').classList.remove('hidden');}catch(error){$('#signupError').textContent=error.message;$('#signupError').classList.remove('hidden');}finally{submit.disabled=false;}};

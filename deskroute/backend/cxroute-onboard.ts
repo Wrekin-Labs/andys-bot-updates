@@ -11,6 +11,7 @@ type Body = {
   industry?: string;
   timezone?: string;
   aiMode?: "suggest"|"approve"|"automatic";
+  planCode?: "starter"|"growth"|"pro";
   organisationId?: string;
   brandId?: string;
   installationId?: string;
@@ -432,6 +433,8 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
   const timezone=String(body?.timezone||"Europe/London").trim();
   const aiMode=["suggest","approve","automatic"].includes(String(body?.aiMode))
     ? String(body?.aiMode) : "approve";
+  const planCode=["starter","growth","pro"].includes(String(body?.planCode))
+    ? String(body?.planCode) : "starter";
 
   let organisationId="";
   try{
@@ -453,10 +456,34 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
     });
     if(profile.error) throw new Error("Could not create business profile");
 
+    const brand=await ctx.supabaseAdmin.from("cxroute_brands").insert({
+      organisation_id:organisationId,
+      name:displayName,
+      code:"default",
+      website_url:websiteUrl,
+      support_email:supportEmail,
+      locale:"en-GB",
+      enabled:true,
+      is_default:true
+    }).select("id,name,code,website_url,support_email,enabled,is_default").single();
+    if(brand.error||!brand.data) throw new Error("Could not create default brand");
+
     const settings=await ctx.supabaseAdmin.from("cxroute_settings").insert({
       organisation_id:organisationId,ai_mode:aiMode
     });
     if(settings.error) throw new Error("Could not create AI settings");
+
+    const trialStart=new Date();
+    const trialEnd=new Date(trialStart.getTime()+14*24*60*60*1000);
+    const subscription=await ctx.supabaseAdmin.from("cxroute_subscriptions").insert({
+      organisation_id:organisationId,
+      plan_code:planCode,
+      status:"trialing",
+      billing_provider:null,
+      current_period_start:trialStart.toISOString(),
+      current_period_end:trialEnd.toISOString()
+    });
+    if(subscription.error) throw new Error("Could not create trial subscription");
 
     const sla=await ctx.supabaseAdmin.from("cxroute_sla_policies").insert({
       organisation_id:organisationId
@@ -473,10 +500,11 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
 
     const widget=await ctx.supabaseAdmin.from("cxroute_widget_configs").insert({
       organisation_id:organisationId,
+      brand_id:brand.data.id,
       display_name:`${displayName} Support`.slice(0,80),
       welcome_message:"Hi! How can we help?",
       allowed_origins:allowedOrigins
-    }).select("id,public_key,display_name,welcome_message,allowed_origins").single();
+    }).select("id,brand_id,public_key,display_name,welcome_message,allowed_origins").single();
     if(widget.error||!widget.data) throw new Error("Could not create website widget");
 
     await ctx.supabaseAdmin.from("cxroute_audit_log").insert({
@@ -487,7 +515,8 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
 
     return Response.json({
       ok:true,
-      workspace:{id:organisationId,name:displayName,aiMode},
+      workspace:{id:organisationId,name:displayName,aiMode,planCode,trialEndsAt:trialEnd.toISOString()},
+      brand:brand.data,
       widget:widget.data
     },{status:201});
   }catch(error){

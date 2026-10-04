@@ -24,6 +24,23 @@ export class DeskRouteAPI {
     if (epoch !== this.epoch) throw new ApiError('Session changed. Please sign in again.', 401);
     this.save(data); return data;
   }
+  async signup(email, password, redirectTo = '') {
+    const epoch = ++this.epoch;
+    let response;
+    try {
+      const suffix = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : '';
+      response = await this.fetcher(`${API_URL}/auth/v1/signup${suffix}`, {
+        method: 'POST',
+        headers: { apikey: PUBLIC_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch { throw new ApiError('We could not reach the sign-up service. Check your connection and try again.'); }
+    const data = await this.decode(response);
+    if (epoch !== this.epoch) throw new ApiError('Session changed. Please try again.', 409);
+    if (data?.access_token) this.save(data);
+    return data;
+  }
   async refresh() {
     if (this.refreshPromise) return this.refreshPromise;
     const epoch = this.epoch;
