@@ -503,8 +503,9 @@ Deno.serve(withSupabase({ auth:"user" }, async (req, ctx) => {
       brand_id:brand.data.id,
       display_name:`${displayName} Support`.slice(0,80),
       welcome_message:"Hi! How can we help?",
+      widget_version:"6.1.0-rc.2",
       allowed_origins:allowedOrigins
-    }).select("id,brand_id,public_key,display_name,welcome_message,allowed_origins").single();
+    }).select("id,brand_id,public_key,display_name,welcome_message,widget_version,allowed_origins").single();
     if(widget.error||!widget.data) throw new Error("Could not create website widget");
 
     await ctx.supabaseAdmin.from("cxroute_audit_log").insert({

@@ -100,6 +100,6 @@ test('self-service create makes a default brand, selected-plan trial and branded
  assert.equal(response.status,201);const body=await response.json();assert.equal(body.workspace.planCode,'growth');assert.ok(body.workspace.trialEndsAt);assert.equal(body.brand.code,'default');assert.equal(body.brand.is_default,true);assert.equal(body.widget.brand_id,body.brand.id);
  const sub=inserts.find(x=>x.table==='cxroute_subscriptions')?.payload;assert.equal(sub.plan_code,'growth');assert.equal(sub.status,'trialing');assert.ok(new Date(sub.current_period_end)>new Date(sub.current_period_start));
  const brand=inserts.find(x=>x.table==='cxroute_brands')?.payload;assert.equal(brand.is_default,true);assert.equal(brand.website_url,'https://acme.example/help');
- const widget=inserts.find(x=>x.table==='cxroute_widget_configs')?.payload;assert.equal(widget.brand_id,'22222222-2222-4222-8222-222222222222');assert.equal(Array.from(widget.allowed_origins).join(','),'https://acme.example');
+ const widget=inserts.find(x=>x.table==='cxroute_widget_configs')?.payload;assert.equal(widget.brand_id,'22222222-2222-4222-8222-222222222222');assert.equal(widget.widget_version,'6.1.0-rc.2');assert.equal(Array.from(widget.allowed_origins).join(','),'https://acme.example');
  assert.deepEqual(deleted,[]);
 });
