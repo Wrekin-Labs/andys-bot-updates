@@ -26,6 +26,11 @@ data class ScanEvent(
     val rfRssiDbm: Float? = null,
     val rfCsiAmplitude: Float? = null,
     val rfCsiVariance: Float? = null,
+    /** Schema 4: true when the RF source declared itself synthetic/mock. Null in schema <= 3 evidence. */
+    val rfSynthetic: Boolean? = null,
+    /** Schema 4: PAIR_CODE_ONLY (not authenticated) or HMAC_V2. Null in schema <= 3 evidence. */
+    val rfAuth: String? = null,
+    val rfAlgorithm: String? = null,
     val wifiVisibleNetworks: Int? = null,
     val wifiStrongestRssiDbm: Int? = null,
     val wifiMedianRssiDbm: Int? = null,
@@ -58,6 +63,9 @@ data class ScanEvent(
         put("rfRssiDbm", rfRssiDbm ?: JSONObject.NULL)
         put("rfCsiAmplitude", rfCsiAmplitude ?: JSONObject.NULL)
         put("rfCsiVariance", rfCsiVariance ?: JSONObject.NULL)
+        put("rfSynthetic", rfSynthetic ?: JSONObject.NULL)
+        put("rfAuth", rfAuth ?: JSONObject.NULL)
+        put("rfAlgorithm", rfAlgorithm ?: JSONObject.NULL)
         put("wifiVisibleNetworks", wifiVisibleNetworks ?: JSONObject.NULL)
         put("wifiStrongestRssiDbm", wifiStrongestRssiDbm ?: JSONObject.NULL)
         put("wifiMedianRssiDbm", wifiMedianRssiDbm ?: JSONObject.NULL)
@@ -140,46 +148,54 @@ class EventRepository(private val context: Context) {
 
     fun shareCacheFileFor(bundle: File): File = File(context.cacheDir, "SenseVeilShare/${bundle.name}.zip")
 
-    private fun parse(line: String): ScanEvent? = try {
-        val j = JSONObject(line)
-        ScanEvent(
-            timestampEpochMs = j.optLong("timestampEpochMs"),
-            type = j.optString("type", "event"),
-            confidence = j.optInt("confidence"),
-            trackLabel = j.optNullableString("trackLabel"),
-            estimatedDistanceMetres = j.optFloatOrNull("estimatedDistanceMetres"),
-            magneticMicroTesla = j.optFloatOrNull("magneticMicroTesla"),
-            lightLux = j.optFloatOrNull("lightLux"),
-            pressureHpa = j.optFloatOrNull("pressureHpa"),
-            audioDbfs = j.optFloatOrNull("audioDbfs"),
-            rfStatus = j.optNullableString("rfStatus"),
-            rfSource = j.optNullableString("rfSource"),
-            rfNovelty = j.optFloatOrNull("rfNovelty"),
-            rfSustainedChange = if (j.has("rfSustainedChange") && !j.isNull("rfSustainedChange")) j.optBoolean("rfSustainedChange") else null,
-            rfSampleRateHz = j.optFloatOrNull("rfSampleRateHz"),
-            rfRssiDbm = j.optFloatOrNull("rfRssiDbm"),
-            rfCsiAmplitude = j.optFloatOrNull("rfCsiAmplitude"),
-            rfCsiVariance = j.optFloatOrNull("rfCsiVariance"),
-            wifiVisibleNetworks = j.optInt("wifiVisibleNetworks").takeIf { j.has("wifiVisibleNetworks") && !j.isNull("wifiVisibleNetworks") },
-            wifiStrongestRssiDbm = j.optInt("wifiStrongestRssiDbm").takeIf { j.has("wifiStrongestRssiDbm") && !j.isNull("wifiStrongestRssiDbm") },
-            wifiMedianRssiDbm = j.optInt("wifiMedianRssiDbm").takeIf { j.has("wifiMedianRssiDbm") && !j.isNull("wifiMedianRssiDbm") },
-            note = j.optString("note", ""),
-            anomalyReason = j.optNullableString("anomalyReason"),
-            profile = j.optNullableString("profile"),
-            bundleName = j.optNullableString("bundleName"),
-            sceneQualityPercent = j.optInt("sceneQualityPercent").takeIf { !j.isNull("sceneQualityPercent") },
-            consensusRatio = j.optFloatOrNull("consensusRatio"),
-            consensusAgeMs = j.optLong("consensusAgeMs").takeIf { !j.isNull("consensusAgeMs") },
-            explanationSummary = j.optNullableString("explanationSummary"),
-            sessionId = j.optNullableString("sessionId")
-        )
-    } catch (_: Throwable) {
-        null
+    private fun parse(line: String): ScanEvent? = parseLine(line)
+
+    companion object {
+        /** Parses one events.jsonl line of any schema (1-4). Missing newer fields become null. */
+        internal fun parseLine(line: String): ScanEvent? = try {
+            val j = JSONObject(line)
+            ScanEvent(
+                timestampEpochMs = j.optLong("timestampEpochMs"),
+                type = j.optString("type", "event"),
+                confidence = j.optInt("confidence"),
+                trackLabel = j.optNullableString("trackLabel"),
+                estimatedDistanceMetres = j.optFloatOrNull("estimatedDistanceMetres"),
+                magneticMicroTesla = j.optFloatOrNull("magneticMicroTesla"),
+                lightLux = j.optFloatOrNull("lightLux"),
+                pressureHpa = j.optFloatOrNull("pressureHpa"),
+                audioDbfs = j.optFloatOrNull("audioDbfs"),
+                rfStatus = j.optNullableString("rfStatus"),
+                rfSource = j.optNullableString("rfSource"),
+                rfNovelty = j.optFloatOrNull("rfNovelty"),
+                rfSustainedChange = if (j.has("rfSustainedChange") && !j.isNull("rfSustainedChange")) j.optBoolean("rfSustainedChange") else null,
+                rfSampleRateHz = j.optFloatOrNull("rfSampleRateHz"),
+                rfRssiDbm = j.optFloatOrNull("rfRssiDbm"),
+                rfCsiAmplitude = j.optFloatOrNull("rfCsiAmplitude"),
+                rfCsiVariance = j.optFloatOrNull("rfCsiVariance"),
+                rfSynthetic = if (j.has("rfSynthetic") && !j.isNull("rfSynthetic")) j.optBoolean("rfSynthetic") else null,
+                rfAuth = j.optNullableString("rfAuth"),
+                rfAlgorithm = j.optNullableString("rfAlgorithm"),
+                wifiVisibleNetworks = j.optInt("wifiVisibleNetworks").takeIf { j.has("wifiVisibleNetworks") && !j.isNull("wifiVisibleNetworks") },
+                wifiStrongestRssiDbm = j.optInt("wifiStrongestRssiDbm").takeIf { j.has("wifiStrongestRssiDbm") && !j.isNull("wifiStrongestRssiDbm") },
+                wifiMedianRssiDbm = j.optInt("wifiMedianRssiDbm").takeIf { j.has("wifiMedianRssiDbm") && !j.isNull("wifiMedianRssiDbm") },
+                note = j.optString("note", ""),
+                anomalyReason = j.optNullableString("anomalyReason"),
+                profile = j.optNullableString("profile"),
+                bundleName = j.optNullableString("bundleName"),
+                sceneQualityPercent = j.optInt("sceneQualityPercent").takeIf { !j.isNull("sceneQualityPercent") },
+                consensusRatio = j.optFloatOrNull("consensusRatio"),
+                consensusAgeMs = j.optLong("consensusAgeMs").takeIf { !j.isNull("consensusAgeMs") },
+                explanationSummary = j.optNullableString("explanationSummary"),
+                sessionId = j.optNullableString("sessionId")
+            )
+        } catch (_: Throwable) {
+            null
+        }
+
+        private fun JSONObject.optFloatOrNull(name: String): Float? =
+            optDouble(name, Double.NaN).takeIf { !it.isNaN() }?.toFloat()
+
+        private fun JSONObject.optNullableString(name: String): String? =
+            optString(name).takeIf { it.isNotBlank() && it != "null" }
     }
-
-    private fun JSONObject.optFloatOrNull(name: String): Float? =
-        optDouble(name, Double.NaN).takeIf { !it.isNaN() }?.toFloat()
-
-    private fun JSONObject.optNullableString(name: String): String? =
-        optString(name).takeIf { it.isNotBlank() && it != "null" }
 }

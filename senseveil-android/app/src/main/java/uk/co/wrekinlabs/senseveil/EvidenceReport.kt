@@ -30,8 +30,17 @@ object EvidenceReport {
             append("Pressure: ").append(event.pressureHpa?.let { "%.2f hPa".format(it) } ?: "--").append('\n')
             append("Audio: ").append(event.audioDbfs?.let { "%.2f dBFS".format(it) } ?: "--").append('\n')
             append("\nWI-FI / RF (OPT-IN)\n")
+            if (event.rfSynthetic == true) {
+                append("*** RF SOURCE IS SYNTHETIC TEST DATA (MOCK BRIDGE). NOT REAL CSI. NOT EVIDENCE OF PRESENCE. ***\n")
+            }
             append("RF status: ").append(event.rfStatus ?: "--").append('\n')
             append("RF source: ").append(event.rfSource ?: "--").append('\n')
+            append("RF link authentication: ").append(when (event.rfAuth) {
+                null -> "--"
+                "HMAC_V2" -> "HMAC-SHA256 (protocol v2)"
+                else -> "none (pair code only; not authenticated)"
+            }).append('\n')
+            append("RF algorithm: ").append(event.rfAlgorithm ?: "--").append('\n')
             append("RF novelty: ").append(event.rfNovelty?.let { "%.0f%%".format(it * 100f) } ?: "--").append('\n')
             append("Sustained RF change: ").append(event.rfSustainedChange?.toString() ?: "--").append('\n')
             append("RF sample rate: ").append(event.rfSampleRateHz?.let { "%.1f Hz".format(it) } ?: "--").append('\n')
