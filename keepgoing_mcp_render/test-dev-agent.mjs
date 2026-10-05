@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import {
   DEV_ACTIONS,
   buildDevDefinitionOfDone,
+  buildDevEngineTag,
   buildDevJobContext,
   buildDevJobGoal,
   devCompletionGate,
+  downgradeDevCompletionOutput,
   normaliseDevTask,
   parseDevProgress,
+  parseDevEngineTag,
   policyDecision,
-  verificationGate
+  verificationGate,
+  verifyDevTerminalOutput
 } from "./dev_agent.js";
 
 const task = normaliseDevTask({
@@ -97,6 +101,66 @@ const output = `checkpoint\nDEV_PROGRESS_JSON: ${serialized}\nSTATUS: COMPLETED`
 assert.equal(parseDevProgress(output).stage, "completed");
 assert.equal(devCompletionGate(task, output).ok, true);
 assert.equal(devCompletionGate(task, "STATUS: COMPLETED").ok, false);
+
+const engineTag = buildDevEngineTag(task);
+assert.match(engineTag, /^agents-dev:c3:v2:a[0-9a-f]{16}:q[0-9a-f]{16}:p1$/);
+assert.equal(parseDevEngineTag(engineTag).criteriaCount, 3);
+assert.equal(verifyDevTerminalOutput(output, engineTag).ok, true);
+
+const incompleteProgress = structuredClone(progress);
+incompleteProgress.criteria.pop();
+const incompleteOutput = `DEV_PROGRESS_JSON: ${JSON.stringify(incompleteProgress)}\nSTATUS: COMPLETED`;
+assert.equal(verifyDevTerminalOutput(incompleteOutput, engineTag).ok, false);
+
+const wrongCriteria = structuredClone(progress);
+wrongCriteria.criteria[0].id = "NOT_AC1";
+const wrongCriteriaOutput = `DEV_PROGRESS_JSON: ${JSON.stringify(wrongCriteria)}\nSTATUS: COMPLETED`;
+assert.equal(verifyDevTerminalOutput(wrongCriteriaOutput, engineTag).ok, false);
+
+const wrongCheck = structuredClone(progress);
+wrongCheck.checks[0].command = "npm run something-else";
+const wrongCheckOutput = `DEV_PROGRESS_JSON: ${JSON.stringify(wrongCheck)}\nSTATUS: COMPLETED`;
+assert.equal(verifyDevTerminalOutput(wrongCheckOutput, engineTag).ok, false);
+
+const downgraded = downgradeDevCompletionOutput(incompleteOutput, ["missing criterion"]);
+assert.match(downgraded, /STATUS: PARTIAL/);
+assert.match(downgraded, /SERVER_DEV_VERIFICATION_FAILED/);
+
+assert.throws(
+  () => normaliseDevTask({
+    goal: "duplicate criteria",
+    repositoryUrl: "https://github.com/example/repo",
+    acceptanceCriteria: [
+      { id: "ACX", text: "first" },
+      { id: "ACX", text: "second" }
+    ]
+  }),
+  /duplicate acceptance criterion id/
+);
+
+const noPatchTask = normaliseDevTask({
+  goal: "no patch artifact required",
+  repositoryUrl: "https://github.com/example/repo",
+  acceptanceCriteria: [{ id: "ONLY", text: "works" }],
+  verificationCommands: ["npm test"],
+  requirePatchArtifact: false
+});
+const noPatchProgress = {
+  stage: "completed",
+  summary: "done",
+  criteria: [{ id: "ONLY", status: "pass", evidence: "npm test" }],
+  checks: [{ command: "npm test", exitCode: 0, required: true }],
+  risks: [],
+  artifacts: ["/workspace/outputs/handoff.md"],
+  next: "done"
+};
+assert.equal(
+  verifyDevTerminalOutput(
+    `DEV_PROGRESS_JSON: ${JSON.stringify(noPatchProgress)}\nSTATUS: COMPLETED`,
+    buildDevEngineTag(noPatchTask)
+  ).ok,
+  true
+);
 
 const goal = buildDevJobGoal(task);
 assert.match(goal, /AC1:/);

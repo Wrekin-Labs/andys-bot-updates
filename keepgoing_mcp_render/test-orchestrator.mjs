@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { MemoryJobStore } from "./durable_store.js";
 import { JOB_STATES, newJobRecord } from "./durable_job.js";
+import { buildDevEngineTag } from "./dev_agent.js";
 
 function engineWith({ failFirstSend = false } = {}) {
   let sends = 0;
@@ -394,6 +395,74 @@ async function startJob(kg, beforeCreateSession = null) {
   assert.equal(started.job.status, JOB_STATES.WORKING);
   assert.equal(creates, 2);
   assert.deepEqual(workspaces, [workspace, workspace]);
+}
+
+
+
+// Development jobs cannot complete until the server-side verification gate passes.
+{
+  const store = new MemoryJobStore();
+  let turn = 1;
+  let sends = 0;
+  const invalidProgress = {
+    stage: "completed",
+    criteria: [],
+    checks: [],
+    risks: [],
+    artifacts: [],
+    next: "done"
+  };
+  const validProgress = {
+    stage: "completed",
+    criteria: [{ id: "AC1", status: "pass", evidence: "npm test" }],
+    checks: [{ command: "npm test", exitCode: 0, required: true }],
+    risks: [],
+    artifacts: ["/workspace/outputs/changes.patch", "/workspace/outputs/handoff.md"],
+    next: "handoff"
+  };
+  const engine = {
+    async createSession() { return { id: "sess_dev_gate", status: "in_progress" }; },
+    async getSession() { return { id: "sess_dev_gate", status: "idle", required_actions: [] }; },
+    async listTurns() {
+      return { data: [{ id: "turn_dev_" + turn, status: "completed", subagent_id: null, usage: { total_tokens: 25 } }] };
+    },
+    async listTurnItems(_id, turnId) {
+      const progress = turn === 1 ? invalidProgress : validProgress;
+      const text = `DEV_PROGRESS_JSON: ${JSON.stringify(progress)}\nSTATUS: COMPLETED`;
+      return {
+        data: [{
+          id: "message_dev_" + turn,
+          type: "message",
+          turn_id: turnId,
+          status: "completed",
+          content: [{ type: "output_text", text }]
+        }],
+        found: true,
+        truncated: false
+      };
+    },
+    async sendMessage() { sends++; return { ok: true }; },
+    async cancelTurn() { return { ok: true }; }
+  };
+  let clock = 300_000;
+  const kg = new KeepGoingOrchestrator({ engine, store, now: () => ++clock });
+  const started = await kg.start({
+    initialPrompt: "build dev task",
+    instructions: "finish only after verification",
+    ownerSubjectHash: "owner-dev-gate",
+    clientRequestId: "req-dev-gate",
+    jobEngine: buildDevEngineTag({ goal: "dev gate", repositoryUrl: "https://github.com/example/repo", acceptanceCriteria: [{ id: "AC1", text: "passes" }], verificationCommands: ["npm test"] }),
+    limits: { maxAttempts: 4 }
+  });
+
+  const gated = await kg.reconcile(started.job.id);
+  assert.equal(gated.action, "continued");
+  assert.equal(gated.job.status, JOB_STATES.WORKING);
+  assert.equal(sends, 1);
+
+  turn = 2;
+  const completed = await kg.reconcile(started.job.id);
+  assert.equal(completed.job.status, JOB_STATES.COMPLETED);
 }
 
 console.log("orchestrator tests passed");

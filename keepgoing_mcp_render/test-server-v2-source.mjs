@@ -7,4 +7,8 @@ assert.match(source, /server\.registerTool\("start_dev_task"/);
 assert.match(source, /name: "start_dev_task"/);
 assert.match(source, /acceptanceCriteria/);
 assert.match(source, /verificationCommands/);
+assert.match(source, /renderDevDashboard/);
+assert.match(source, /app\.get\("\/dev"/);
+assert.match(source, /app\.post\("\/dev\/api\/tasks"/);
+assert.match(source, /devDashboardAccess/);
 console.log("server v2 source tests passed");

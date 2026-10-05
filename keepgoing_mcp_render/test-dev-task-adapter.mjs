@@ -13,6 +13,7 @@ const { task, persistentArgs } = buildStartDevTaskArgs({
 });
 
 assert.equal(persistentArgs.codingWorkspace, true);
+assert.match(persistentArgs.jobEngine, /^agents-dev:c2:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p1$/);
 assert.equal(persistentArgs.repositoryUrl, task.repositoryUrl);
 assert.equal(persistentArgs.repositoryRef, task.repositoryRef);
 assert.equal(persistentArgs.clientRequestId, "kg-v2-test");

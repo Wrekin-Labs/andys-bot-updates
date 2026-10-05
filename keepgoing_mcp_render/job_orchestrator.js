@@ -7,6 +7,7 @@ import {
   newJobRecord
 } from "./durable_job.js";
 import { latestRootTurn, latestSessionText, classifySession } from "./agents_engine.js";
+import { downgradeDevCompletionOutput, verifyDevTerminalOutput } from "./dev_agent.js";
 
 const CONTINUATION_LEASE_MS = 60_000;
 
@@ -32,6 +33,7 @@ export class KeepGoingOrchestrator {
     reasoningEffort = "medium",
     ownerSubjectHash,
     clientRequestId = null,
+    jobEngine = "agents",
     limits = {},
     workspace = null,
     beforeCreateSession = null
@@ -45,7 +47,7 @@ export class KeepGoingOrchestrator {
       goalHash: sha256(initialPrompt),
       definitionHash: sha256(instructions || ""),
       ownerSubjectHash,
-      engine: "agents",
+      engine: jobEngine,
       now,
       limits
     });
@@ -467,6 +469,16 @@ export class KeepGoingOrchestrator {
     }
 
     const terminalTurnId = provider.turnId || null;
+    let assessmentOutput = provider.output;
+    if (
+      provider.providerStatus === "completed" &&
+      String(current.engine || "").startsWith("agents-dev:")
+    ) {
+      const gate = verifyDevTerminalOutput(provider.output, current.engine);
+      if (!gate.ok) {
+        assessmentOutput = downgradeDevCompletionOutput(provider.output, gate.reasons);
+      }
+    }
 
     // The same completed turn may be observed repeatedly through polling or
     // duplicate webhooks. Never assess/count it twice.
@@ -503,7 +515,7 @@ export class KeepGoingOrchestrator {
         if (!claimed.ok) {
           return { job: claimed.job || current, action: "already_claimed" };
         }
-        return this._sendClaimedContinuation(claimed.job, provider.output);
+        return this._sendClaimedContinuation(claimed.job, assessmentOutput);
       }
 
       return { job: current, action: "already_assessed" };
@@ -511,7 +523,7 @@ export class KeepGoingOrchestrator {
 
     const assessed = assessRun(current, {
       providerStatus: provider.providerStatus,
-      output: provider.output,
+      output: assessmentOutput,
       tokensUsed: provider.tokensUsed || 0,
       toolCallsUsed: provider.toolCallsUsed || 0,
       now,
@@ -543,7 +555,7 @@ export class KeepGoingOrchestrator {
       return { job: claimed.job || current, action: "already_claimed" };
     }
 
-    return this._sendClaimedContinuation(claimed.job, provider.output);
+    return this._sendClaimedContinuation(claimed.job, assessmentOutput);
   }
 
   async _sendClaimedContinuation(claimedJob, previousOutput) {

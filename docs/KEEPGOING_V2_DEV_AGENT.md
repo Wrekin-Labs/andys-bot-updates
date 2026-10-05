@@ -36,6 +36,8 @@ Side states:
 
 The durable KeepGoing job remains the source of truth for liveness and recovery. The development stage is domain-level progress reported by the coding agent.
 
+Completion is also server-gated. Each development job stores a compact task fingerprint in its durable engine tag (criterion IDs, explicit verification commands and patch requirement). A model-emitted `STATUS: COMPLETED` is downgraded to `STATUS: PARTIAL` when the structured evidence does not match that fingerprint, so the model cannot complete a job merely by claiming success.
+
 ## Execution loop
 
 1. Inspect repository structure and project instructions.

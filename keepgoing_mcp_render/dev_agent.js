@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 const GITHUB_REPOSITORY_RE = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/;
 const SAFE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
 const SAFE_CRITERION_RE = /\S/;
@@ -337,6 +339,116 @@ export function devCompletionGate(taskInput, output = "") {
   return { ...gate, progress };
 }
 
+export function buildDevEngineTag(taskInput) {
+  const task = isNormalisedTask(taskInput) ? taskInput : normaliseDevTask(taskInput);
+  const criteriaSignature = devSpecHash(task.acceptanceCriteria.map((item) => item.id));
+  const verificationSignature = task.verificationCommands.length
+    ? devSpecHash(task.verificationCommands)
+    : "auto";
+  return [
+    "agents-dev",
+    `c${task.acceptanceCriteria.length}`,
+    `v${task.verificationCommands.length}`,
+    `a${criteriaSignature}`,
+    `q${verificationSignature}`,
+    `p${task.requirePatchArtifact ? 1 : 0}`
+  ].join(":");
+}
+
+export function parseDevEngineTag(value) {
+  const match = String(value || "").match(
+    /^agents-dev:c(\d+):v(\d+):a([0-9a-f]{16}):q(auto|[0-9a-f]{16}):p([01])$/
+  );
+  if (!match) return null;
+  const criteriaCount = Number(match[1]);
+  const verificationCount = Number(match[2]);
+  if (!Number.isSafeInteger(criteriaCount) || criteriaCount < 1 || criteriaCount > 20) return null;
+  if (!Number.isSafeInteger(verificationCount) || verificationCount < 0 || verificationCount > 12) return null;
+  if ((verificationCount === 0) !== (match[4] === "auto")) return null;
+  return {
+    criteriaCount,
+    verificationCount,
+    criteriaSignature: match[3],
+    verificationSignature: match[4],
+    requirePatchArtifact: match[5] === "1"
+  };
+}
+
+export function verifyDevTerminalOutput(output = "", engineTag = "") {
+  const spec = typeof engineTag === "string" ? parseDevEngineTag(engineTag) : engineTag;
+  if (!spec) {
+    return { ok: false, reasons: ["invalid development engine tag"], progress: null };
+  }
+
+  const progress = parseDevProgress(output);
+  if (!progress) {
+    return { ok: false, reasons: ["missing or invalid DEV_PROGRESS_JSON"], progress: null };
+  }
+
+  const reasons = [];
+  if (progress.stage !== "completed") reasons.push("development stage is not completed");
+
+  const ids = new Set();
+  for (const criterion of progress.criteria) {
+    if (ids.has(criterion.id)) reasons.push(`duplicate criterion id: ${criterion.id}`);
+    ids.add(criterion.id);
+    if (criterion.status !== "pass") reasons.push(`${criterion.id} is ${criterion.status}`);
+    if (!criterion.evidence) reasons.push(`${criterion.id} has no evidence`);
+  }
+  if (progress.criteria.length !== spec.criteriaCount) {
+    reasons.push(`expected exactly ${spec.criteriaCount} criteria, received ${progress.criteria.length}`);
+  }
+  if (progress.criteria.length === spec.criteriaCount) {
+    const criteriaSignature = devSpecHash(progress.criteria.map((item) => item.id));
+    if (criteriaSignature !== spec.criteriaSignature) {
+      reasons.push("reported criterion identifiers do not match the development task");
+    }
+  }
+
+  const requiredChecks = progress.checks.filter((item) => item.required !== false);
+  if (spec.verificationCount > 0) {
+    if (requiredChecks.length !== spec.verificationCount) {
+      reasons.push(
+        `expected exactly ${spec.verificationCount} required verification checks, received ${requiredChecks.length}`
+      );
+    } else {
+      const verificationSignature = devSpecHash(requiredChecks.map((item) => item.command));
+      if (verificationSignature !== spec.verificationSignature) {
+        reasons.push("reported verification commands do not match the development task");
+      }
+    }
+  } else if (!requiredChecks.length) {
+    reasons.push("no required verification check was reported");
+  }
+
+  for (const check of requiredChecks) {
+    if (check.exitCode !== 0) reasons.push(`verification failed: ${check.command}`);
+  }
+
+  if (
+    spec.requirePatchArtifact &&
+    !progress.artifacts.includes("/workspace/outputs/changes.patch")
+  ) {
+    reasons.push("required patch artifact not reported");
+  }
+  if (!progress.artifacts.includes("/workspace/outputs/handoff.md")) {
+    reasons.push("required handoff artifact not reported");
+  }
+
+  return { ok: reasons.length === 0, reasons, progress };
+}
+
+export function downgradeDevCompletionOutput(output = "", reasons = []) {
+  const replaced = String(output || "").replace(
+    /(^|\n)\s*STATUS:\s*COMPLETED\s*(?=\n|$)/i,
+    "$1STATUS: PARTIAL"
+  );
+  const detail = Array.isArray(reasons) && reasons.length
+    ? reasons.slice(0, 20).join("; ")
+    : "development verification gate did not pass";
+  return `${replaced.trim()}\n\nSERVER_DEV_VERIFICATION_FAILED: ${detail}`;
+}
+
 function normaliseRepositoryUrl(value) {
   const raw = cleanRequiredText(value, "repositoryUrl", 500);
   let parsed;
@@ -370,7 +482,7 @@ function normaliseCriteria(value) {
     throw new Error("acceptanceCriteria must contain at least one criterion");
   }
   if (value.length > 20) throw new Error("acceptanceCriteria supports at most 20 items");
-  return value.map((item, index) => {
+  const criteria = value.map((item, index) => {
     const text = typeof item === "string" ? item : item?.text;
     const id = typeof item === "object" && item?.id
       ? cleanRequiredText(item.id, "criterion id", 80)
@@ -379,6 +491,14 @@ function normaliseCriteria(value) {
     if (!SAFE_CRITERION_RE.test(cleaned)) throw new Error("acceptance criterion cannot be blank");
     return Object.freeze({ id, text: cleaned });
   });
+  const ids = new Set();
+  for (const criterion of criteria) {
+    if (ids.has(criterion.id)) {
+      throw new Error(`duplicate acceptance criterion id: ${criterion.id}`);
+    }
+    ids.add(criterion.id);
+  }
+  return criteria;
 }
 
 function normaliseVerificationCommands(value) {
@@ -424,6 +544,17 @@ function progressProtocol(task) {
     `All criterion IDs must come from: ${task.acceptanceCriteria.map((c) => c.id).join(", ")}.`,
     "The final checkpoint must use stage completed, include evidence for every criterion, include verification results, list required artifacts, and then end with STATUS: COMPLETED."
   ].join("\n");
+}
+
+function devSpecHash(values) {
+  const canonical = (Array.isArray(values) ? values : [])
+    .map((value) => String(value))
+    .sort((a, b) => a.localeCompare(b));
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(canonical), "utf8")
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function cleanRequiredText(value, name, maxLength) {

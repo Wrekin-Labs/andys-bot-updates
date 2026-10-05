@@ -12,6 +12,7 @@ import { createOpenAIWebhookVerifier, createWebhookProcessor } from "./webhook_p
 import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
 import { buildStartDevTaskArgs, devTaskToolDescription } from "./dev_task_adapter.js";
+import { renderDevDashboard } from "./dev_dashboard.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -285,6 +286,7 @@ app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/start-subscription", rateLimit("paypal-start", 20, 15 * 60 * 1000));
 app.use("/owner/paypal-setup", rateLimit("paypal-bootstrap", 20, 15 * 60 * 1000));
+app.use("/dev/api", rateLimit("dev-dashboard", 240, 15 * 60 * 1000));
 
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -300,7 +302,9 @@ app.use((req, res, next) => {
     req.path.startsWith("/billing/") ||
     req.path.startsWith("/paypal/") ||
     req.path.startsWith("/openai/") ||
-    req.path.startsWith("/owner/");
+    req.path.startsWith("/owner/") ||
+    req.path === "/dev" ||
+    req.path.startsWith("/dev/");
 
   if (sensitivePath) {
     res.set("Cache-Control", "no-store");
@@ -938,6 +942,176 @@ async function authorise(req, consume = false) {
   return access.ok ? { ...access, _customer_token: token } : access;
 }
 
+function setDevDashboardHeaders(res) {
+  res.set("Cache-Control", "no-store");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  res.set(
+    "Content-Security-Policy",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+  );
+}
+
+async function devDashboardAccess(req, res) {
+  if (!V12_ENABLED) {
+    res.status(503).json({ error: "development_agent_not_enabled" });
+    return null;
+  }
+  const access = await authorise(req, false);
+  if (!access.ok || !v12ForAccess(access)) {
+    res.status(401).json({ error: access.error || "not_authorised" });
+    return null;
+  }
+  return access;
+}
+
+function validDashboardJobId(value) {
+  return /^kgj_[A-Za-z0-9_-]{8,180}$/.test(String(value || ""));
+}
+
+app.get("/dev", (_req, res) => {
+  setDevDashboardHeaders(res);
+  res.type("html").send(renderDevDashboard());
+});
+
+app.get("/dev/api/me", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  res.json({
+    ok: true,
+    tier: String(access.tier || "account"),
+    admin: Boolean(access.admin),
+    development_agent: true
+  });
+});
+
+app.get("/dev/api/jobs", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  try {
+    const runtime = getV12Runtime();
+    const activeOnly = String(req.query?.activeOnly || "true").toLowerCase() !== "false";
+    const rows = await runtime.store.listOwnerJobs(
+      durableOwnerHash(access),
+      { limit: 100, activeOnly }
+    );
+    res.json({
+      jobs: rows.map((job) => ({
+        job_id: job.id,
+        status: job.status,
+        engine: job.engine || "agents",
+        attempt: Number(job.attempt || 0),
+        max_attempts: Number(job.maxAttempts || 0),
+        error: job.safeErrorMessage || null,
+        updated_at: job.updatedAt || null
+      }))
+    });
+  } catch (error) {
+    console.error("dev_dashboard_jobs_error", safeLogError(error), req.keepgoingRequestId || "");
+    res.status(500).json({ error: "jobs_unavailable" });
+  }
+});
+
+app.get("/dev/api/jobs/:jobId", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  if (!validDashboardJobId(req.params.jobId)) return res.status(400).json({ error: "invalid_job_id" });
+  try {
+    const runtime = getV12Runtime();
+    const view = await runtime.service.get(
+      req.params.jobId,
+      durableOwnerHash(access),
+      Boolean(access.admin)
+    );
+    const raw = await runtime.store.get(req.params.jobId);
+    res.json({ ...view, engine: raw?.engine || "agents" });
+  } catch (error) {
+    res.status(404).json({ error: "job_not_found" });
+  }
+});
+
+app.get("/dev/api/jobs/:jobId/artifacts", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  if (!validDashboardJobId(req.params.jobId)) return res.status(400).json({ error: "invalid_job_id" });
+  try {
+    const result = await getV12Runtime().service.artifacts(
+      req.params.jobId,
+      durableOwnerHash(access),
+      Boolean(access.admin),
+      100
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(404).json({ error: "artifacts_unavailable" });
+  }
+});
+
+app.get("/dev/api/jobs/:jobId/artifacts/:artifactId", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  if (!validDashboardJobId(req.params.jobId)) return res.status(400).json({ error: "invalid_job_id" });
+  try {
+    const result = await getV12Runtime().service.readArtifact(
+      req.params.jobId,
+      String(req.params.artifactId || "").slice(0, 200),
+      durableOwnerHash(access),
+      Boolean(access.admin)
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(404).json({ error: "artifact_unavailable" });
+  }
+});
+
+app.post("/dev/api/tasks", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  try {
+    const result = await startDevTaskCompat(req.body || {}, access);
+    res.status(202).json(result);
+  } catch (error) {
+    const message = String(error?.message || error);
+    res.status(/required|invalid|unsafe|at most|exceeds/i.test(message) ? 400 : 500).json({
+      error: message.slice(0, 500)
+    });
+  }
+});
+
+app.post("/dev/api/jobs/:jobId/cancel", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  if (!validDashboardJobId(req.params.jobId)) return res.status(400).json({ error: "invalid_job_id" });
+  try {
+    const result = await getV12Runtime().service.cancel(
+      req.params.jobId,
+      durableOwnerHash(access),
+      Boolean(access.admin)
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(404).json({ error: "job_not_found" });
+  }
+});
+
+app.post("/dev/api/jobs/:jobId/resume", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  if (!validDashboardJobId(req.params.jobId)) return res.status(400).json({ error: "invalid_job_id" });
+  const input = String(req.body?.input || "").trim();
+  if (!input || input.length > 8000) return res.status(400).json({ error: "input_required" });
+  try {
+    const result = await getV12Runtime().service.resume(
+      req.params.jobId,
+      input,
+      durableOwnerHash(access),
+      Boolean(access.admin)
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(409).json({ error: String(error?.message || "job_not_resumable").slice(0, 500) });
+  }
+});
+
 function outputText(data) {
   if (typeof data?.output_text === "string") return data.output_text;
   const parts = [];
@@ -1095,6 +1269,7 @@ async function startPersistentJobCompat(args, access) {
     ownerSubjectHash: durableOwnerHash(access),
     clientRequestId: args.clientRequestId || access._mcp_request_id || null,
     context: args.context || "",
+    jobEngine: args.jobEngine || "agents",
     codingWorkspace: Boolean(args.codingWorkspace),
     repositoryUrl: args.repositoryUrl || null,
     repositoryRef: args.repositoryRef || null,

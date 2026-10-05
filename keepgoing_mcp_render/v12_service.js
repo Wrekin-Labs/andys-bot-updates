@@ -34,6 +34,7 @@ export function createV12Service({
     ownerSubjectHash,
     clientRequestId = null,
     context = "",
+    jobEngine = "agents",
     codingWorkspace = false,
     repositoryUrl = null,
     repositoryRef = null,
@@ -64,6 +65,7 @@ export function createV12Service({
       reasoningEffort: reasoningEffort(mode),
       ownerSubjectHash,
       clientRequestId,
+      jobEngine,
       workspace,
       limits: {
         maxAttempts: limits.max_attempts,

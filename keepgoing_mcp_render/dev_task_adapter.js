@@ -1,5 +1,6 @@
 import {
   buildDevDefinitionOfDone,
+  buildDevEngineTag,
   buildDevJobContext,
   buildDevJobGoal,
   normaliseDevTask
@@ -16,6 +17,7 @@ export function buildStartDevTaskArgs(input = {}) {
     persistentArgs: {
       goal: buildDevJobGoal(task),
       definitionOfDone: buildDevDefinitionOfDone(task),
+      jobEngine: buildDevEngineTag(task),
       mode: task.mode,
       allowWeb: task.allowWeb,
       clientRequestId,
