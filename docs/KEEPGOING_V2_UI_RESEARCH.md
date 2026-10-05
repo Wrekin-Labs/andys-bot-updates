@@ -125,7 +125,7 @@ The interface is deliberately KeepGoing-branded:
 - Sessions list.
 - Spaces, Knowledge, Playbooks and Integrations navigation.
 - New autonomous development-task form.
-- Playbook presets.
+- Server-enforced Playbook presets for bug fixes, features, audits, refactors, CI repair and dependency updates.
 - Live job detail.
 - Stop and resume controls.
 - Structured plan/edit/build/test/review progress.
@@ -139,7 +139,7 @@ The interface is deliberately KeepGoing-branded:
 ## Next milestones
 
 1. Persist named Spaces and repository metadata.
-2. Server-backed Knowledge, Playbooks and Skills.
+2. Server-backed Knowledge and Skills, plus team-managed custom Playbooks.
 3. Paginated durable event/worklog history with virtualized rendering.
 4. GitHub App writer: branch, draft PR, CI inspection and repair loop.
 5. Real workspace files/diff/terminal viewers backed by sandbox APIs.

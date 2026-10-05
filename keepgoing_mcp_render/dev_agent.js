@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { DEV_PLAYBOOKS, applyDevPlaybookCriteria, normaliseDevPlaybook } from "./dev_playbooks.js";
 
 const GITHUB_REPOSITORY_RE = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/;
 const SAFE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
@@ -88,7 +89,8 @@ export function normaliseDevTask(input = {}) {
   const mode = normaliseMode(input.mode || "max");
   const allowWeb = input.allowWeb !== false;
   const context = cleanOptionalText(input.context, 4_000);
-  const acceptanceCriteria = normaliseCriteria(input.acceptanceCriteria);
+  const playbook = normaliseDevPlaybook(input.playbook);
+  const acceptanceCriteria = normaliseCriteria(applyDevPlaybookCriteria(input.acceptanceCriteria, playbook));
   const verificationCommands = normaliseVerificationCommands(input.verificationCommands);
   const approvalPolicy = normaliseApprovalPolicy(input.approvalPolicy);
 
@@ -99,6 +101,7 @@ export function normaliseDevTask(input = {}) {
     mode,
     allowWeb,
     context,
+    playbook: playbook?.id || null,
     acceptanceCriteria,
     verificationCommands,
     approvalPolicy,
@@ -177,6 +180,8 @@ export function buildDevJobContext(taskInput, extraContext = "") {
   const text = [
     "Development-agent policy checkpoint:",
     `mode=${task.mode}`,
+    `playbook=${task.playbook || "none"}`,
+    ...(task.playbook ? [`playbookGuidance=${DEV_PLAYBOOKS[task.playbook].guidance}`] : []),
     `remotePush=${policy.allowRemotePush}`,
     `createPullRequest=${policy.allowCreatePullRequest}`,
     `mergePullRequest=${policy.allowMergePullRequest}`,

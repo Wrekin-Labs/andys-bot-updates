@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js && node --check durable_store.js && node --check job_orchestrator.js && node --check supabase_job_store.js && node --check webhook_processor.js && node --check watchdog.js && node --check v12_service.js && node --check deployment_preflight.js && node --check preflight.mjs && node --check dev_agent.js && node --check dev_task_adapter.js && node --check dev_dashboard.js",
+    "check": "node --check server.js && node --check durable_job.js && node --check agents_engine.js && node --check durable_store.js && node --check job_orchestrator.js && node --check supabase_job_store.js && node --check webhook_processor.js && node --check watchdog.js && node --check v12_service.js && node --check deployment_preflight.js && node --check preflight.mjs && node --check dev_playbooks.js && node --check dev_agent.js && node --check dev_task_adapter.js && node --check dev_dashboard.js",
     "test": "node test-dev-agent.mjs && node test-dev-task-adapter.mjs && node test-dev-dashboard.mjs && node test-server-v2-source.mjs && node test-durable-job.mjs && node test-agents-engine.mjs && node test-orchestrator.mjs && node test-supabase-store.mjs && node test-webhook-processor.mjs && node test-watchdog.mjs && node test-background-continuation.mjs && node test-v12-service.mjs && node test-server-v12-source.mjs && node test-sql-v12-source.mjs && node test-durable-sql-source.mjs && node test-preflight.mjs && node test-paypal-domain-source.mjs && node test-plugin-package.mjs",
     "verify": "npm run check && npm test",
     "start": "npm run verify && node server.js",

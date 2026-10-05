@@ -162,6 +162,29 @@ assert.equal(
   true
 );
 
+const playbookTask = normaliseDevTask({
+  goal: "repair failing CI",
+  repositoryUrl: "https://github.com/example/repo",
+  acceptanceCriteria: [{ id: "BASE", text: "Original requirement remains satisfied" }],
+  verificationCommands: ["npm test"],
+  playbook: "ci_repair"
+});
+assert.equal(playbookTask.playbook, "ci_repair");
+assert.equal(playbookTask.acceptanceCriteria.length, 4);
+assert.ok(playbookTask.acceptanceCriteria.some((item) => item.id === "KG_CI_REPAIR_1"));
+assert.match(buildDevJobContext(playbookTask), /playbook=ci_repair/);
+assert.match(buildDevJobContext(playbookTask), /Reproduce the failing check/);
+assert.match(buildDevEngineTag(playbookTask), /^agents-dev:c4:v1:/);
+assert.throws(
+  () => normaliseDevTask({
+    goal: "bad playbook",
+    repositoryUrl: "https://github.com/example/repo",
+    acceptanceCriteria: ["works"],
+    playbook: "not-a-playbook"
+  }),
+  /playbook must be one of/
+);
+
 const goal = buildDevJobGoal(task);
 assert.match(goal, /AC1:/);
 assert.match(goal, /Do not push, merge, deploy/);
