@@ -19,6 +19,8 @@ assert.match(html, /changes\.patch/);
 assert.match(html, /ci_repair/);
 assert.match(html, /playbook:kind/);
 assert.match(html, /intentInput/);
+assert.match(html, /syncTaskMode/);
+assert.match(html, /android_release/);
 assert.match(html, /planOnly/);
 assert.match(html, /Plan-only development session/);
 assert.match(html, /plan\.md/);

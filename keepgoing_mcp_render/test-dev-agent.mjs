@@ -189,6 +189,28 @@ assert.throws(
   /playbook must be one of/
 );
 
+assert.throws(
+  () => normaliseDevTask({
+    goal: "plan with incompatible skill",
+    repositoryUrl: "https://github.com/example/repo",
+    acceptanceCriteria: ["plan is safe"],
+    planOnly: true,
+    skills: ["android_release"]
+  }),
+  /planOnly does not support skill: android_release/
+);
+
+const planReviewTask = normaliseDevTask({
+  goal: "plan with review skills",
+  repositoryUrl: "https://github.com/example/repo",
+  acceptanceCriteria: ["plan is safe"],
+  planOnly: true,
+  playbook: "bugfix",
+  skills: ["code_review", "security_review"]
+});
+assert.equal(planReviewTask.playbook, null);
+assert.deepEqual(planReviewTask.skills, ["code_review", "security_review"]);
+
 const planTask = normaliseDevTask({
   goal: "plan a safe migration",
   repositoryUrl: "https://github.com/example/repo",

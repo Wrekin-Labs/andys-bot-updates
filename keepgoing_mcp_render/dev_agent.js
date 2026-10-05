@@ -90,10 +90,18 @@ export function normaliseDevTask(input = {}) {
   const mode = normaliseMode(input.mode || "max");
   const allowWeb = input.allowWeb !== false;
   const context = cleanOptionalText(input.context, 4_000);
-  const playbook = normaliseDevPlaybook(input.playbook);
+  const requestedPlaybook = normaliseDevPlaybook(input.playbook);
   const skills = normaliseDevSkills(input.skills);
   const planOnly = input.planOnly === true;
-  const criteriaWithPlaybook = applyDevPlaybookCriteria(input.acceptanceCriteria, planOnly ? null : playbook);
+  const planOnlySkillIds = new Set(["code_review", "security_review", "docs_handoff"]);
+  if (planOnly) {
+    const incompatibleSkill = skills.find((skill) => !planOnlySkillIds.has(skill.id));
+    if (incompatibleSkill) {
+      throw new Error(`planOnly does not support skill: ${incompatibleSkill.id}`);
+    }
+  }
+  const playbook = planOnly ? null : requestedPlaybook;
+  const criteriaWithPlaybook = applyDevPlaybookCriteria(input.acceptanceCriteria, playbook);
   const acceptanceCriteria = normaliseCriteria(applyDevSkillCriteria(criteriaWithPlaybook, skills));
   let verificationCommands = normaliseVerificationCommands(input.verificationCommands);
   const planOnlyCleanCheck = 'test -z "$(git status --porcelain=v1 --untracked-files=all)"';
