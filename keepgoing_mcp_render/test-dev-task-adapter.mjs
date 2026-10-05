@@ -38,5 +38,15 @@ assert.match(planTaskArgs.persistentArgs.jobEngine, /^agents-dev:c1:v1:a[0-9a-f]
 assert.match(planTaskArgs.persistentArgs.goal, /MODE: PLAN ONLY/);
 assert.match(planTaskArgs.persistentArgs.context, /planOnly=true/);
 
+assert.throws(
+  () => buildStartDevTaskArgs({
+    goal: "Plan around selected local changes.",
+    repositoryUrl: "https://github.com/Wrekin-Labs/andys-bot-updates",
+    acceptanceCriteria: ["Produce a plan"],
+    planOnly: true,
+    workspaceFiles: [{ path: "notes.txt", content: "would dirty the baseline" }]
+  }),
+  /planOnly does not accept workspaceFiles/
+);
 
 console.log("dev_task_adapter tests passed");

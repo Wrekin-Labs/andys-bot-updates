@@ -9,6 +9,9 @@ import {
 export function buildStartDevTaskArgs(input = {}) {
   const task = normaliseDevTask(input);
   const workspaceFiles = Array.isArray(input.workspaceFiles) ? input.workspaceFiles : [];
+  if (task.planOnly && workspaceFiles.length) {
+    throw new Error("planOnly does not accept workspaceFiles because the clean-worktree proof must start from the cloned repository baseline");
+  }
   const clientRequestId = cleanOptional(input.clientRequestId, 200) || null;
   const extraContext = cleanOptional(input.context, 4_000);
 
