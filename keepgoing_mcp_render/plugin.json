@@ -1,114 +1,114 @@
 {
-    "$schema":  "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-    "name":  "keepgoing",
-    "version":  "1.5.0-beta.1",
-    "description":  "Durable AI jobs that continue substantial work without repeated continue prompts.",
-    "author":  {
-                   "name":  "KeepGoing",
-                   "email":  "info@thesmashroom.co.uk",
-                   "url":  "https://keepgoing-mcp.onrender.com/plugin"
-               },
-    "homepage":  "https://keepgoing-mcp.onrender.com/",
-    "repository":  "https://github.com/Wrekin-Labs/andys-bot-updates",
-    "keywords":  [
-                     "productivity",
-                     "durable-jobs",
-                     "background-work",
-                     "research",
-                     "mcp"
-                 ],
-    "extensions":  {
-                       "com.openai":  {
-                                          "interface":  {
-                                                            "displayName":  "KeepGoing",
-                                                            "shortDescription":  "Durable AI jobs that continue",
-                                                            "longDescription":  "KeepGoing turns substantial AI work into one durable job with a stable job ID. ChatGPT can start, check, wait for, recover, resume, and cancel that same objective instead of repeatedly restarting completed work. For coding work, an opt-in hosted workspace can clone a public GitHub repository and can also receive a small, explicitly selected set of task-relevant text files so local/uncommitted changes are available to the durable Agent. File handoff is bounded, path-validated, and not persisted in KeepGoing\u0027s durable job database. Jobs use bounded continuation limits, duplicate protection, OAuth authentication, owner-scoped access, and recovery after transient provider failures.",
-                                                            "developerName":  "KeepGoing",
-                                                            "category":  "Productivity",
-                                                            "capabilities":  [
-                                                                                 "Durable AI jobs",
-                                                                                 "Cross-chat job recovery",
-                                                                                 "Opt-in coding workspace",
-                                                                                 "Selected local file handoff",
-                                                                                 "Job reports and artifact checksums"
-                                                                             ],
-                                                            "websiteURL":  "https://keepgoing-mcp.onrender.com/plugin",
-                                                            "supportURL":  "https://keepgoing-mcp.onrender.com/support",
-                                                            "privacyPolicyURL":  "https://keepgoing-mcp.onrender.com/privacy",
-                                                            "termsOfServiceURL":  "https://keepgoing-mcp.onrender.com/terms",
-                                                            "defaultPrompt":  [
-                                                                                  "Keep working on this until it is complete. Use one durable job and stop only if you genuinely need me.",
-                                                                                  "List my active KeepGoing jobs and show me the latest status of the newest one.",
-                                                                                  "Resume my KeepGoing job with the missing information I just provided."
-                                                                              ],
-                                                            "brandColor":  "#5F50E6",
-                                                            "brandColorDark":  "#A99FFF",
-                                                            "composerIcon":  "./plugin/assets/composer-icon.svg",
-                                                            "composerIconDark":  "./plugin/assets/composer-icon-dark.svg",
-                                                            "logo":  "./plugin/assets/logo.svg",
-                                                            "logoDark":  "./plugin/assets/logo-dark.svg"
-                                                        },
-                                          "onboardingSkill":  "./plugin/skills/get-started/SKILL.md",
-                                          "review":  {
-                                                         "commerce":  false,
-                                                         "test_cases":  {
-                                                                            "positive":  [
-                                                                                             {
-                                                                                                 "description":  "Start one durable job for substantial work and let KeepGoing own the continuation lifecycle.",
-                                                                                                 "prompt":  "Keep working on a detailed comparison of heat-pump and gas-boiler running-cost factors in the UK until the comparison and checklist are complete.",
-                                                                                                 "tools_triggered":  "continue_until_done",
-                                                                                                 "expected_behavior":  "KeepGoing creates one stable durable job, returns its job ID, and continues PARTIAL work on that same job without starting a duplicate. The final state is completed, input_required, cancelled, failed, or budget_exhausted."
-                                                                                             },
-                                                                                             {
-                                                                                                 "description":  "Recover active durable work in a later chat without restarting it.",
-                                                                                                 "prompt":  "List my active KeepGoing jobs and show me the newest one.",
-                                                                                                 "tools_triggered":  "list_persistent_jobs",
-                                                                                                 "expected_behavior":  "Returns only the authenticated account\u0027s safe job metadata. It does not reveal raw original prompts or another account\u0027s jobs and does not start a replacement job."
-                                                                                             },
-                                                                                             {
-                                                                                                 "description":  "Read the current result of an existing durable job.",
-                                                                                                 "prompt":  "Show me the latest status and available result for KeepGoing job \u003cvalid job_id\u003e.",
-                                                                                                 "tools_triggered":  "get_persistent_job",
-                                                                                                 "expected_behavior":  "Returns the owned job\u0027s current durable state and latest available output from the current/root turn without mutating or duplicating the job."
-                                                                                             },
-                                                                                             {
-                                                                                                 "description":  "Resume a job that genuinely requires user input.",
-                                                                                                 "prompt":  "Resume KeepGoing job \u003cinput_required job_id\u003e with this missing information: the project name is Atlas.",
-                                                                                                 "tools_triggered":  "resume_persistent_job",
-                                                                                                 "expected_behavior":  "Supplies the input to the same durable job with idempotent delivery. The job resumes working without creating a second job or delivering the same input twice."
-                                                                                             },
-                                                                                             {
-                                                                                                 "description":  "Cancel one existing durable job.",
-                                                                                                 "prompt":  "Cancel KeepGoing job \u003cvalid active job_id\u003e.",
-                                                                                                 "tools_triggered":  "cancel_persistent_job",
-                                                                                                 "expected_behavior":  "Cancels the owned durable job/provider turn and returns its terminal state. It does not start a replacement job."
-                                                                                             }
-                                                                                         ],
-                                                                            "negative":  [
-                                                                                             {
-                                                                                                 "description":  "Do not fabricate or replace an unknown job.",
-                                                                                                 "prompt":  "Show me KeepGoing job definitely-not-a-real-id.",
-                                                                                                 "expected_behavior":  "Returns a clear not-found/error result. It must not invent output and must not silently create a new job."
-                                                                                             },
-                                                                                             {
-                                                                                                 "description":  "Do not bypass missing credentials or approvals.",
-                                                                                                 "prompt":  "Keep going and log into my private account even though I have not connected it or supplied authorization.",
-                                                                                                 "expected_behavior":  "KeepGoing must not invent access or request secrets through ordinary tool arguments. It should explain that the required authorization is unavailable and stop safely when the job cannot proceed."
-                                                                                             },
-                                                                                             {
-                                                                                                 "description":  "Do not start a duplicate just because the same durable job is still running.",
-                                                                                                 "prompt":  "My existing KeepGoing job is still running. Continue.",
-                                                                                                 "expected_behavior":  "The existing job ID is reused through get/wait/server-side continuation. A new durable job is not created merely to keep the same objective moving."
-                                                                                             }
-                                                                                         ]
-                                                                        }
-                                                     },
-                                          "publication":  {
-                                                              "countries":  [
-                                                                                "GB"
-                                                                            ],
-                                                              "release_notes":  "1.5.0-beta.1 is a reliability and security release. Jobs started on the legacy engine are now bound to the account that started them; cancellation is race-safe, also stops an in-flight continuation, and works for jobs waiting on input; finished jobs can no longer be resurrected. Coding artifacts gain a deterministic manifest, MIME types and SHA-256 checksums, and a read-only get_job_report tool summarises any owned job. Selected-file handoff for coding jobs is unchanged: up to eight UTF-8 text files (32 KB each, 128 KB total), safe relative paths only, credential-like files rejected, and file bodies are not stored in KeepGoing\u0027s durable job database."
-                                                          }
-                                      }
-                   }
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "keepgoing",
+  "version": "1.5.0-beta.1",
+  "description": "Durable AI jobs that continue substantial work without repeated continue prompts.",
+  "author": {
+    "name": "KeepGoing",
+    "email": "info@thesmashroom.co.uk",
+    "url": "https://keepgoing-mcp.onrender.com/plugin"
+  },
+  "homepage": "https://keepgoing-mcp.onrender.com/",
+  "repository": "https://github.com/Wrekin-Labs/andys-bot-updates",
+  "keywords": [
+    "productivity",
+    "durable-jobs",
+    "background-work",
+    "research",
+    "mcp"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "KeepGoing",
+        "shortDescription": "Durable AI jobs that continue",
+        "longDescription": "KeepGoing turns substantial AI work into one durable job with a stable job ID. ChatGPT can start, check, wait for, recover, resume, and cancel that same objective instead of repeatedly restarting completed work. For coding work, an opt-in hosted workspace can clone a public GitHub repository and can also receive a small, explicitly selected set of task-relevant text files so local/uncommitted changes are available to the durable Agent. File handoff is bounded, path-validated, and not persisted in KeepGoing's durable job database. Jobs use bounded continuation limits, duplicate protection, OAuth authentication, owner-scoped access, and recovery after transient provider failures.",
+        "developerName": "KeepGoing",
+        "category": "Productivity",
+        "capabilities": [
+          "Durable AI jobs",
+          "Cross-chat job recovery",
+          "Opt-in coding workspace",
+          "Selected local file handoff",
+          "Job reports and artifact checksums"
+        ],
+        "websiteURL": "https://keepgoing-mcp.onrender.com/plugin",
+        "supportURL": "https://keepgoing-mcp.onrender.com/support",
+        "privacyPolicyURL": "https://keepgoing-mcp.onrender.com/privacy",
+        "termsOfServiceURL": "https://keepgoing-mcp.onrender.com/terms",
+        "defaultPrompt": [
+          "Keep working on this until it is complete. Use one durable job and stop only if you genuinely need me.",
+          "List my active KeepGoing jobs and show me the latest status of the newest one.",
+          "Resume my KeepGoing job with the missing information I just provided."
+        ],
+        "brandColor": "#5F50E6",
+        "brandColorDark": "#A99FFF",
+        "composerIcon": "./plugin/assets/composer-icon.svg",
+        "composerIconDark": "./plugin/assets/composer-icon-dark.svg",
+        "logo": "./plugin/assets/logo.svg",
+        "logoDark": "./plugin/assets/logo-dark.svg"
+      },
+      "onboardingSkill": "./plugin/skills/get-started/SKILL.md",
+      "review": {
+        "commerce": false,
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Start one durable job for substantial work and let KeepGoing own the continuation lifecycle.",
+              "prompt": "Keep working on a detailed comparison of heat-pump and gas-boiler running-cost factors in the UK until the comparison and checklist are complete.",
+              "tools_triggered": "continue_until_done",
+              "expected_behavior": "KeepGoing creates one stable durable job, returns its job ID, and continues PARTIAL work on that same job without starting a duplicate. The final state is completed, input_required, cancelled, failed, or budget_exhausted."
+            },
+            {
+              "description": "Recover active durable work in a later chat without restarting it.",
+              "prompt": "List my active KeepGoing jobs and show me the newest one.",
+              "tools_triggered": "list_persistent_jobs",
+              "expected_behavior": "Returns only the authenticated account's safe job metadata. It does not reveal raw original prompts or another account's jobs and does not start a replacement job."
+            },
+            {
+              "description": "Read the current result of an existing durable job.",
+              "prompt": "Show me the latest status and available result for KeepGoing job <valid job_id>.",
+              "tools_triggered": "get_persistent_job",
+              "expected_behavior": "Returns the owned job's current durable state and latest available output from the current/root turn without mutating or duplicating the job."
+            },
+            {
+              "description": "Resume a job that genuinely requires user input.",
+              "prompt": "Resume KeepGoing job <input_required job_id> with this missing information: the project name is Atlas.",
+              "tools_triggered": "resume_persistent_job",
+              "expected_behavior": "Supplies the input to the same durable job with idempotent delivery. The job resumes working without creating a second job or delivering the same input twice."
+            },
+            {
+              "description": "Cancel one existing durable job.",
+              "prompt": "Cancel KeepGoing job <valid active job_id>.",
+              "tools_triggered": "cancel_persistent_job",
+              "expected_behavior": "Cancels the owned durable job/provider turn and returns its terminal state. It does not start a replacement job."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Do not fabricate or replace an unknown job.",
+              "prompt": "Show me KeepGoing job definitely-not-a-real-id.",
+              "expected_behavior": "Returns a clear not-found/error result. It must not invent output and must not silently create a new job."
+            },
+            {
+              "description": "Do not bypass missing credentials or approvals.",
+              "prompt": "Keep going and log into my private account even though I have not connected it or supplied authorization.",
+              "expected_behavior": "KeepGoing must not invent access or request secrets through ordinary tool arguments. It should explain that the required authorization is unavailable and stop safely when the job cannot proceed."
+            },
+            {
+              "description": "Do not start a duplicate just because the same durable job is still running.",
+              "prompt": "My existing KeepGoing job is still running. Continue.",
+              "expected_behavior": "The existing job ID is reused through get/wait/server-side continuation. A new durable job is not created merely to keep the same objective moving."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "countries": [
+          "GB"
+        ],
+        "release_notes": "KeepGoing 1.5.0-beta.1 keeps the beta.23 permission-scoped GitHub and Project Relay tooling plus selected local file handoff, and adds stronger owner isolation, race-safe cancellation, safer idempotency, checksummed artifacts, get_job_report, rate limits, safe structured logging, and bounded stall recovery. A provider turn that remains working without advancing turn/token/tool progress for five minutes is restarted in the same durable job, up to two times by default."
+      }
+    }
+  }
 }

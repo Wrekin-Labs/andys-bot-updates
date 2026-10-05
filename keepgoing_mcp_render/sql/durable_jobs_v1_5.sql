@@ -1,7 +1,7 @@
 -- KeepGoing 1.5.0 durable-state hardening. Apply AFTER sql/durable_jobs.sql.
 -- Safe to re-run: every statement is idempotent (create or replace / if not exists /
--- drop trigger if exists). No data is rewritten and no columns are added, so the
--- application keeps working whether or not this migration has been applied yet.
+-- drop trigger if exists). Existing data is preserved. New progress-tracking columns
+-- have defaults so old jobs remain readable while 1.5 adds stall recovery.
 --
 -- 1. A BEFORE UPDATE trigger that rejects:
 --      * changing job_id or owner_subject_hash after reservation;
@@ -12,7 +12,14 @@
 --    The application already filters its compare-and-set PATCH the same way, so
 --    in normal operation this trigger never fires; it is defence in depth against
 --    application bugs or manual edits.
--- 2. A partial index matching the watchdog's recovery scan.
+-- 2. Provider-turn progress fields used to distinguish polling from real progress
+--    and recover turns that remain stuck without advancing.
+-- 3. A partial index matching the watchdog's recovery scan.
+
+alter table public.keepgoing_jobs add column if not exists current_run_id text;
+alter table public.keepgoing_jobs add column if not exists current_turn_tokens bigint not null default 0;
+alter table public.keepgoing_jobs add column if not exists current_turn_tool_calls integer not null default 0;
+alter table public.keepgoing_jobs add column if not exists stall_recovery_count integer not null default 0;
 
 create or replace function public.keepgoing_jobs_guard_update()
 returns trigger

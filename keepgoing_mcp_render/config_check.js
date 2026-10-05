@@ -75,6 +75,8 @@ export function validateEnvironment(env = process.env) {
 
   for (const name of [
     "KEEPGOING_V12_WATCHDOG_INTERVAL_MS",
+    "KEEPGOING_STALL_AFTER_MS",
+    "KEEPGOING_MAX_STALL_RECOVERIES",
     "KEEPGOING_PROVIDER_TIMEOUT_MS",
     "KEEPGOING_STORE_TIMEOUT_MS",
     "KEEPGOING_MAX_ACTIVE_JOBS_PRO",

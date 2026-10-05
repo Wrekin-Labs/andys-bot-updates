@@ -11,7 +11,7 @@ create table if not exists public.keepgoing_jobs (
   engine text not null default 'agents'
     check (engine in ('agents', 'responses')),
   tool_profile text not null default 'web'
-    check (tool_profile ~ '^[a-z][a-z0-9_-]{0,63}
+    check (tool_profile ~ '^[a-z][a-z0-9_-]{0,63}$'),
   status text not null
     check (status in (
       'queued',
@@ -68,6 +68,14 @@ alter table public.keepgoing_jobs
   add column if not exists tool_policy_hash text;
 alter table public.keepgoing_jobs
   add column if not exists tool_write_capable boolean not null default false;
+alter table public.keepgoing_jobs
+  add column if not exists current_run_id text;
+alter table public.keepgoing_jobs
+  add column if not exists current_turn_tokens bigint not null default 0;
+alter table public.keepgoing_jobs
+  add column if not exists current_turn_tool_calls integer not null default 0;
+alter table public.keepgoing_jobs
+  add column if not exists stall_recovery_count integer not null default 0;
 
 create index if not exists keepgoing_jobs_status_updated_idx
   on public.keepgoing_jobs (status, updated_at);

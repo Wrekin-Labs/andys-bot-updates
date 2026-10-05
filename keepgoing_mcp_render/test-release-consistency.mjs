@@ -55,7 +55,10 @@ assert.match(v15, /create or replace function public\.keepgoing_jobs_guard_updat
 assert.match(v15, /drop trigger if exists keepgoing_jobs_guard_update on public\.keepgoing_jobs;/);
 assert.match(v15, /create index if not exists keepgoing_jobs_recoverable_idx/);
 assert.match(v15, /revoke all on function public\.keepgoing_jobs_guard_update\(\) from public, anon, authenticated;/);
-assert.doesNotMatch(v15, /\balter table\b[^;]*\b(add|drop) column\b/i, "1.5 migration adds no columns (app works before/after it)");
+for (const column of ["current_run_id", "current_turn_tokens", "current_turn_tool_calls", "stall_recovery_count"]) {
+  assert.match(v15, new RegExp("alter table public\\.keepgoing_jobs add column if not exists " + column + "\\b", "i"), "1.5 migration adds " + column + " idempotently");
+}
+assert.doesNotMatch(v15, /alter table public\.keepgoing_jobs\s+drop column/i, "1.5 migration never drops durable columns");
 assert.doesNotMatch(v15, /security definer/i);
 assert.match(read("sql/verify_durable_migrations.sql"), /\\ir durable_jobs_v1_5\.sql\n\\ir durable_jobs_v1_5\.sql/, "verification applies the migration twice");
 

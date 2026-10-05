@@ -13,13 +13,17 @@ const CONTINUATION_LEASE_MS = 60_000;
 // given this much extra time before it is dead-lettered as recovery_failed.
 const RECOVERY_GRACE_MS = 15 * 60_000;
 const CAS_RETRIES = 5;
+const DEFAULT_STALL_AFTER_MS = 5 * 60_000;
+const DEFAULT_MAX_STALL_RECOVERIES = 2;
 
 export class KeepGoingOrchestrator {
   constructor({
     engine,
     store,
     now = () => Date.now(),
-    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    stallAfterMs = DEFAULT_STALL_AFTER_MS,
+    maxStallRecoveries = DEFAULT_MAX_STALL_RECOVERIES
   } = {}) {
     if (!engine) throw new Error("engine required");
     if (!store) throw new Error("store required");
@@ -27,6 +31,8 @@ export class KeepGoingOrchestrator {
     this.store = store;
     this.now = now;
     this.sleep = sleep;
+    this.stallAfterMs = Math.max(60_000, Math.min(30 * 60_000, Number(stallAfterMs) || DEFAULT_STALL_AFTER_MS));
+    this.maxStallRecoveries = Math.max(0, Math.min(5, Math.trunc(Number(maxStallRecoveries) || DEFAULT_MAX_STALL_RECOVERIES)));
   }
 
   async start({
@@ -160,6 +166,8 @@ export class KeepGoingOrchestrator {
       status: JOB_STATES.WORKING,
       providerSessionId: session.id,
       currentRunId: session.id,
+      currentTurnTokens: 0,
+      currentTurnToolCalls: 0,
       startLeaseUntil: null,
       updatedAt: this.now(),
       lastProgressAt: this.now()
@@ -351,6 +359,8 @@ export class KeepGoingOrchestrator {
       status: JOB_STATES.WORKING,
       providerSessionId: sessionId,
       currentRunId: sessionId,
+      currentTurnTokens: 0,
+      currentTurnToolCalls: 0,
       startLeaseUntil: null,
       safeErrorCode: null,
       safeErrorMessage: null,
@@ -386,6 +396,8 @@ export class KeepGoingOrchestrator {
         status: JOB_STATES.WORKING,
         providerSessionId: session.id,
         currentRunId: session.id,
+        currentTurnTokens: 0,
+        currentTurnToolCalls: 0,
         startLeaseUntil: null,
         safeErrorCode: null,
         safeErrorMessage: null,
@@ -440,9 +452,27 @@ export class KeepGoingOrchestrator {
     const provider = classifySession(session, output, turns, items);
     const now = this.now();
 
+    // A transient cancel/restart request can lose its acknowledgement. If the
+    // old turn is now cancelled, retry the restart with the same idempotency key.
+    if (current.safeErrorCode === "stall_restart_pending" && provider.providerStatus === "cancelled") {
+      return this._recoverStalledTurn(current, provider, { now, reusePending: true, cancelFirst: false });
+    }
+
     if (provider.providerStatus === "working") {
+      const providerTurnId = String(provider.turnId || "");
+      const currentTurnId = String(current.currentRunId || "");
+      const providerTokens = Math.max(0, Number(provider.tokensUsed || 0));
+      const providerToolCalls = Math.max(0, Number(provider.toolCallsUsed || 0));
+      const sameTurn = Boolean(providerTurnId && currentTurnId && providerTurnId === currentTurnId);
+      const observedProgress = !sameTurn ||
+        providerTokens > Number(current.currentTurnTokens || 0) ||
+        providerToolCalls > Number(current.currentTurnToolCalls || 0);
+      const progressAt = observedProgress
+        ? now
+        : Number(current.lastProgressAt || current.updatedAt || now);
+
       const tokenBudgetReached =
-        Number(provider.tokensUsed || 0) > 0 &&
+        providerTokens > 0 &&
         current.tokensUsed + Number(provider.tokensUsed || 0) >= current.tokenBudgetTotal;
       const toolBudgetReached =
         current.toolCallBudgetTotal > 0 &&
@@ -470,13 +500,29 @@ export class KeepGoingOrchestrator {
           : { job: saved.job || current, action: "already_updated" };
       }
 
+      if (current.safeErrorCode === "stall_restart_pending" && !observedProgress) {
+        return this._recoverStalledTurn(current, provider, { now, reusePending: true, cancelFirst: true });
+      }
+
+      if (!observedProgress && now - progressAt >= this.stallAfterMs) {
+        return this._recoverStalledTurn(current, provider, { now });
+      }
+
       const refreshed = {
         ...current,
         status: JOB_STATES.WORKING,
-        currentRunId: provider.turnId || current.currentRunId,
+        currentRunId: providerTurnId || current.currentRunId,
+        currentTurnTokens: sameTurn
+          ? Math.max(Number(current.currentTurnTokens || 0), providerTokens)
+          : providerTokens,
+        currentTurnToolCalls: sameTurn
+          ? Math.max(Number(current.currentTurnToolCalls || 0), providerToolCalls)
+          : providerToolCalls,
         continuationLeaseUntil: null,
+        safeErrorCode: observedProgress && current.safeErrorCode === "stall_restart_pending" ? null : current.safeErrorCode,
+        safeErrorMessage: observedProgress && current.safeErrorCode === "stall_restart_pending" ? null : current.safeErrorMessage,
         updatedAt: now,
-        lastProgressAt: now
+        lastProgressAt: progressAt
       };
       const saved = await this.store.compareAndSet(jobId, current.version, refreshed);
       return saved.ok
@@ -551,6 +597,9 @@ export class KeepGoingOrchestrator {
       runId: terminalTurnId || providerId
     });
     assessed.lastAssessedTurnId = terminalTurnId || assessed.lastAssessedTurnId;
+    assessed.currentRunId = terminalTurnId || assessed.currentRunId;
+    assessed.currentTurnTokens = 0;
+    assessed.currentTurnToolCalls = 0;
 
     if (!assessed.continuationNeeded) {
       const saved = await this.store.compareAndSet(jobId, current.version, assessed);
@@ -577,6 +626,133 @@ export class KeepGoingOrchestrator {
     }
 
     return this._sendClaimedContinuation(claimed.job, provider.output);
+  }
+
+  async _recoverStalledTurn(current, provider, {
+    now = this.now(),
+    reusePending = false,
+    cancelFirst = true
+  } = {}) {
+    const providerId = current?.providerSessionId;
+    if (!providerId) return { job: current, action: "stall_recovery_unavailable" };
+
+    const recoveryCount = Math.max(0, Number(current.stallRecoveryCount || 0));
+    if (!reusePending && recoveryCount >= this.maxStallRecoveries) {
+      try {
+        await this.engine.cancelTurn(providerId, "kg-stall-final-" + current.id);
+      } catch {}
+      const failed = {
+        ...current,
+        status: JOB_STATES.FAILED,
+        continuationNeeded: false,
+        continuationLeaseUntil: null,
+        safeErrorCode: "provider_stalled",
+        safeErrorMessage: "KeepGoing stopped after the provider turn repeatedly made no observable progress.",
+        updatedAt: now
+      };
+      const saved = await this.store.compareAndSet(current.id, current.version, failed);
+      return saved.ok
+        ? { job: saved.job, action: "stalled_failed" }
+        : { job: saved.job || current, action: "already_updated" };
+    }
+
+    const key = reusePending && current.continuationIdempotencyKey
+      ? current.continuationIdempotencyKey
+      : stallKey(current.id, provider?.turnId || current.currentRunId || ("recovery-" + (recoveryCount + 1)));
+    const claim = {
+      ...current,
+      status: JOB_STATES.CONTINUING,
+      continuationNeeded: false,
+      continuationLeaseUntil: now + CONTINUATION_LEASE_MS,
+      continuationClaimId: reusePending
+        ? (current.continuationClaimId || crypto.randomUUID())
+        : crypto.randomUUID(),
+      continuationIdempotencyKey: key,
+      stallRecoveryCount: reusePending ? recoveryCount : recoveryCount + 1,
+      safeErrorCode: "stall_recovering",
+      safeErrorMessage: "KeepGoing detected no provider progress and is restarting the stalled turn.",
+      updatedAt: now
+    };
+    const claimed = await this.store.compareAndSet(current.id, current.version, claim);
+    if (!claimed.ok) {
+      return { job: claimed.job || current, action: "already_claimed" };
+    }
+
+    if (cancelFirst) {
+      try {
+        await this.engine.cancelTurn(
+          providerId,
+          ("kg-stall-cancel-" + current.id + "-" + claim.stallRecoveryCount).slice(0, 256)
+        );
+      } catch (error) {
+        if (!isDefinitiveRejection(error)) {
+          const pending = {
+            ...claimed.job,
+            status: JOB_STATES.CONTINUING,
+            continuationLeaseUntil: null,
+            safeErrorCode: "stall_restart_pending",
+            safeErrorMessage: "KeepGoing is retrying recovery of a stalled provider turn.",
+            updatedAt: this.now()
+          };
+          await this.store.compareAndSet(current.id, claimed.job.version, pending);
+          throw error;
+        }
+      }
+    }
+
+    return this._sendStallRestart(claimed.job, provider?.output || "");
+  }
+
+  async _sendStallRestart(claimedJob, previousOutput) {
+    const providerId = claimedJob.providerSessionId;
+    const key = claimedJob.continuationIdempotencyKey;
+    try {
+      await this.engine.sendMessage(
+        providerId,
+        stallRecoveryPrompt(
+          previousOutput,
+          claimedJob.stallRecoveryCount,
+          this.maxStallRecoveries
+        ),
+        key
+      );
+
+      const now = this.now();
+      const working = {
+        ...claimedJob,
+        status: JOB_STATES.WORKING,
+        continuationNeeded: false,
+        continuationLeaseUntil: null,
+        safeErrorCode: null,
+        safeErrorMessage: null,
+        currentRunId: null,
+        currentTurnTokens: 0,
+        currentTurnToolCalls: 0,
+        updatedAt: now,
+        lastProgressAt: now
+      };
+      const saved = await this.store.compareAndSet(
+        claimedJob.id,
+        claimedJob.version,
+        working
+      );
+      if (!saved.ok) {
+        await this._stopOrphanTurnIfCancelled(saved.job, providerId, key);
+        return { job: saved.job || claimedJob, action: "already_updated" };
+      }
+      return { job: saved.job, action: "stall_recovered" };
+    } catch (error) {
+      const pending = {
+        ...claimedJob,
+        status: JOB_STATES.CONTINUING,
+        continuationLeaseUntil: null,
+        safeErrorCode: "stall_restart_pending",
+        safeErrorMessage: "KeepGoing is retrying recovery of a stalled provider turn.",
+        updatedAt: this.now()
+      };
+      await this.store.compareAndSet(claimedJob.id, claimedJob.version, pending);
+      throw error;
+    }
   }
 
   async _recordToolAudit(jobId, itemsResponse) {
@@ -630,6 +806,7 @@ export class KeepGoingOrchestrator {
         key
       );
 
+      const now = this.now();
       const working = {
         ...claimedJob,
         status: JOB_STATES.WORKING,
@@ -637,7 +814,11 @@ export class KeepGoingOrchestrator {
         continuationLeaseUntil: null,
         safeErrorCode: null,
         safeErrorMessage: null,
-        updatedAt: this.now()
+        currentRunId: null,
+        currentTurnTokens: 0,
+        currentTurnToolCalls: 0,
+        updatedAt: now,
+        lastProgressAt: now
       };
       const saved = await this.store.compareAndSet(
         claimedJob.id,
@@ -783,6 +964,26 @@ function startKey(jobId) {
 
 function continuationKey(jobId, turnId) {
   return ("kg-cont-" + jobId + "-" + String(turnId || "unknown")).slice(0, 256);
+}
+
+function stallKey(jobId, turnId) {
+  return ("kg-stall-" + jobId + "-" + String(turnId || "unknown")).slice(0, 256);
+}
+
+function stallRecoveryPrompt(previousOutput, recoveryCount, maxRecoveries) {
+  const checkpoint = String(previousOutput || "").trim().slice(-12_000);
+  return [
+    "KeepGoing stall recovery.",
+    "The previous provider turn made no observable progress for the configured stall window and was stopped.",
+    "Continue the SAME durable job from the existing session state. Do not restart completed work.",
+    `Stall recovery ${recoveryCount} of at most ${maxRecoveries}.`,
+    ...(checkpoint ? ["", "LATEST AVAILABLE CHECKPOINT:", checkpoint] : []),
+    "",
+    "End with exactly one of:",
+    "STATUS: COMPLETED",
+    "STATUS: NEEDS_USER",
+    "STATUS: PARTIAL"
+  ].join("\n");
 }
 
 function sha256(value) {

@@ -277,6 +277,10 @@ function toPatchRow(job, version) {
     continuation_claim_id: job.continuationClaimId,
     continuation_idempotency_key: job.continuationIdempotencyKey,
     last_assessed_turn_id: job.lastAssessedTurnId,
+    current_run_id: job.currentRunId,
+    current_turn_tokens: job.currentTurnTokens,
+    current_turn_tool_calls: job.currentTurnToolCalls,
+    stall_recovery_count: job.stallRecoveryCount,
     start_lease_until: nullableIso(job.startLeaseUntil),
     continuation_lease_until: nullableIso(job.continuationLeaseUntil),
     repeated_output_count: job.repeatedOutputCount,
@@ -313,6 +317,10 @@ function fromRow(row) {
     continuationClaimId: row.continuation_claim_id,
     continuationIdempotencyKey: row.continuation_idempotency_key,
     lastAssessedTurnId: row.last_assessed_turn_id,
+    currentRunId: row.current_run_id || row.provider_session_id,
+    currentTurnTokens: Number(row.current_turn_tokens || 0),
+    currentTurnToolCalls: Number(row.current_turn_tool_calls || 0),
+    stallRecoveryCount: Number(row.stall_recovery_count || 0),
     startLeaseUntil: fromIso(row.start_lease_until),
     continuationLeaseUntil: fromIso(row.continuation_lease_until),
     repeatedOutputCount: Number(row.repeated_output_count),
@@ -322,8 +330,7 @@ function fromRow(row) {
     startedAt: fromIso(row.started_at),
     updatedAt: fromIso(row.updated_at),
     lastProgressAt: fromIso(row.last_progress_at),
-    wallDeadlineAt: fromIso(row.wall_deadline_at),
-    currentRunId: row.provider_session_id
+    wallDeadlineAt: fromIso(row.wall_deadline_at)
   };
 }
 

@@ -19,7 +19,7 @@ Durable correctness
 - Cancel retries on version conflicts, stops a continuation that was in flight, and works on `input_required` jobs. Completed/cancelled/budget-exhausted jobs can never be resurrected (application CAS filter + optional DB trigger).
 - Completion markers are read from agent output only (never the prompt), using the final marker.
 - `resume_persistent_job` no longer wedges permanently after an unconfirmed delivery from an earlier checkpoint.
-- Watchdog: no overlapping passes, failing jobs are deferred instead of starving the queue, jobs unrecoverable after their deadline are dead-lettered as `recovery_failed`, and shutdown drains an in-flight pass.
+- Watchdog: no overlapping passes, failing jobs are deferred instead of starving the queue, jobs unrecoverable after their deadline are dead-lettered as `recovery_failed`, and shutdown drains an in-flight pass. Provider turns that stay `working` without advancing their turn/token/tool progress for the stall window are restarted in the same durable job, with bounded retry count.
 - Provider (30 s) and store (10 s) calls are bounded and classified (`provider_timeout`, `provider_rate_limited`, `store_timeout`, …).
 
 Artifacts and coding
@@ -214,12 +214,13 @@ v1.2 durable engine:
 - optional `OPENAI_WEBHOOK_SECRET` only when a compatible OpenAI webhook event stream is used; watchdog continuation does not require it
 - optional watchdog interval configuration
 
-Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access. For 1.5, also apply `sql/durable_jobs_v1_5.sql` (re-runnable; adds a no-resurrection/owner-immutability trigger and a recovery index; the app works with or without it). `sql/verify_durable_migrations.sql` exercises both against a scratch PostgreSQL database.
+Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access. For 1.5, also apply `sql/durable_jobs_v1_5.sql` (re-runnable; adds the no-resurrection/owner-immutability trigger, recovery index, and four provider-progress fields used by bounded stall recovery). Apply this migration before deploying the 1.5 service code. `sql/verify_durable_migrations.sql` exercises both against a scratch PostgreSQL database.
 
 Optional 1.5 tuning (all have safe defaults):
 - `KEEPGOING_MAX_ACTIVE_JOBS_PRO` / `_BUSINESS` / `_OWNER` (defaults 5 / 15 / 50 running jobs)
 - `KEEPGOING_MCP_RATE_LIMIT_PER_MINUTE` (default 120 per account; 2× per IP)
 - `KEEPGOING_PROVIDER_TIMEOUT_MS` (default 30000), `KEEPGOING_STORE_TIMEOUT_MS` (default 10000)
+- `KEEPGOING_STALL_AFTER_MS` (default 300000 / 5 minutes), `KEEPGOING_MAX_STALL_RECOVERIES` (default 2)
 - `KEEPGOING_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `info`)
 - `KEEPGOING_ALLOW_QUERY_TOKEN=1` — temporary escape hatch to accept `?token=` (not recommended)
 - `KEEPGOING_LEGACY_ALLOW_UNBOUND_READS=1` — temporary escape hatch to let customers read legacy jobs created before owner binding
