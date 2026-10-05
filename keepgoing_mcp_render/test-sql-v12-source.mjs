@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const sql = readFileSync(new URL("./sql/durable_jobs.sql", import.meta.url), "utf8");
+const devAgentMigration = readFileSync(new URL("./sql/dev_agent_engine_tags.sql", import.meta.url), "utf8");
 
 assert.match(sql, /alter table public\.keepgoing_jobs enable row level security;/i);
 assert.match(sql, /revoke all on table public\.keepgoing_jobs from public, anon, authenticated;/i);
@@ -10,7 +11,11 @@ assert.match(sql, /drop constraint if exists keepgoing_jobs_engine_check/i);
 assert.match(sql, /add constraint keepgoing_jobs_engine_check/i);
 assert.match(sql, /agents-dev:c/i);
 assert.match(sql, /engine in \('agents', 'responses'\)/i);
-
+assert.match(devAgentMigration, /drop constraint if exists keepgoing_jobs_engine_check/i);
+assert.match(devAgentMigration, /add constraint keepgoing_jobs_engine_check/i);
+assert.match(devAgentMigration, /engine in \('agents', 'responses'\)/i);
+assert.match(devAgentMigration, /agents-dev:c/i);
+assert.doesNotMatch(devAgentMigration, /drop table|truncate|delete from|revoke|grant/i);
 
 assert.match(sql, /alter table public\.keepgoing_job_events enable row level security;/i);
 assert.match(sql, /revoke all on table public\.keepgoing_job_events from public, anon, authenticated;/i);

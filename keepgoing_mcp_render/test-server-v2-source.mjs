@@ -14,4 +14,8 @@ assert.match(source, /renderDevDashboard/);
 assert.match(source, /app\.get\("\/dev"/);
 assert.match(source, /app\.post\("\/dev\/api\/tasks"/);
 assert.match(source, /devDashboardAccess/);
+assert.match(source, /KEEPGOING_DEV_AGENT_ENABLED/);
+assert.match(source, /v12Access && DEV_AGENT_ENABLED/);
+assert.match(source, /development_agent_enabled: DEV_AGENT_ENABLED/);
+assert.match(source, /developmentAgentEnabled: DEV_AGENT_ENABLED/);
 console.log("server v2 source tests passed");

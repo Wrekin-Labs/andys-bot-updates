@@ -30,6 +30,8 @@ const fetchOk = async (url, init = {}) => {
       durable_engine_enabled: true,
       durable_engine_ready: true,
       durable_store_ready: true,
+      development_agent_enabled: true,
+      development_agent_ready: true,
       openai_webhook_ready: true
     });
   }
@@ -44,6 +46,12 @@ const fetchOk = async (url, init = {}) => {
       issuer: base,
       code_challenge_methods_supported: ["S256"]
     });
+  }
+  if (path === "/dev") {
+    return response(200, "<html><title>KeepGoing Command Center</title><body>Agent fleet</body></html>");
+  }
+  if (path === "/dev/api/me") {
+    return response(401, { error: "token_required" });
   }
   if (path === "/mcp") {
     assert.equal(init.method, "POST");
@@ -71,6 +79,17 @@ assert.equal(ok.ok, true);
 assert.deepEqual(ok.failed, []);
 assert.equal(ok.checks.length, 10);
 
+const devOk = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: fetchOk,
+  requireV12: true,
+  requireDevAgent: true
+});
+assert.equal(devOk.ok, true);
+assert.equal(devOk.checks.length, 12);
+assert.ok(devOk.checks.some((item) => item.name === "development_command_center" && item.ok));
+assert.ok(devOk.checks.some((item) => item.name === "development_api_protected" && item.ok));
+
 const broken = await runDeploymentPreflight({
   baseUrl: base,
   fetchImpl: async (url, init) => {
@@ -92,6 +111,29 @@ const broken = await runDeploymentPreflight({
 });
 assert.equal(broken.ok, false);
 assert.ok(broken.failed.includes("readiness"));
+
+const devDisabled = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path === "/readiness") {
+      return response(200, {
+        ok: true,
+        sell_ready: true,
+        durable_engine_enabled: true,
+        durable_engine_ready: true,
+        durable_store_ready: true,
+        development_agent_enabled: false,
+        development_agent_ready: false,
+        openai_webhook_ready: true
+      });
+    }
+    return fetchOk(url, init);
+  },
+  requireDevAgent: true
+});
+assert.equal(devDisabled.ok, false);
+assert.ok(devDisabled.failed.includes("readiness"));
 
 const optionalChallenge = await runDeploymentPreflight({
   baseUrl: base,

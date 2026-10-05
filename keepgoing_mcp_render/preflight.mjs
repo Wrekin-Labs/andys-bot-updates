@@ -9,6 +9,7 @@ const result = await runDeploymentPreflight({
   baseUrl,
   requireSellReady: args.has("--sell-ready"),
   requireV12: args.has("--v12"),
+  requireDevAgent: args.has("--dev-agent"),
   requireChallenge: args.has("--challenge")
 });
 

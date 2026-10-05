@@ -35,6 +35,7 @@ const OPENAI_APPS_CHALLENGE = process.env.OPENAI_APPS_CHALLENGE || "";
 const OAUTH_CODE_URL = process.env.KEEPGOING_OAUTH_CODE_URL || "";
 
 const V12_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_ENABLED || "");
+const DEV_AGENT_ENABLED = /^(1|true|yes)$/i.test(process.env.KEEPGOING_DEV_AGENT_ENABLED || "");
 const V12_CANARY_ONLY = /^(1|true|yes)$/i.test(process.env.KEEPGOING_V12_CANARY_ONLY || "");
 const V12_SUPABASE_URL = process.env.KEEPGOING_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const V12_SUPABASE_SERVICE_KEY = process.env.KEEPGOING_SUPABASE_SERVICE_KEY || "";
@@ -952,7 +953,7 @@ function setDevDashboardHeaders(res) {
 }
 
 async function devDashboardAccess(req, res) {
-  if (!V12_ENABLED) {
+  if (!DEV_AGENT_ENABLED || !V12_ENABLED) {
     res.status(503).json({ error: "development_agent_not_enabled" });
     return null;
   }
@@ -1415,7 +1416,7 @@ function createMcpServer(access = {}) {
     });
   }
 
-  if (v12Access) {
+  if (v12Access && DEV_AGENT_ENABLED) {
     server.registerTool("start_dev_task", {
       title: "Start autonomous development task",
       description: devTaskToolDescription(),
@@ -1945,7 +1946,7 @@ function createMcpServer(access = {}) {
         _meta: { ...oauthMeta, "openai/profile": true }
       });
 
-      tools.push({
+      if (DEV_AGENT_ENABLED) tools.push({
         name: "start_dev_task",
         title: "Start autonomous development task",
         description: devTaskToolDescription(),
@@ -2771,6 +2772,8 @@ app.get("/readiness", async (_req, res) => {
     durable_engine_enabled: V12_ENABLED,
     durable_engine_ready: v12Configured(),
     durable_store_ready: durableStoreReady,
+    development_agent_enabled: DEV_AGENT_ENABLED,
+    development_agent_ready: Boolean(DEV_AGENT_ENABLED && V12_ENABLED && v12Configured() && durableStoreReady),
     openai_webhook_ready: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET),
     billing_backend_ready: billingBackendReady,
     checkout_ready: checkoutReady,
@@ -2795,6 +2798,8 @@ app.get("/health", (_req, res) => {
     openaiConfigured: Boolean(OPENAI_API_KEY),
     durableEngineEnabled: V12_ENABLED,
     durableEngineReady: v12Configured(),
+    developmentAgentEnabled: DEV_AGENT_ENABLED,
+    developmentAgentReady: Boolean(DEV_AGENT_ENABLED && V12_ENABLED && v12Configured()),
     openaiWebhookConfigured: Boolean(OPENAI_WEBHOOK_SECRET),
     protected: true,
     model: MODEL,

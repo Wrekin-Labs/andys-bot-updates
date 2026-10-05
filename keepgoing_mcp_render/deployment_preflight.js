@@ -3,6 +3,7 @@ export async function runDeploymentPreflight({
   fetchImpl = globalThis.fetch,
   requireSellReady = false,
   requireV12 = false,
+  requireDevAgent = false,
   requireChallenge = false
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
@@ -48,10 +49,16 @@ export async function runDeploymentPreflight({
       if (!readiness.durable_store_ready) throw new Error("durable store is not reachable");
       if (!readiness.openai_webhook_ready) throw new Error("OpenAI webhook is not ready");
     }
+    if (requireDevAgent) {
+      if (!readiness.development_agent_enabled) throw new Error("development agent feature flag is not enabled");
+      if (!readiness.development_agent_ready) throw new Error("development agent runtime is not ready");
+    }
     return {
       sell_ready: Boolean(readiness.sell_ready),
       durable_engine_enabled: Boolean(readiness.durable_engine_enabled),
-      durable_store_ready: Boolean(readiness.durable_store_ready)
+      durable_store_ready: Boolean(readiness.durable_store_ready),
+      development_agent_enabled: Boolean(readiness.development_agent_enabled),
+      development_agent_ready: Boolean(readiness.development_agent_ready)
     };
   });
 
@@ -77,6 +84,26 @@ export async function runDeploymentPreflight({
     if (!methods.includes("S256")) throw new Error("OAuth metadata does not advertise PKCE S256");
     return { issuer: data.issuer, pkce_s256: true };
   });
+
+  if (requireDevAgent) {
+    await check("development_command_center", async () => {
+      const response = await fetchImpl(base + "/dev", { method: "GET" });
+      if (!response.ok) throw new Error("development command center returned " + response.status);
+      const text = await response.text();
+      if (!/KeepGoing Command Center/i.test(text) || !/Agent fleet/i.test(text)) {
+        throw new Error("development command center markup is incomplete");
+      }
+      return { status: response.status, bytes: text.length };
+    });
+
+    await check("development_api_protected", async () => {
+      const response = await fetchImpl(base + "/dev/api/me", { method: "GET" });
+      if (response.status !== 401) {
+        throw new Error("unauthenticated development API request was not rejected with 401");
+      }
+      return { status: response.status };
+    });
+  }
 
   await check("unauthenticated_mcp_rejected", async () => {
     const response = await fetchImpl(base + "/mcp", {
