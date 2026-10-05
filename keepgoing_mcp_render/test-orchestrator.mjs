@@ -417,7 +417,7 @@ async function startJob(kg, beforeCreateSession = null) {
     criteria: [{ id: "AC1", status: "pass", evidence: "npm test" }],
     checks: [{ command: "npm test", exitCode: 0, required: true }],
     risks: [],
-    artifacts: ["/workspace/outputs/changes.patch", "/workspace/outputs/handoff.md"],
+    artifacts: ["/workspace/outputs/changes.patch", "/workspace/outputs/review.md", "/workspace/outputs/handoff.md"],
     next: "handoff"
   };
   const engine = {

@@ -146,7 +146,8 @@ The interface is deliberately KeepGoing-branded:
 - Stop and resume controls.
 - Structured plan/edit/build/test/review progress.
 - Acceptance criteria and verification evidence.
-- Dedicated verified diff view.
+- Dedicated Review tab backed by the required `review.md` artifact plus reported risks.
+- Dedicated verified diff/plan view.
 - Session artifacts list and text preview.
 - Workspace capability panel.
 - Authenticated REST endpoints over the existing durable runtime.

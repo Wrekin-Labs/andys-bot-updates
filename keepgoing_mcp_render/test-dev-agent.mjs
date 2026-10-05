@@ -78,7 +78,7 @@ const progress = {
   })),
   checks: task.verificationCommands.map((command) => ({ command, exitCode: 0, required: true })),
   risks: [],
-  artifacts: [task.patchPath, task.handoffPath],
+  artifacts: [task.patchPath, task.reviewPath, task.handoffPath],
   next: "handoff"
 };
 
@@ -96,6 +96,10 @@ const missingPatch = structuredClone(progress);
 missingPatch.artifacts = [task.handoffPath];
 assert.equal(verificationGate(task, missingPatch).ok, false);
 
+const missingReview = structuredClone(progress);
+missingReview.artifacts = [task.patchPath, task.handoffPath];
+assert.equal(verificationGate(task, missingReview).ok, false);
+
 const serialized = JSON.stringify(progress);
 const output = `checkpoint\nDEV_PROGRESS_JSON: ${serialized}\nSTATUS: COMPLETED`;
 assert.equal(parseDevProgress(output).stage, "completed");
@@ -103,7 +107,7 @@ assert.equal(devCompletionGate(task, output).ok, true);
 assert.equal(devCompletionGate(task, "STATUS: COMPLETED").ok, false);
 
 const engineTag = buildDevEngineTag(task);
-assert.match(engineTag, /^agents-dev:c3:v2:a[0-9a-f]{16}:q[0-9a-f]{16}:p1:n0$/);
+assert.match(engineTag, /^agents-dev:c3:v2:a[0-9a-f]{16}:q[0-9a-f]{16}:p1:n0:r1$/);
 assert.equal(parseDevEngineTag(engineTag).criteriaCount, 3);
 assert.equal(verifyDevTerminalOutput(output, engineTag).ok, true);
 
@@ -151,7 +155,7 @@ const noPatchProgress = {
   criteria: [{ id: "ONLY", status: "pass", evidence: "npm test" }],
   checks: [{ command: "npm test", exitCode: 0, required: true }],
   risks: [],
-  artifacts: ["/workspace/outputs/handoff.md"],
+  artifacts: ["/workspace/outputs/review.md", "/workspace/outputs/handoff.md"],
   next: "done"
 };
 assert.equal(
@@ -196,21 +200,21 @@ assert.equal(planTask.requirePatchArtifact, false);
 assert.ok(planTask.verificationCommands.includes('test -z "$(git status --porcelain=v1 --untracked-files=all)"'));
 assert.match(buildDevJobGoal(planTask), /MODE: PLAN ONLY/);
 assert.match(buildDevDefinitionOfDone(planTask), /plan\.md/);
-assert.match(buildDevEngineTag(planTask), /^agents-dev:c1:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p0:n1$/);
+assert.match(buildDevEngineTag(planTask), /^agents-dev:c1:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p0:n1:r1$/);
 const planProgress = {
   stage: "completed",
   summary: "plan ready",
   criteria: [{ id: "PLAN_AC", status: "pass", evidence: "Repository analysis and plan" }],
   checks: [{ command: 'test -z "$(git status --porcelain=v1 --untracked-files=all)"', exitCode: 0, required: true }],
   risks: [],
-  artifacts: ["/workspace/outputs/plan.md", "/workspace/outputs/handoff.md"],
+  artifacts: ["/workspace/outputs/plan.md", "/workspace/outputs/review.md", "/workspace/outputs/handoff.md"],
   next: "handoff"
 };
 const planOutput = `DEV_PROGRESS_JSON: ${JSON.stringify(planProgress)}\nSTATUS: COMPLETED`;
 assert.equal(verificationGate(planTask, planProgress).ok, true);
 assert.equal(verifyDevTerminalOutput(planOutput, buildDevEngineTag(planTask)).ok, true);
 const planMissingArtifact = structuredClone(planProgress);
-planMissingArtifact.artifacts = ["/workspace/outputs/handoff.md"];
+planMissingArtifact.artifacts = ["/workspace/outputs/review.md", "/workspace/outputs/handoff.md"];
 assert.equal(verificationGate(planTask, planMissingArtifact).ok, false);
 assert.equal(verifyDevTerminalOutput(`DEV_PROGRESS_JSON: ${JSON.stringify(planMissingArtifact)}\nSTATUS: COMPLETED`, buildDevEngineTag(planTask)).ok, false);
 

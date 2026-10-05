@@ -14,7 +14,7 @@ const { task, persistentArgs } = buildStartDevTaskArgs({
 
 assert.equal(persistentArgs.codingWorkspace, true);
 assert.equal(persistentArgs.planOnly, false);
-assert.match(persistentArgs.jobEngine, /^agents-dev:c2:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p1:n0$/);
+assert.match(persistentArgs.jobEngine, /^agents-dev:c2:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p1:n0:r1$/);
 assert.equal(persistentArgs.repositoryUrl, task.repositoryUrl);
 assert.equal(persistentArgs.repositoryRef, task.repositoryRef);
 assert.equal(persistentArgs.clientRequestId, "kg-v2-test");
@@ -34,7 +34,7 @@ const planTaskArgs = buildStartDevTaskArgs({
 });
 assert.equal(planTaskArgs.task.planOnly, true);
 assert.equal(planTaskArgs.persistentArgs.planOnly, true);
-assert.match(planTaskArgs.persistentArgs.jobEngine, /^agents-dev:c1:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p0:n1$/);
+assert.match(planTaskArgs.persistentArgs.jobEngine, /^agents-dev:c1:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p0:n1:r1$/);
 assert.match(planTaskArgs.persistentArgs.goal, /MODE: PLAN ONLY/);
 assert.match(planTaskArgs.persistentArgs.context, /planOnly=true/);
 

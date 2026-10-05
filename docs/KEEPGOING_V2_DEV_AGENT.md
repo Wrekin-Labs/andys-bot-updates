@@ -52,7 +52,7 @@ Completion is also server-gated. Each development job stores a compact task fing
 5. If a check fails, inspect the actual failure, repair it and re-run it.
 6. Repeat until the verification gate passes.
 7. Review the final diff or final plan for correctness, security, regressions and scope creep.
-8. Write progress plus patch/plan and handoff artifacts under `/workspace/outputs`.
+8. Write progress plus patch/plan, `review.md`, and handoff artifacts under `/workspace/outputs`.
 9. Return `STATUS: COMPLETED` only after the verification gate passes.
 
 ## Default safety policy
@@ -141,7 +141,7 @@ The milestone-1 core implements a deterministic verification gate. It rejects co
 - a required verification command is missing or non-zero
 - auto-detected verification reports no required check
 - final completed stage is missing
-- required patch/plan/handoff artifacts are missing
+- required patch/plan, review, or handoff artifacts are missing
 - the reported criterion IDs or explicit verification commands do not match the task fingerprint
 - Plan Only mode does not prove the worktree remained clean
 

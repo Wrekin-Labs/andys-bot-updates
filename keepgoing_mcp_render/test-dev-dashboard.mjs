@@ -12,6 +12,8 @@ assert.match(html, /data-view="skills"/);
 assert.match(html, /security_review/);
 assert.match(html, /skills:selectedSkills/);
 assert.match(html, /data-view="integrations"/);
+assert.match(html, /data-tab="review"/);
+assert.match(html, /review\.md/);
 assert.match(html, /data-tab="diff"/);
 assert.match(html, /changes\.patch/);
 assert.match(html, /ci_repair/);
