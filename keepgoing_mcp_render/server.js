@@ -11,6 +11,7 @@ import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { createOpenAIWebhookVerifier, createWebhookProcessor } from "./webhook_processor.js";
 import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
+import { buildStartDevTaskArgs, devTaskToolDescription } from "./dev_task_adapter.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -1102,6 +1103,15 @@ async function startPersistentJobCompat(args, access) {
   });
 }
 
+
+async function startDevTaskCompat(args, access) {
+  if (!v12ForAccess(access)) {
+    throw new Error("Autonomous development tasks require KeepGoing durable v1.2+");
+  }
+  const { persistentArgs } = buildStartDevTaskArgs(args);
+  return startPersistentJobCompat(persistentArgs, access);
+}
+
 async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
   if (!v12ForAccess(access)) throw new Error("Durable job listing requires KeepGoing v1.2");
   return getV12Runtime().service.list(
@@ -1226,6 +1236,44 @@ function createMcpServer(access = {}) {
         content: [{ type: "text", text: JSON.stringify(profile) }],
         structuredContent: profile
       };
+    });
+  }
+
+  if (v12Access) {
+    server.registerTool("start_dev_task", {
+      title: "Start autonomous development task",
+      description: devTaskToolDescription(),
+      inputSchema: {
+        goal: z.string().min(1).max(12000),
+        repositoryUrl: z.string().url().max(500),
+        repositoryRef: z.string().min(1).max(200).default("main"),
+        acceptanceCriteria: z.array(z.string().min(1).max(1000)).min(1).max(20),
+        verificationCommands: z.array(z.string().min(1).max(1000)).max(12).optional(),
+        mode: z.enum(["safe","balanced","max"]).default("max"),
+        allowWeb: z.boolean().default(true),
+        clientRequestId: z.string().min(1).max(200).optional(),
+        context: z.string().max(4000).optional(),
+        workspaceFiles: z.array(z.object({
+          path: z.string().min(1).max(180),
+          content: z.string().max(32000)
+        })).max(8).optional()
+      },
+      outputSchema: {
+        job_id: z.string(),
+        status: z.string(),
+        duplicate: z.boolean().optional(),
+        message: z.string()
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    }, async (args) => {
+      try {
+        const result = await startDevTaskCompat(args, access);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
     });
   }
 
@@ -1716,6 +1764,55 @@ function createMcpServer(access = {}) {
           openWorldHint: false
         },
         _meta: { ...oauthMeta, "openai/profile": true }
+      });
+
+      tools.push({
+        name: "start_dev_task",
+        title: "Start autonomous development task",
+        description: devTaskToolDescription(),
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: { type: "string", minLength: 1, maxLength: 12000 },
+            repositoryUrl: { type: "string", format: "uri", maxLength: 500 },
+            repositoryRef: { type: "string", minLength: 1, maxLength: 200, default: "main" },
+            acceptanceCriteria: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", minLength: 1, maxLength: 1000 } },
+            verificationCommands: { type: "array", maxItems: 12, items: { type: "string", minLength: 1, maxLength: 1000 } },
+            mode: { type: "string", enum: ["safe", "balanced", "max"], default: "max" },
+            allowWeb: { type: "boolean", default: true },
+            clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
+            context: { type: "string", maxLength: 4000 },
+            workspaceFiles: {
+              type: "array",
+              maxItems: 8,
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 180 },
+                  content: { type: "string", maxLength: 32000 }
+                },
+                required: ["path", "content"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["goal", "repositoryUrl", "acceptanceCriteria"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            duplicate: { type: "boolean" },
+            message: { type: "string" }
+          },
+          required: ["job_id", "status", "message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: oauthMeta
       });
 
       tools.push({
