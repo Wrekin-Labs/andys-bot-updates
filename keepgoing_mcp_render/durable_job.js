@@ -1,4 +1,7 @@
-const STATUS_RE = /(?:^|\n)\s*STATUS:\s*(COMPLETED|NEEDS_USER|PARTIAL)\s*(?:\n|$)/i;
+// Global so parseCompletionMarker can take the LAST marker line. Models often
+// restate the allowed options ("End with one of: STATUS: COMPLETED ...") before
+// giving their real verdict, so the final marker is the authoritative one.
+const STATUS_RE = /(?:^|\n)[ \t]*STATUS:[ \t]*(COMPLETED|NEEDS_USER|PARTIAL)[ \t]*\r?(?=\n|$)/gi;
 
 export const JOB_STATES = Object.freeze({
   QUEUED: "queued",
@@ -11,9 +14,33 @@ export const JOB_STATES = Object.freeze({
   BUDGET_EXHAUSTED: "budget_exhausted"
 });
 
+// States a job can never leave once reached. FAILED is absorbing too, with one
+// deliberate exception: a start that failed before any provider session was
+// attached (attempt 0, no session) may be retried by the same client request.
+export const ABSORBING_STATES = Object.freeze(new Set([
+  JOB_STATES.COMPLETED,
+  JOB_STATES.CANCELLED,
+  JOB_STATES.BUDGET_EXHAUSTED
+]));
+
+export function isLegalTransition(current, next) {
+  if (!current || !next) return false;
+  const from = current.status;
+  const to = next.status;
+  if (from === to) return true;
+  if (ABSORBING_STATES.has(from)) return false;
+  if (from === JOB_STATES.FAILED) {
+    return !current.providerSessionId &&
+      Number(current.attempt || 0) === 0 &&
+      (to === JOB_STATES.QUEUED || to === JOB_STATES.WORKING);
+  }
+  return Object.values(JOB_STATES).includes(to);
+}
+
 export function parseCompletionMarker(output = "") {
-  const match = String(output || "").match(STATUS_RE);
-  return match ? match[1].toUpperCase() : null;
+  let last = null;
+  for (const match of String(output || "").matchAll(STATUS_RE)) last = match[1];
+  return last ? last.toUpperCase() : null;
 }
 
 export function normaliseLimits(input = {}) {

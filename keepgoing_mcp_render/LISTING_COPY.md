@@ -1,6 +1,6 @@
 # KeepGoing — Final Plugin Listing Copy
 
-Release candidate: `1.2.0-beta.231`
+Release candidate: `1.5.0-beta.1`
 
 ## Logo
 
@@ -33,6 +33,8 @@ It turns a substantial objective into one durable job with its own stable job ID
 
 KeepGoing is useful for longer research, comparisons, debugging, structured build work, and other multi-step tasks where continuity matters.
 
+For coding jobs, an opt-in coding workspace can clone a **public GitHub repository** into an isolated hosted sandbox. Beta.24 can also overlay a small set of explicitly selected task-relevant text files that are not yet in the repository. The durable Agent can then inspect the real files, edit locally, run tests and produce a patch/report instead of being limited to prompt context. This first coding mode does not receive GitHub write credentials, does not access private repositories, and does not push changes.
+
 The service includes bounded continuation limits, duplicate-job protection, recovery after transient service failures, owner-scoped job access, OAuth authentication, and a server-side watchdog that can keep supported work progressing within configured safety and cost limits.
 
 KeepGoing does not bypass ChatGPT or OpenAI safeguards, does not gain access to other accounts or apps unless those capabilities are explicitly available to the job, and does not create new ChatGPT conversation messages on its own.
@@ -52,6 +54,8 @@ KeepGoing gives substantial AI work a persistent job ID so ChatGPT can continue,
 - Resume the same job after the missing input is supplied
 - Bound continuation by attempts, tokens, tool calls, and time
 - Recover from transient provider/session-start failures
+- Opt into a real coding workspace for public GitHub repositories
+- Inspect/edit/test code locally without granting GitHub write credentials
 - Keep jobs scoped to the authenticated account
 
 ## Suggested starter prompts

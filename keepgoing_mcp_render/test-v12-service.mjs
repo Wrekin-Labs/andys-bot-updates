@@ -373,13 +373,204 @@ assert.equal(proLimits.max_total_tool_calls, 3);
 const offlineLimits = planLimits("pro", false);
 assert.equal(offlineLimits.max_total_tool_calls, 0);
 
-const externalOnly = planLimits("pro", false, true);
-assert.equal(externalOnly.max_total_tool_calls, 3);
 
-const ownerToolLimits = planLimits("owner", false, true);
-assert.equal(ownerToolLimits.max_attempts, 12);
-assert.equal(ownerToolLimits.max_total_tokens, 60_000);
-assert.equal(ownerToolLimits.max_total_tool_calls, 40);
+
+// Coding workspace is explicit, forwarded to the provider, and has a shorter
+// wall-clock budget to bound hosted-container cost.
+{
+  const codeStore = new MemoryJobStore();
+  let createdOptions = null;
+  const codeEngine = {
+    async createSession(options) {
+      createdOptions = options;
+      return { id: "sess_code_workspace" };
+    },
+    async cancelTurn() {}
+  };
+  let codeClock = 300_000;
+  const codeOrchestrator = new KeepGoingOrchestrator({
+    engine: codeEngine,
+    store: codeStore,
+    now: () => ++codeClock,
+    sleep: async () => {}
+  });
+  const codeService = createV12Service({
+    engine: codeEngine,
+    store: codeStore,
+    orchestrator: codeOrchestrator,
+    now: () => ++codeClock,
+    sleep: async () => {}
+  });
+
+  const codeJob = await codeService.start({
+    goal: "inspect and improve the project",
+    definitionOfDone: "tests pass and changes are explained",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code",
+    codingWorkspace: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  });
+  assert.equal(codeJob.status, JOB_STATES.WORKING);
+  assert.deepEqual(createdOptions.workspace, {
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay.git",
+    repositoryRef: "main",
+    files: []
+  });
+  assert.match(createdOptions.instructions, /\/workspace\/project/);
+  assert.match(createdOptions.instructions, /Do not attempt to push to GitHub/);
+
+  const localFileJob = await codeService.start({
+    goal: "work with selected local file",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code-files",
+    codingWorkspace: true,
+    workspaceFiles: [{
+      path: "src/local-only.js",
+      content: "export const localOnly = 1;\n"
+    }]
+  });
+  assert.equal(localFileJob.status, JOB_STATES.WORKING);
+  assert.deepEqual(createdOptions.workspace.files, [{
+    path: "src/local-only.js",
+    content: "export const localOnly = 1;\n"
+  }]);
+
+  await assert.rejects(
+    () => codeService.start({
+      goal: "bad repo configuration",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-bad",
+      repositoryUrl: "https://github.com/chipblock2/project-relay"
+    }),
+    /require codingWorkspace=true/
+  );
+
+  let invalidQuotaReservations = 0;
+  await assert.rejects(
+    () => codeService.start({
+      goal: "invalid workspace should fail before quota",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-invalid",
+      codingWorkspace: true,
+      repositoryUrl: "https://example.com/not/github",
+      beforeCreateSession: async () => { invalidQuotaReservations++; }
+    }),
+    /github\.com/
+  );
+  assert.equal(invalidQuotaReservations, 0);
+  assert.equal(
+    await codeStore.findByRequest("owner-code", "req-code-invalid"),
+    null
+  );
+
+  let secretFileQuota = 0;
+  await assert.rejects(
+    () => codeService.start({
+      goal: "unsafe selected file",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-secret",
+      codingWorkspace: true,
+      workspaceFiles: [{ path: ".env", content: "example" }],
+      beforeCreateSession: async () => { secretFileQuota++; }
+    }),
+    /(not allowed for inline handoff|safe relative project path)/
+  );
+  assert.equal(secretFileQuota, 0);
+  assert.equal(
+    await codeStore.findByRequest("owner-code", "req-code-secret"),
+    null
+  );
+}
+
+// Coding artifacts are job-owner scoped and only /workspace/outputs is exposed.
+{
+  const artifactStore = new MemoryJobStore();
+  const artifactEngine = {
+    async listArtifacts() {
+      return {
+        data: [
+          {
+            id: "artifact_patch",
+            path: "/workspace/outputs/fix.patch",
+            size_bytes: 123,
+            turn_id: "turn_artifact"
+          },
+          {
+            id: "artifact_internal",
+            path: "/workspace/project/.env",
+            size_bytes: 20,
+            turn_id: "turn_artifact"
+          }
+        ]
+      };
+    },
+    async readArtifactText(_sessionId, artifactId) {
+      return {
+        artifact: {
+          id: artifactId,
+          path: "/workspace/outputs/fix.patch",
+          size_bytes: 123
+        },
+        text: "diff --git a/a b/a\n"
+      };
+    }
+  };
+  const artifactOrchestrator = {
+    async cancel() { throw new Error("not used"); }
+  };
+  const artifactService = createV12Service({
+    engine: artifactEngine,
+    store: artifactStore,
+    orchestrator: artifactOrchestrator
+  });
+  const artifactJob = newJobRecord({
+    id: "kgj_33333333333333333333333333333333",
+    ownerSubjectHash: "artifact-owner",
+    now: 40_000
+  });
+  artifactJob.status = JOB_STATES.COMPLETED;
+  artifactJob.providerSessionId = "sess_artifacts";
+  await artifactStore.createOrGet({
+    job: artifactJob,
+    ownerSubjectHash: artifactJob.ownerSubjectHash
+  });
+
+  const listedArtifacts = await artifactService.artifacts(
+    artifactJob.id,
+    "artifact-owner",
+    false,
+    50
+  );
+  assert.equal(listedArtifacts.artifacts.length, 1);
+  assert.equal(listedArtifacts.artifacts[0].artifact_id, "artifact_patch");
+  assert.equal(listedArtifacts.artifacts[0].path, "/workspace/outputs/fix.patch");
+
+  const readArtifact = await artifactService.readArtifact(
+    artifactJob.id,
+    "artifact_patch",
+    "artifact-owner"
+  );
+  assert.match(readArtifact.text, /^diff --git/);
+
+  await assert.rejects(
+    () => artifactService.artifacts(artifactJob.id, "other-owner"),
+    /not found/i
+  );
+  await assert.rejects(
+    () => artifactService.readArtifact(artifactJob.id, "artifact_patch", "other-owner"),
+    /not found/i
+  );
+}
+
+const proCodingLimits = planLimits("pro", true, true);
+assert.equal(proCodingLimits.max_wall_seconds, 30 * 60);
+assert.equal(proCodingLimits.max_total_tool_calls, 3);
+
+const businessCodingLimits = planLimits("business", true, true);
+assert.equal(businessCodingLimits.max_wall_seconds, 60 * 60);
+assert.equal(businessCodingLimits.max_total_tool_calls, 5);
 
 console.log("v1.2 service tests passed");
 

@@ -351,4 +351,49 @@ async function startJob(kg, beforeCreateSession = null) {
   assert.equal(new Set(startKeys).size, 1);
 }
 
+
+
+// Coding workspace survives transient provider start retries.
+{
+  const store = new MemoryJobStore();
+  const workspaces = [];
+  let creates = 0;
+  const engine = {
+    async createSession(options = {}) {
+      creates++;
+      workspaces.push(options.workspace);
+      if (creates === 1) {
+        const error = new Error("temporary provider failure");
+        error.status = 503;
+        throw error;
+      }
+      return { id: "sess_workspace_retry", status: "in_progress" };
+    },
+    async findSessionByMetadata() { return null; },
+    async cancelTurn() {}
+  };
+  let clock = 200_000;
+  const kg = new KeepGoingOrchestrator({
+    engine,
+    store,
+    now: () => ++clock,
+    sleep: async () => {}
+  });
+  const workspace = {
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  };
+  const started = await kg.start({
+    initialPrompt: "fix it",
+    instructions: "use workspace",
+    ownerSubjectHash: "owner-workspace",
+    clientRequestId: "req-workspace",
+    workspace
+  });
+  assert.equal(started.job.status, JOB_STATES.WORKING);
+  assert.equal(creates, 2);
+  assert.deepEqual(workspaces, [workspace, workspace]);
+}
+
 console.log("orchestrator tests passed");

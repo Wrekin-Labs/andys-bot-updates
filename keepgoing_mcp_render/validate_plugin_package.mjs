@@ -139,7 +139,7 @@ const serverUrl = validateHttps("MCP server URL", server.url);
 if (!serverUrl.pathname.endsWith("/mcp")) fail("MCP server URL must end in /mcp");
 
 const skill = fs.readFileSync(skillPath, "utf8");
-if (!skill.startsWith("---\n")) fail("SKILL.md must start with YAML front matter");
+if (!/^---\r?\n/.test(skill)) fail("SKILL.md must start with YAML front matter");
 if (!/^name:\s*\S+/m.test(skill) || !/^description:\s*.+/m.test(skill)) {
   fail("SKILL.md front matter requires name and description");
 }

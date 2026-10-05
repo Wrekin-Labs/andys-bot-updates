@@ -1,6 +1,38 @@
-# KeepGoing v1.2 beta
+# KeepGoing v1.5 beta
 
-**Current beta:** `1.2.0-beta.22` — watchdog-first production durability, idempotent/recoverable job startup, upload-ready directory metadata and review cases, owner auto-continue, secure external PayPal checkout/restart recovery, completion semantics and runtime hardening.
+**Current beta:** `1.5.0-beta.1` (artifact-finalisation line) — durable multi-turn jobs, public-GitHub coding workspaces, bounded selected-file handoff, checksummed artifact manifests and job reports, alongside watchdog-first recovery, idempotent startup/continuation, owner auto-continue, secure external PayPal checkout and runtime hardening.
+
+The release version lives in `package.json` only; `server.js`, `/version`, `/readiness` and `plugin.json` (checked by tests) follow it.
+
+## What's new in 1.5.0-beta.1
+
+Security
+- Legacy (v1.1) jobs are bound to their owner via Responses metadata; get/wait/cancel refuse other accounts' ids. Previously any authenticated customer could read or cancel any response id in KeepGoing's OpenAI project.
+- Durable owner identity fails closed instead of falling back to a shared tier-wide owner.
+- Query-string tokens (`/mcp?token=`) are refused unless `KEEPGOING_ALLOW_QUERY_TOKEN=1`.
+- Tool errors are client-safe: KeepGoing validation messages pass through, provider/store internals are replaced by a generic message with a request reference.
+- Stripe webhooks accept every `v1` signature during secret rotation.
+- Per-IP and per-account MCP rate limits; per-account caps on concurrently running jobs.
+
+Durable correctness
+- Start requests without `clientRequestId` derive their idempotency key from the JSON-RPC id **and** the arguments (10-minute window). The old key used the JSON-RPC id alone, so an unrelated later job could silently return an earlier one.
+- Cancel retries on version conflicts, stops a continuation that was in flight, and works on `input_required` jobs. Completed/cancelled/budget-exhausted jobs can never be resurrected (application CAS filter + optional DB trigger).
+- Completion markers are read from agent output only (never the prompt), using the final marker.
+- `resume_persistent_job` no longer wedges permanently after an unconfirmed delivery from an earlier checkpoint.
+- Watchdog: no overlapping passes, failing jobs are deferred instead of starving the queue, jobs unrecoverable after their deadline are dead-lettered as `recovery_failed`, and shutdown drains an in-flight pass.
+- Provider (30 s) and store (10 s) calls are bounded and classified (`provider_timeout`, `provider_rate_limited`, `store_timeout`, …).
+
+Artifacts and coding
+- Deterministic artifact manifest (sorted; name, MIME type, size, `readable` flag); strict `/workspace/outputs/` path validation (no `..`, no directory entries).
+- `read_job_artifact` streams with a hard 500 KB cap, rejects binary content, and returns a SHA-256 checksum.
+- New read-only `get_job_report` tool: status, progress, budget diagnostics, checksummed result excerpt, artifact manifest and next step.
+- Coding jobs are told to treat repository content as untrusted and to finish with `/workspace/outputs/changes.patch` and `REPORT.md`.
+- Wider credential-file rejection for selected-file handoff (`.netrc`, `.git-credentials`, `.ssh/`, `.aws/`, keystores, Terraform state, service-account JSON…).
+
+Operations
+- Structured JSON logs (`logger.js`) with request ids and secret redaction; startup configuration validation (`config_check.js`) that logs variable names, never values.
+- `/version` capability endpoint; `/readiness` adds `release`, `config_ok`, `watchdog`.
+- `npm run preflight -- --v12` now requires the watchdog (webhook only with `--webhook`); `--release=<version>` catches stale deployments.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -42,15 +74,62 @@ Once the durable job starts, the server-side webhook/watchdog path advances `STA
 
 Never share an activation token, OAuth token or other account credential.
 
+## Coding workspace (beta.23)
+
+Coding jobs no longer have to rely only on prompt context.
+
+Set `codingWorkspace=true` on `start_persistent_job` or `continue_until_done`. Optionally provide:
+
+- `repositoryUrl` — a **public** `https://github.com/owner/repo` URL.
+- `repositoryRef` — an optional safe branch, tag or commit-like Git ref.
+
+KeepGoing creates the smallest OpenAI-hosted sandbox, clones the repo into `/workspace/project`, and keeps that workspace across turns in the durable Agent session. The Agent can inspect files, edit locally, run tests and write useful patch/report outputs under `/workspace/outputs`.
+
+Safety boundary for this first release:
+
+- public GitHub repositories only;
+- embedded GitHub usernames/passwords/tokens in URLs are rejected;
+- no private-repository credential flow;
+- no GitHub push credentials are supplied;
+- the Agent is explicitly told not to push;
+- sandbox outbound networking is restricted to common source/package hosts;
+- local Bash/apply-patch work does not consume the 3/5 external web/MCP/function-call allowance;
+- failed shell commands still prevent a false `COMPLETED` result.
+
+Hosted coding workspaces have shorter wall-clock ceilings to bound container cost: Pro 30 minutes; Business/owner 60 minutes.
+
+### Selected local/uncommitted files (beta.24)
+
+When a coding task depends on text files that are not yet in the public repository, the foreground client can explicitly pass `workspaceFiles` with only the task-relevant files already available in the current task context.
+
+Limits:
+- up to 8 files;
+- up to 32 KB UTF-8 text per file;
+- up to 128 KB total;
+- safe relative project paths only;
+- selected files are overlaid into `/workspace/project` after the repository checkout;
+- high-risk key/config filename patterns are rejected;
+- validation happens before durable reservation/quota use;
+- the file bodies are sent in the provider session-creation request and are not written into KeepGoing's durable job database.
+
+This is a bounded handoff, not general filesystem access. KeepGoing still cannot browse arbitrary files on the user's computer.
+
+Files intentionally written by the Agent under `/workspace/outputs` are published by the hosted session as immutable artifacts after a completed turn. KeepGoing exposes:
+- `list_job_artifacts` — safe metadata for published output files owned by that job.
+- `read_job_artifact` — reads small text artifacts such as patches, diffs, Markdown, JSON or logs (up to 512 KB).
+
+Files outside `/workspace/outputs` are not exposed by these tools.
+
+
 ## Plans and technical limits
 
 - Free: 3 jobs/month (rollout after paid beta).
 - Pro: £7.99/month, 100 jobs/month, up to 3 web/tool calls per durable job.
 - Business: £29/month, 500 jobs/month, up to 5 web/tool calls per durable job.
 
-v1.2 also applies aggregate per-job continuation budgets:
-- Pro: up to 6 turns/attempts, 20,000 aggregate model tokens, 2-hour wall-clock window.
-- Business: up to 8 turns/attempts, 30,000 aggregate model tokens, 4-hour wall-clock window.
+The durable engine also applies aggregate per-job continuation budgets:
+- Pro: up to 6 turns/attempts, 20,000 aggregate model tokens, 2-hour wall-clock window for normal jobs; 30 minutes when a coding workspace is enabled.
+- Business: up to 8 turns/attempts, 30,000 aggregate model tokens, 4-hour wall-clock window for normal jobs; 60 minutes when a coding workspace is enabled.
 
 These are safety/cost ceilings, not promised consumption targets. A job stops earlier when completed or when user input is genuinely required.
 
@@ -63,6 +142,9 @@ These are safety/cost ceilings, not promised consumption targets. A job stops ea
 - `cancel_persistent_job` — cancel the durable job/provider turn.
 - `list_persistent_jobs` — list the authenticated customer's own recent/active jobs using safe metadata only.
 - `resume_persistent_job` — deliver required user input to the same durable job with race-safe/idempotent delivery.
+- `list_job_artifacts` — list patch/report artifacts published by an owned coding job.
+- `read_job_artifact` — read a small text patch/report artifact (≤ 500 KB) from an owned coding job, with SHA-256.
+- `get_job_report` — read-only, deterministic summary of an owned job (status, diagnostics, checksummed result excerpt, artifact manifest, next step).
 
 ## Durable states
 
@@ -87,6 +169,7 @@ The server validates that marker against provider turn state and tool failures; 
 - `/` — public informational/plugin landing page (no subscription transaction UI)
 - `/health` — lightweight process/config health
 - `/readiness` — production readiness, including live durable-store reachability when v1.2 is enabled
+- `/version` — release, engine, tool names, limits and feature flags for support/compatibility checks (no account data)
 - `/mcp` — protected MCP endpoint
 - `/openai/webhook` — signed OpenAI Agents session webhook receiver (v1.2)
 - `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience
@@ -131,7 +214,15 @@ v1.2 durable engine:
 - optional `OPENAI_WEBHOOK_SECRET` only when a compatible OpenAI webhook event stream is used; watchdog continuation does not require it
 - optional watchdog interval configuration
 
-Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
+Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access. For 1.5, also apply `sql/durable_jobs_v1_5.sql` (re-runnable; adds a no-resurrection/owner-immutability trigger and a recovery index; the app works with or without it). `sql/verify_durable_migrations.sql` exercises both against a scratch PostgreSQL database.
+
+Optional 1.5 tuning (all have safe defaults):
+- `KEEPGOING_MAX_ACTIVE_JOBS_PRO` / `_BUSINESS` / `_OWNER` (defaults 5 / 15 / 50 running jobs)
+- `KEEPGOING_MCP_RATE_LIMIT_PER_MINUTE` (default 120 per account; 2× per IP)
+- `KEEPGOING_PROVIDER_TIMEOUT_MS` (default 30000), `KEEPGOING_STORE_TIMEOUT_MS` (default 10000)
+- `KEEPGOING_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `info`)
+- `KEEPGOING_ALLOW_QUERY_TOKEN=1` — temporary escape hatch to accept `?token=` (not recommended)
+- `KEEPGOING_LEGACY_ALLOW_UNBOUND_READS=1` — temporary escape hatch to let customers read legacy jobs created before owner binding
 
 PayPal live checkout:
 - `PAYPAL_MODE=live`
@@ -147,7 +238,9 @@ PayPal live checkout:
 - Signed OpenAI webhooks are verified before processing.
 - Webhook event IDs are deduplicated.
 - The watchdog repairs missed webhook/poll progress without blindly creating a duplicate provider session.
-- Active jobs have hard attempt, token, tool-call and wall-clock limits.
+- Active jobs have hard attempt, token, external-tool-call and wall-clock limits.
+- Coding workspaces use a restricted outbound network and reject repository URLs containing credentials.
+- Coding workspace shell/apply-patch operations are local sandbox work, not counted as paid web/MCP/function calls.
 - Durable metadata retention is bounded; active jobs are not deleted by retention cleanup.
 - The durable database stores orchestration metadata/hashes rather than raw prompts/model output.
 - Sensitive HTTP responses use no-store caching where appropriate.
@@ -183,7 +276,9 @@ Before enabling v1.2 for paid customers, verify:
 
 ## Current commercial beta status
 
-As of the beta.22 candidate:
+Production evidence below was recorded for the beta.24 candidate. It has **not** been re-collected for 1.5.0-beta.1; repeat the release checks above on the 1.5 deployment before relying on it.
+
+As of the beta.24 candidate:
 - OAuth connection is live and verified with the owner account.
 - Durable engine, durable store and watchdog recovery are live with owner-canary mode disabled.
 - Live durability drills have passed, including multi-turn continuation, watchdog recovery and launch smoke testing.
@@ -193,6 +288,8 @@ As of the beta.22 candidate:
 - Automatic subscription-token provisioning and cancellation/suspension revocation are implemented. PayPal activation claims are bound to a random checkout-specific `custom_id`, so a subscription ID alone cannot rotate access.
 - The signed OpenAI webhook endpoint remains available as an optional accelerator; the tested watchdog is the production durability mechanism for the current Agents-session engine.
 - `/readiness` reports no commercial blockers and `sell_ready: true` when the production dependencies are healthy.
+- Beta.23 adds the opt-in public-GitHub coding workspace so durable coding jobs can inspect/edit/test real files instead of failing with a no-files tooling limit.
+- Beta.24 adds explicit selected-file handoff so a small set of task-relevant local/uncommitted UTF-8 files can be overlaid into the hosted coding workspace without broad PC access.
 - Public directory submission/approval, reviewer credentials and final publisher/domain verification remain external release steps and must not be reported as completed until actually approved.
 ## Public-plugin commerce boundary
 

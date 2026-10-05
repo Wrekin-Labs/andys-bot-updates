@@ -1,5 +1,6 @@
 import express from "express";
 import crypto from "crypto";
+import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -13,10 +14,22 @@ import { createWatchdog } from "./watchdog.js";
 import { createV12Service } from "./v12_service.js";
 import { createToolProfileRegistry } from "./tool_profiles.js";
 import { createGithubWorker, createGithubWorkerMcpServer, normaliseRepoList } from "./github_worker.js";
+import { createLegacyEngine } from "./legacy_engine.js";
+import { log } from "./logger.js";
+import { boundedEnvInt, validateEnvironment } from "./config_check.js";
+import {
+  clientSafeError,
+  fallbackStartRequestIds,
+  ownerSubjectHash,
+  redactForLog,
+  verifyStripeSignature
+} from "./security_utils.js";
 
 const app = express();
 app.disable("x-powered-by");
-const APP_VERSION = "1.2.0-beta.23";
+// Single source of truth for the release version: package.json.
+const APP_VERSION = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
+const LEGACY_ENGINE_VERSION = "1.1.0";
 const ICON_PNG_FILE = fileURLToPath(new URL("./assets/keepgoing-icon.png", import.meta.url));
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -45,7 +58,7 @@ const V12_DURABLE_STORE_URL = process.env.KEEPGOING_DURABLE_STORE_URL || (
 );
 const V12_DURABLE_STORE_TOKEN = process.env.KEEPGOING_DURABLE_STORE_TOKEN || BILLING_INGEST_TOKEN;
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || "";
-const V12_WATCHDOG_INTERVAL_MS = Math.max(10_000, Number(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS || 15_000));
+const V12_WATCHDOG_INTERVAL_MS = boundedEnvInt(process.env.KEEPGOING_V12_WATCHDOG_INTERVAL_MS, 15_000, { min: 10_000, max: 3_600_000 });
 const TOOL_PROFILES_JSON = process.env.KEEPGOING_TOOL_PROFILES_JSON || "";
 const WORKER_MCP_SECRET = process.env.KEEPGOING_WORKER_MCP_SECRET || "";
 const WORKER_MCP_URL = (process.env.KEEPGOING_WORKER_MCP_URL || (PUBLIC_BASE_URL + "/worker-mcp")).replace(/\/$/, "");
@@ -79,28 +92,36 @@ let paypalSetupPromise = null;
 let paypalSetupComplete = false;
 let paypalSetupError = "";
 
+// Request correlation id. Registered before every route, including the raw-body
+// webhooks, so all log lines and client-safe errors can carry it.
+app.use((req, res, next) => {
+  const supplied = String(req.headers["x-request-id"] || "").trim();
+  const requestId = /^[A-Za-z0-9._:-]{1,100}$/.test(supplied)
+    ? supplied
+    : crypto.randomUUID();
+  req.keepgoingRequestId = requestId;
+  res.set("X-Request-Id", requestId);
+  next();
+});
+
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   if (!STRIPE_WEBHOOK_SECRET) return res.status(503).send("Stripe webhook not configured");
-  const header = String(req.headers["stripe-signature"] || "");
-  const parts = Object.fromEntries(header.split(",").map((p) => p.split("=", 2)));
-  const timestamp = parts.t || "";
-  const signature = parts.v1 || "";
-  if (!timestamp || !signature) return res.status(400).send("Invalid webhook signature");
-
-  const age = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
-  if (!Number.isFinite(age) || age > 300) return res.status(400).send("Webhook timestamp outside tolerance");
-
-  const payload = req.body.toString("utf8");
-  const expected = crypto
-    .createHmac("sha256", STRIPE_WEBHOOK_SECRET)
-    .update(timestamp + "." + payload, "utf8")
-    .digest("hex");
-
-  let verified = false;
-  try {
-    verified = crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
-  } catch {}
-  if (!verified) return res.status(400).send("Invalid webhook signature");
+  const payload = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+  // Accepts every v1 signature in the header (Stripe sends several during a
+  // secret rotation) and enforces the 5-minute replay tolerance.
+  const signatureCheck = verifyStripeSignature({
+    header: String(req.headers["stripe-signature"] || ""),
+    payload,
+    secret: STRIPE_WEBHOOK_SECRET,
+    toleranceSeconds: 300
+  });
+  if (!signatureCheck.ok) {
+    return res.status(400).send(
+      signatureCheck.reason === "timestamp_outside_tolerance"
+        ? "Webhook timestamp outside tolerance"
+        : "Invalid webhook signature"
+    );
+  }
 
   let event;
   try { event = JSON.parse(payload); }
@@ -116,11 +137,11 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
   ]);
 
   if (relevant.has(event.type)) {
-    console.log("stripe_event", event.type, event.data?.object?.id || "");
+    log.info("stripe_event", { type: event.type, object_id: event.data?.object?.id || "", request_id: req.keepgoingRequestId });
     try {
       await forwardBillingEvent("stripe", event.type, event.data?.object || {}, null);
     } catch (error) {
-      console.error("stripe_billing_ingest_error", safeLogError(error), req.keepgoingRequestId || "");
+      log.error("stripe_billing_ingest_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
       return res.status(500).json({ error: "billing_ingest_error" });
     }
   }
@@ -132,7 +153,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
   try {
     await ensurePayPalSetup();
   } catch (error) {
-    console.error("paypal_setup_error", safeLogError(error), req.keepgoingRequestId || "");
+    log.error("paypal_setup_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
     return res.status(503).send("PayPal setup incomplete");
   }
   if (!paypalConfig.webhook_id) return res.status(503).send("PayPal webhook not configured");
@@ -152,7 +173,14 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
     return res.status(400).send("Missing PayPal signature headers");
   }
 
-  const token = await paypalAccessToken();
+  let token;
+  try {
+    token = await paypalAccessToken();
+  } catch (error) {
+    // PayPal retries non-2xx deliveries, so a transient OAuth failure is safe to 503.
+    log.error("paypal_webhook_oauth_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
+    return res.status(503).send("PayPal temporarily unavailable");
+  }
   const verifyBody =
     '{"auth_algo":' + JSON.stringify(authAlgo) +
     ',"cert_url":' + JSON.stringify(certUrl) +
@@ -172,7 +200,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
   });
   const verification = await verify.json().catch(() => ({}));
   if (!verify.ok || verification.verification_status !== "SUCCESS") {
-    console.error("paypal_webhook_verify_failed", verify.status, String(verification?.verification_status || "unknown"), req.keepgoingRequestId || "");
+    log.warn("paypal_webhook_verify_failed", { http_status: verify.status, verification_status: String(verification?.verification_status || "unknown"), request_id: req.keepgoingRequestId });
     return res.status(400).send("Invalid PayPal webhook signature");
   }
 
@@ -197,7 +225,7 @@ app.post("/paypal/webhook", express.raw({ type: "application/json" }), async (re
     try {
       await forwardBillingEvent("paypal", event.event_type, event.resource || {}, tier);
     } catch (error) {
-      console.error("paypal_billing_ingest_error", safeLogError(error), req.keepgoingRequestId || "");
+      log.error("paypal_billing_ingest_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
       return res.status(500).json({ error: "billing_ingest_error" });
     }
   }
@@ -230,30 +258,20 @@ app.post("/openai/webhook", express.text({ type: "application/json", limit: "512
     if (accepted.shouldReconcile && !accepted.duplicate) {
       setImmediate(() => {
         runtime.webhookProcessor.process(accepted).catch((error) => {
-          console.error("keepgoing_v12_webhook_process_error", safeLogError(error));
+          log.error("keepgoing_v12_webhook_process_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
         });
       });
     }
   } catch (error) {
-    console.error("keepgoing_v12_webhook_verify_error", safeLogError(error));
+    log.warn("keepgoing_v12_webhook_verify_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
     return res.status(400).send("Invalid OpenAI webhook");
   }
 });
 
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "384kb" }));
 app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
 app.set("trust proxy", 1);
-
-app.use((req, res, next) => {
-  const supplied = String(req.headers["x-request-id"] || "").trim();
-  const requestId = /^[A-Za-z0-9._:-]{1,100}$/.test(supplied)
-    ? supplied
-    : crypto.randomUUID();
-  req.keepgoingRequestId = requestId;
-  res.set("X-Request-Id", requestId);
-  next();
-});
 
 const rateWindows = new Map();
 
@@ -261,27 +279,31 @@ function clientIp(req) {
   return String(req.ip || req.socket?.remoteAddress || "unknown").slice(0, 128);
 }
 
+// Fixed-window, in-memory, per-instance limiter. Good enough to blunt abuse on
+// a single Render instance; a shared store is needed if the service scales out.
+function rateLimitHit(key, maxRequests, windowMs) {
+  const now = Date.now();
+  let entry = rateWindows.get(key);
+  if (!entry || entry.resetAt <= now) {
+    entry = { count: 0, resetAt: now + windowMs };
+    rateWindows.set(key, entry);
+  }
+  entry.count += 1;
+  if (rateWindows.size > 5000) {
+    for (const [k, v] of rateWindows) {
+      if (v.resetAt <= now) rateWindows.delete(k);
+      if (rateWindows.size <= 4000) break;
+    }
+  }
+  return entry.count > maxRequests
+    ? Math.max(1, Math.ceil((entry.resetAt - now) / 1000))
+    : 0;
+}
+
 function rateLimit(keyPrefix, maxRequests, windowMs) {
   return (req, res, next) => {
-    const now = Date.now();
-    const key = keyPrefix + ":" + clientIp(req);
-    let entry = rateWindows.get(key);
-    if (!entry || entry.resetAt <= now) {
-      entry = { count: 0, resetAt: now + windowMs };
-      rateWindows.set(key, entry);
-    }
-    entry.count += 1;
-
-    // Opportunistic pruning keeps the in-memory limiter bounded without a timer.
-    if (rateWindows.size > 2000) {
-      for (const [k, v] of rateWindows) {
-        if (v.resetAt <= now) rateWindows.delete(k);
-        if (rateWindows.size <= 1500) break;
-      }
-    }
-
-    if (entry.count > maxRequests) {
-      const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    const retryAfter = rateLimitHit(keyPrefix + ":" + clientIp(req), maxRequests, windowMs);
+    if (retryAfter) {
       res.set("Retry-After", String(retryAfter));
       res.set("Cache-Control", "no-store");
       return res.status(429).json({ error: "rate_limited", retry_after_seconds: retryAfter });
@@ -296,7 +318,8 @@ app.use("/billing/claim", rateLimit("stripe-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/claim", rateLimit("paypal-claim", 30, 15 * 60 * 1000));
 app.use("/paypal/start-subscription", rateLimit("paypal-start", 20, 15 * 60 * 1000));
 app.use("/owner/paypal-setup", rateLimit("paypal-bootstrap", 20, 15 * 60 * 1000));
-app.use("/worker-mcp", rateLimit("worker-mcp", 600, 60 * 1000));
+const MCP_RATE_LIMIT_PER_MINUTE = boundedEnvInt(process.env.KEEPGOING_MCP_RATE_LIMIT_PER_MINUTE, 120, { min: 10, max: 100_000 });
+app.use("/mcp", rateLimit("mcp-ip", MCP_RATE_LIMIT_PER_MINUTE * 2, 60 * 1000));
 
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
@@ -330,14 +353,29 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = Number(process.env.PORT || 10000);
+const PORT = boundedEnvInt(process.env.PORT, 10_000, { min: 1, max: 65_535 });
 const MODEL = process.env.OPENAI_MODEL || "gpt-6-luna";
-const PRO_MAX_OUTPUT_TOKENS = Number(process.env.KEEPGOING_PRO_MAX_OUTPUT_TOKENS || 10000);
-const BUSINESS_MAX_OUTPUT_TOKENS = Number(process.env.KEEPGOING_BUSINESS_MAX_OUTPUT_TOKENS || 20000);
-const PRO_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_PRO_MAX_TOOL_CALLS || 3);
-const BUSINESS_MAX_TOOL_CALLS = Number(process.env.KEEPGOING_BUSINESS_MAX_TOOL_CALLS || 5);
+const PRO_MAX_OUTPUT_TOKENS = boundedEnvInt(process.env.KEEPGOING_PRO_MAX_OUTPUT_TOKENS, 10_000, { min: 1_000, max: 1_000_000 });
+const BUSINESS_MAX_OUTPUT_TOKENS = boundedEnvInt(process.env.KEEPGOING_BUSINESS_MAX_OUTPUT_TOKENS, 20_000, { min: 1_000, max: 1_000_000 });
+const PRO_MAX_TOOL_CALLS = boundedEnvInt(process.env.KEEPGOING_PRO_MAX_TOOL_CALLS, 3, { min: 0, max: 1_000 });
+const BUSINESS_MAX_TOOL_CALLS = boundedEnvInt(process.env.KEEPGOING_BUSINESS_MAX_TOOL_CALLS, 5, { min: 0, max: 1_000 });
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const TOKEN_HASH = process.env.KEEPGOING_OWNER_TOKEN_HASH || "";
+// Tokens in URLs leak into proxy/access logs and browser history. Query-string
+// tokens are refused unless an operator explicitly re-enables them.
+const ALLOW_QUERY_TOKEN = /^(1|true|yes)$/i.test(process.env.KEEPGOING_ALLOW_QUERY_TOKEN || "");
+const LEGACY_ALLOW_UNBOUND_READS = /^(1|true|yes)$/i.test(process.env.KEEPGOING_LEGACY_ALLOW_UNBOUND_READS || "");
+// Server-side cap on concurrently running durable jobs per account.
+const MAX_ACTIVE_JOBS = {
+  pro: boundedEnvInt(process.env.KEEPGOING_MAX_ACTIVE_JOBS_PRO, 5, { min: 0, max: 10_000 }),
+  business: boundedEnvInt(process.env.KEEPGOING_MAX_ACTIVE_JOBS_BUSINESS, 15, { min: 0, max: 10_000 }),
+  owner: boundedEnvInt(process.env.KEEPGOING_MAX_ACTIVE_JOBS_OWNER, 50, { min: 0, max: 10_000 })
+};
+
+function maxActiveJobsFor(access) {
+  if (access?.admin || access?.tier === "owner") return MAX_ACTIVE_JOBS.owner;
+  return access?.tier === "business" ? MAX_ACTIVE_JOBS.business : MAX_ACTIVE_JOBS.pro;
+}
 
 let v12RuntimeCache = null;
 let githubWorkerCache = null;
@@ -608,10 +646,7 @@ function getV12Runtime() {
 }
 
 function safeLogError(error) {
-  const message = String(error?.message || error || "error");
-  return /password|token|secret|credential|authorization/i.test(message)
-    ? "redacted protected error"
-    : message.slice(0, 500);
+  return redactForLog(error, 500);
 }
 
 function fetchWithTimeout(url, init = {}, timeoutMs = 10_000) {
@@ -619,8 +654,12 @@ function fetchWithTimeout(url, init = {}, timeoutMs = 10_000) {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
+// Fails closed: an access object without a concrete subject must never fall
+// back to a shared tier-wide owner (which would merge customers' job lists).
+// sha256(subject) is byte-identical to the previous derivation, so existing
+// durable jobs keep their owner.
 function durableOwnerHash(access) {
-  return digest(String(access?.subject || access?.tier || "customer"));
+  return ownerSubjectHash(access);
 }
 
 async function reserveJobQuota(access) {
@@ -702,6 +741,7 @@ async function validateCimdClient(clientId, redirectUri) {
     const response = await fetch(clientId, {
       method: "GET",
       headers: { Accept: "application/json" },
+      redirect: "error",
       signal: AbortSignal.timeout(5000)
     });
     if (!response.ok) return false;
@@ -852,7 +892,7 @@ app.post("/owner/paypal-setup", async (req, res) => {
       "<p><strong>Success.</strong> KeepGoing validated the Live credentials and created or recovered its PayPal product, subscription plans and webhook.</p><p>You can close this tab.</p>"
     ));
   } catch (error) {
-    console.error("paypal_secure_bootstrap_error", safeLogError(error));
+    log.error("paypal_secure_bootstrap_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
     const message = htmlEscape(safeLogError(error));
     return res.status(400).type("html").send(infoPage(
       "PayPal setup failed",
@@ -1095,7 +1135,7 @@ async function ensurePayPalSetup() {
 }
 
 function requestToken(req) {
-  const queryToken = typeof req.query?.token === "string" ? req.query.token : "";
+  const queryToken = ALLOW_QUERY_TOKEN && typeof req.query?.token === "string" ? req.query.token : "";
   const headerToken = req.get("x-keepgoing-token") || "";
   const auth = req.get("authorization") || "";
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
@@ -1169,62 +1209,6 @@ async function authorise(req, consume = false) {
   return access.ok ? { ...access, _customer_token: token } : access;
 }
 
-function outputText(data) {
-  if (typeof data?.output_text === "string") return data.output_text;
-  const parts = [];
-  for (const item of data?.output || []) {
-    for (const c of item?.content || []) {
-      if (c?.type === "output_text" && typeof c.text === "string") parts.push(c.text);
-    }
-  }
-  return parts.join("\n");
-}
-
-async function openai(path, init = {}) {
-  if (!OPENAI_API_KEY) throw new Error("KeepGoing OpenAI key is not configured");
-  const response = await fetch("https://api.openai.com/v1" + path, {
-    ...init,
-    headers: {
-      Authorization: "Bearer " + OPENAI_API_KEY,
-      "Content-Type": "application/json",
-      ...(init.headers || {})
-    }
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data?.error?.message || ("OpenAI request failed (" + response.status + ")"));
-  return data;
-}
-
-function jobPrompt(goal, done, mode) {
-  const autonomy = {
-    safe: "Be cautious. Do not make assumptions where missing information changes the result.",
-    balanced: "Work autonomously where reasonable, verify important points, and minimise unnecessary questions.",
-    max: "Work as autonomously and comprehensively as possible within the available tools and information."
-  }[mode] || "Work autonomously where reasonable.";
-
-  return [
-    "You are the execution engine for KeepGoing, a persistent background AI job runner.",
-    "",
-    "GOAL:", goal,
-    "",
-    "DEFINITION OF DONE:", done,
-    "",
-    "AUTONOMY:", autonomy,
-    "",
-    "Complete the job as fully as possible in this background run.",
-    "Do not stop merely because a normal chat response would have ended or because you would usually ask whether to continue.",
-    "Never claim to have performed actions outside the tools actually available to this response.",
-    "If an essential credential, approval, payment, destructive action, private account action, or missing fact prevents completion, return NEEDS_USER and state exactly what is required.",
-    "",
-    "End with one of:",
-    "STATUS: COMPLETED",
-    "STATUS: NEEDS_USER",
-    "STATUS: PARTIAL",
-    "",
-    "Then include a concise WORK_COMPLETED section and RESULT."
-  ].join("\n");
-}
-
 function jobLimits(tier) {
   const business = tier === "business" || tier === "owner";
   return {
@@ -1233,79 +1217,23 @@ function jobLimits(tier) {
   };
 }
 
-async function startJob({ goal, definitionOfDone, mode, allowWeb, tier = "pro", safetyIdentifier = "" }) {
-  const limits = jobLimits(tier);
-  const reasoningEffort = mode === "max" ? "high" : mode === "safe" ? "low" : "medium";
-  const body = {
-    model: MODEL,
-    input: jobPrompt(goal, definitionOfDone, mode),
-    background: true,
-    store: true,
-    reasoning: { effort: reasoningEffort },
-    max_output_tokens: limits.maxOutputTokens
-  };
-  if (safetyIdentifier) body.safety_identifier = safetyIdentifier;
-  if (allowWeb) {
-    body.tools = [{ type: "web_search", return_token_budget: "default" }];
-    body.max_tool_calls = limits.maxToolCalls;
-  }
-  const data = await openai("/responses", { method: "POST", body: JSON.stringify(body) });
-  return {
-    job_id: data.id,
-    status: data.status,
-    model: data.model || MODEL,
-    tier,
-    limits: {
-      max_output_tokens: limits.maxOutputTokens,
-      max_tool_calls: allowWeb ? limits.maxToolCalls : 0
-    },
-    message: "KeepGoing job started. Reuse this job_id with get_persistent_job instead of starting a duplicate."
-  };
-}
-
-async function getJob(jobId) {
-  const data = await openai("/responses/" + encodeURIComponent(jobId), { method: "GET" });
-  return {
-    job_id: data.id,
-    status: data.status,
-    output: outputText(data),
-    error: data.error?.message || null,
-    incomplete_details: data.incomplete_details || null
-  };
-}
-
-async function cancelJob(jobId) {
-  const data = await openai("/responses/" + encodeURIComponent(jobId) + "/cancel", {
-    method: "POST",
-    body: "{}"
-  });
-  return { job_id: data.id || jobId, status: data.status || "cancelled" };
-}
-
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "expired", "incomplete"]);
-
-async function waitForJob(jobId, waitSeconds = 20) {
-  const deadline = Date.now() + Math.max(1, Math.min(Number(waitSeconds) || 20, 25)) * 1000;
-  let latest = await getJob(jobId);
-  while (!TERMINAL_STATUSES.has(latest.status) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    latest = await getJob(jobId);
-  }
-  return {
-    ...latest,
-    should_continue_polling: !TERMINAL_STATUSES.has(latest.status),
-    message: TERMINAL_STATUSES.has(latest.status)
-      ? "KeepGoing reached a terminal state."
-      : "KeepGoing is still running. Call wait_for_persistent_job again with the same job_id. Do not ask the user to type continue."
-  };
-}
+const legacyEngine = createLegacyEngine({
+  apiKey: OPENAI_API_KEY,
+  model: MODEL,
+  limitsForTier: jobLimits,
+  allowUnboundReads: LEGACY_ALLOW_UNBOUND_READS
+});
 
 async function startPersistentJobCompat(args, access) {
   if (!v12ForAccess(access)) {
-    const legacy = await startJob({
+    if (args.codingWorkspace) {
+      throw new Error("Coding workspace requires KeepGoing durable v1.2+");
+    }
+    const legacy = await legacyEngine.start({
       ...args,
       tier: access.tier || "pro",
-      safetyIdentifier: "kg_" + digest(String(access.subject || access.tier || "customer")).slice(0, 32)
+      ownerSubjectHash: durableOwnerHash(access),
+      safetyIdentifier: "kg_" + digest(String(access.subject || "")).slice(0, 32)
     });
     return {
       job_id: legacy.job_id,
@@ -1314,6 +1242,13 @@ async function startPersistentJobCompat(args, access) {
     };
   }
   const runtime = getV12Runtime();
+  // Explicit clientRequestId wins. Otherwise derive a key from the JSON-RPC id
+  // AND the arguments (+ a 10-minute window). JSON-RPC ids alone are small
+  // per-connection integers, so the old "mcp-" + digest(id) key made unrelated
+  // later jobs collide with an earlier job and silently return it.
+  const derived = args.clientRequestId
+    ? { current: null, previous: [] }
+    : fallbackStartRequestIds({ rpcId: access._mcp_rpc_id, args });
   return runtime.service.start({
     goal: args.goal,
     definitionOfDone: args.definitionOfDone,
@@ -1322,9 +1257,15 @@ async function startPersistentJobCompat(args, access) {
     tier: access.tier || "pro",
     admin: Boolean(access.admin),
     ownerSubjectHash: durableOwnerHash(access),
-    clientRequestId: args.clientRequestId || access._mcp_request_id || null,
+    clientRequestId: args.clientRequestId || derived.current || null,
+    fallbackRequestIds: derived.previous,
+    maxActiveJobs: maxActiveJobsFor(access),
     context: args.context || "",
     toolProfile: args.toolProfile || "web",
+    codingWorkspace: Boolean(args.codingWorkspace),
+    repositoryUrl: args.repositoryUrl || null,
+    repositoryRef: args.repositoryRef || null,
+    workspaceFiles: Array.isArray(args.workspaceFiles) ? args.workspaceFiles : [],
     beforeCreateSession: async () => reserveJobQuota(access)
   });
 }
@@ -1355,30 +1296,36 @@ async function listPersistentJobsCompat(access, limit = 20, activeOnly = true) {
   );
 }
 
+async function listJobArtifactsCompat(jobId, access, limit = 50) {
+  if (!v12ForAccess(access)) throw new Error("Job artifacts require KeepGoing durable v1.2+");
+  return getV12Runtime().service.artifacts(
+    jobId,
+    durableOwnerHash(access),
+    Boolean(access.admin),
+    limit
+  );
+}
+
+async function readJobArtifactCompat(jobId, artifactId, access) {
+  if (!v12ForAccess(access)) throw new Error("Job artifacts require KeepGoing durable v1.2+");
+  return getV12Runtime().service.readArtifact(
+    jobId,
+    artifactId,
+    durableOwnerHash(access),
+    Boolean(access.admin)
+  );
+}
+
 async function getPersistentJobCompat(jobId, access) {
   if (!v12ForAccess(access)) {
-    const legacy = await getJob(jobId);
-    return {
-      job_id: legacy.job_id,
-      status: legacy.status,
-      output: legacy.output,
-      error: legacy.error
-    };
+    return legacyEngine.get(jobId, durableOwnerHash(access), Boolean(access.admin));
   }
   return getV12Runtime().service.get(jobId, durableOwnerHash(access), Boolean(access.admin));
 }
 
 async function waitPersistentJobCompat(jobId, waitSeconds, access) {
   if (!v12ForAccess(access)) {
-    const legacy = await waitForJob(jobId, waitSeconds);
-    return {
-      job_id: legacy.job_id,
-      status: legacy.status,
-      output: legacy.output,
-      error: legacy.error,
-      should_continue_polling: legacy.should_continue_polling,
-      message: legacy.message
-    };
+    return legacyEngine.wait(jobId, durableOwnerHash(access), Boolean(access.admin), waitSeconds);
   }
   return getV12Runtime().service.wait(
     jobId,
@@ -1389,8 +1336,15 @@ async function waitPersistentJobCompat(jobId, waitSeconds, access) {
 }
 
 async function cancelPersistentJobCompat(jobId, access) {
-  if (!v12ForAccess(access)) return cancelJob(jobId);
+  if (!v12ForAccess(access)) {
+    return legacyEngine.cancel(jobId, durableOwnerHash(access), Boolean(access.admin));
+  }
   return getV12Runtime().service.cancel(jobId, durableOwnerHash(access), Boolean(access.admin));
+}
+
+async function jobReportCompat(jobId, access) {
+  if (!v12ForAccess(access)) throw new Error("Job reports require KeepGoing durable v1.2+");
+  return getV12Runtime().service.report(jobId, durableOwnerHash(access), Boolean(access.admin));
 }
 
 async function resumePersistentJobCompat(jobId, input, access) {
@@ -1403,6 +1357,108 @@ async function resumePersistentJobCompat(jobId, input, access) {
   );
 }
 
+const ARTIFACT_ITEM_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    artifact_id: { type: "string" },
+    path: { type: "string" },
+    name: { type: "string" },
+    mime_type: { type: "string" },
+    size_bytes: { type: "number" },
+    readable: { type: "boolean" },
+    turn_id: { type: "string" }
+  },
+  required: ["artifact_id", "path", "size_bytes", "turn_id"],
+  additionalProperties: false
+};
+
+const JOB_REPORT_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    job_id: { type: "string" },
+    status: { type: "string" },
+    terminal: { type: "boolean" },
+    message: { type: "string" },
+    error: { type: ["string", "null"] },
+    progress: {
+      type: "object",
+      properties: { attempt: { type: "number" }, max_attempts: { type: "number" } },
+      required: ["attempt", "max_attempts"],
+      additionalProperties: false
+    },
+    diagnostics: {
+      type: "object",
+      properties: {
+        attempt: { type: "number" },
+        max_attempts: { type: "number" },
+        tokens_used: { type: "number" },
+        token_budget: { type: "number" },
+        tool_calls_used: { type: "number" },
+        tool_call_budget: { type: "number" },
+        last_progress_at: { type: ["string", "null"] },
+        wall_deadline_at: { type: ["string", "null"] },
+        error_code: { type: ["string", "null"] }
+      },
+      additionalProperties: false
+    },
+    result: {
+      type: "object",
+      properties: {
+        excerpt: { type: "string" },
+        truncated: { type: "boolean" },
+        chars: { type: "number" },
+        sha256: { type: ["string", "null"] }
+      },
+      required: ["excerpt", "truncated", "chars", "sha256"],
+      additionalProperties: false
+    },
+    artifacts: { type: "array", items: ARTIFACT_ITEM_JSON_SCHEMA },
+    artifacts_total_bytes: { type: "number" },
+    artifacts_truncated: { type: "boolean" },
+    next_step: { type: "string" }
+  },
+  required: ["job_id", "status", "terminal", "message", "error", "progress", "result", "artifacts", "next_step"],
+  additionalProperties: false
+};
+
+const JOB_REPORT_ZOD = {
+  job_id: z.string(),
+  status: z.string(),
+  terminal: z.boolean(),
+  message: z.string(),
+  error: z.string().nullable(),
+  progress: z.object({ attempt: z.number(), max_attempts: z.number() }),
+  diagnostics: z.object({
+    attempt: z.number(),
+    max_attempts: z.number(),
+    tokens_used: z.number(),
+    token_budget: z.number(),
+    tool_calls_used: z.number(),
+    tool_call_budget: z.number(),
+    last_progress_at: z.string().nullable(),
+    wall_deadline_at: z.string().nullable(),
+    error_code: z.string().nullable()
+  }).optional(),
+  result: z.object({
+    excerpt: z.string(),
+    truncated: z.boolean(),
+    chars: z.number(),
+    sha256: z.string().nullable()
+  }),
+  artifacts: z.array(z.object({
+    artifact_id: z.string(),
+    path: z.string(),
+    name: z.string().optional(),
+    mime_type: z.string().optional(),
+    size_bytes: z.number(),
+    readable: z.boolean().optional(),
+    turn_id: z.string()
+  })),
+  artifacts_total_bytes: z.number().optional(),
+  artifacts_truncated: z.boolean().optional(),
+  next_step: z.string()
+};
+
 function createMcpServer(access = {}) {
   const v12Access = v12ForAccess(access);
   const ownerAutoContinue = Boolean(access?.admin || access?.tier === "owner");
@@ -1412,11 +1468,30 @@ function createMcpServer(access = {}) {
   const publicV12Instructions = "Use KeepGoing when the user explicitly asks to use KeepGoing for a substantial objective or explicitly asks KeepGoing to continue or finish an existing objective. Prefer continue_until_done for that explicit KeepGoing intent. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Start one durable job and preserve its job_id. Reuse the same job_id and never create duplicate jobs. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
   const ownerV12Instructions = "OWNER MODE: Treat plain continuation phrases such as continue, keep going, finish it, until done, don't stop, carry on, or equivalent as KeepGoing intent when they refer to the current substantial objective. Prefer continue_until_done for those phrases even when the user does not repeat the word KeepGoing. Preserve and reuse the same durable job where possible; never create duplicates just to continue. If a checkpoint is needed, pass only the minimum brief task-specific context already intentionally shared for this objective; never pass full chat history, raw transcripts, credentials, or unrelated personal data. Stop only for genuine required user input/approval, a safety/cost limit, cancellation, or completion.";
   const startToolDescription = ownerAutoContinue
-    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
-    : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
+    ? "Owner mode: use for a substantial multi-step objective that should become one durable job. For a continuation of the current objective, prefer continue_until_done. For coding work, when a public GitHub repository is known, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the durable Agent can actually inspect/edit/test the code. If the task depends on a small set of local/uncommitted text files already intentionally available in the current task context, pass only those selected files via workspaceFiles; do not start a no-files coding job. If a checkpoint is needed, pass only brief task-specific context; never send full chat history, raw transcripts, credentials, or unrelated personal data."
+    : "Use when the user explicitly asks KeepGoing to start a substantial multi-step objective as one durable job. For coding work, set codingWorkspace=true and optionally supply a public GitHub repository/ref. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data. Reuse the returned job ID for later status, wait, resume or cancel operations.";
   const continueToolDescription = ownerAutoContinue
-    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. Reuse the same job where possible."
+    ? "Owner mode: use when the user says continue, keep going, finish it, until done, don't stop, carry on, or equivalent for the current substantial objective, even if they do not repeat the word KeepGoing. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. For coding objectives with a known public GitHub repo, set codingWorkspace=true and pass repositoryUrl/repositoryRef so the background job has real code access. If a small set of task-relevant local/uncommitted text files are intentionally available, pass only those selected files via workspaceFiles. Reuse the same job where possible."
     : "Use when the user explicitly asks KeepGoing to continue or finish a substantial multi-step objective. Starts or idempotently recovers one durable job and advances it server-side until completed, genuinely blocked by required user input/approval, cancelled, or stopped by a configured safety/cost limit. If a checkpoint is needed, pass only brief task-specific context necessary for that objective; never send full chat history, raw transcripts, credentials, or unrelated personal data.";
+
+  // Tool errors are mapped to client-safe messages: KeepGoing-authored
+  // validation messages pass through; provider/store internals are replaced
+  // with a generic message carrying the request id for support correlation.
+  async function respond(toolName, fn, { text = (result) => JSON.stringify(result) } = {}) {
+    try {
+      const result = await fn();
+      return { content: [{ type: "text", text: text(result) }], structuredContent: result };
+    } catch (error) {
+      const safe = clientSafeError(error, access._request_id);
+      log.warn("mcp_tool_error", {
+        tool: toolName,
+        code: safe.code,
+        error: safeLogError(error),
+        request_id: access._request_id || null
+      });
+      return { isError: true, content: [{ type: "text", text: safe.message }] };
+    }
+  }
 
   const server = new McpServer(
     { name: "KeepGoing", version: v12Access ? APP_VERSION : "1.1.0" },
@@ -1488,7 +1563,14 @@ function createMcpServer(access = {}) {
         const result = listToolProfilesCompat(access);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {
-        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+        const safe = clientSafeError(error, access._request_id);
+        log.warn("mcp_tool_error", {
+          tool: "list_tool_profiles",
+          code: safe.code,
+          error: safeLogError(error),
+          request_id: access._request_id || null
+        });
+        return { isError: true, content: [{ type: "text", text: safe.message }] };
       }
     });
   }
@@ -1503,7 +1585,14 @@ function createMcpServer(access = {}) {
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
       context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
-      toolProfile: z.string().min(1).max(64).optional()
+      toolProfile: z.string().min(1).max(64).optional(),
+      codingWorkspace: z.boolean().default(false).describe("Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support."),
+      repositoryUrl: z.string().url().max(500).describe("Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials.").optional(),
+      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional(),
+      workspaceFiles: z.array(z.object({
+        path: z.string().min(1).max(180),
+        content: z.string().max(32000)
+      })).max(8).describe("Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1516,12 +1605,7 @@ function createMcpServer(access = {}) {
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (args) => {
-    try {
-      const result = await startPersistentJobCompat(args, access);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-    } catch (error) {
-      return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-    }
+    return respond("startPersistentJobCompat", () => startPersistentJobCompat(args, access));
   });
 
 
@@ -1535,7 +1619,14 @@ function createMcpServer(access = {}) {
       allowWeb: z.boolean().default(true),
       clientRequestId: z.string().min(1).max(200).optional(),
       context: z.string().max(4000).describe("Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data.").optional(),
-      toolProfile: z.string().min(1).max(64).optional()
+      toolProfile: z.string().min(1).max(64).optional(),
+      codingWorkspace: z.boolean().default(false).describe("Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support."),
+      repositoryUrl: z.string().url().max(500).describe("Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials.").optional(),
+      repositoryRef: z.string().max(200).describe("Optional safe Git branch/tag/commit ref used only with repositoryUrl.").optional(),
+      workspaceFiles: z.array(z.object({
+        path: z.string().min(1).max(180),
+        content: z.string().max(32000)
+      })).max(8).describe("Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.").optional()
     },
     outputSchema: {
       job_id: z.string(),
@@ -1548,12 +1639,7 @@ function createMcpServer(access = {}) {
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (args) => {
-    try {
-      const result = await startPersistentJobCompat({ ...args, mode: args.mode || "max" }, access);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-    } catch (error) {
-      return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-    }
+    return respond("startPersistentJobCompat", () => startPersistentJobCompat({ ...args, mode: args.mode || "max" }, access));
   });
 
   server.registerTool("get_persistent_job", {
@@ -1575,12 +1661,7 @@ function createMcpServer(access = {}) {
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ job_id }) => {
-    try {
-      const result = await getPersistentJobCompat(job_id, access);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-    } catch (error) {
-      return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-    }
+    return respond("getPersistentJobCompat", () => getPersistentJobCompat(job_id, access));
   });
 
   server.registerTool("wait_for_persistent_job", {
@@ -1607,12 +1688,7 @@ function createMcpServer(access = {}) {
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ job_id, wait_seconds }) => {
-    try {
-      const result = await waitPersistentJobCompat(job_id, wait_seconds, access);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-    } catch (error) {
-      return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-    }
+    return respond("waitPersistentJobCompat", () => waitPersistentJobCompat(job_id, wait_seconds, access));
   });
 
   server.registerTool("cancel_persistent_job", {
@@ -1627,12 +1703,7 @@ function createMcpServer(access = {}) {
     _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }
   }, async ({ job_id }) => {
-    try {
-      const result = await cancelPersistentJobCompat(job_id, access);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-    } catch (error) {
-      return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-    }
+    return respond("cancelPersistentJobCompat", () => cancelPersistentJobCompat(job_id, access));
   });
 
   if (v12Access) {
@@ -1657,13 +1728,72 @@ function createMcpServer(access = {}) {
       _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     }, async ({ limit, activeOnly }) => {
-      try {
-        const result = await listPersistentJobsCompat(access, limit, activeOnly);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-      } catch (error) {
-        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-      }
+      return respond("listPersistentJobsCompat", () => listPersistentJobsCompat(access, limit, activeOnly));
     });
+
+    server.registerTool("list_job_artifacts", {
+      title: "List job artifacts",
+      description: "List patch/report artifacts published by an owned KeepGoing coding job. Returns a deterministic manifest (path, name, MIME type, size, readable flag) for files published from /workspace/outputs only.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        limit: z.number().int().min(1).max(100).default(50)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        artifacts: z.array(z.object({
+          artifact_id: z.string(),
+          path: z.string(),
+          name: z.string().optional(),
+          mime_type: z.string().optional(),
+          size_bytes: z.number(),
+          readable: z.boolean().optional(),
+          turn_id: z.string()
+        })),
+        total_bytes: z.number().optional(),
+        truncated: z.boolean().optional()
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id, limit }) => {
+      return respond("listJobArtifactsCompat", () => listJobArtifactsCompat(job_id, access, limit));
+    });
+
+    server.registerTool("read_job_artifact", {
+      title: "Read job artifact",
+      description: "Read a small text patch/report artifact (up to 500 KB) published by an owned KeepGoing coding job, with its SHA-256 checksum. Only common text artifact formats under /workspace/outputs are readable; larger files fail rather than being truncated.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        artifact_id: z.string().min(1).max(200)
+      },
+      outputSchema: {
+        job_id: z.string(),
+        artifact_id: z.string(),
+        path: z.string(),
+        name: z.string().optional(),
+        mime_type: z.string().optional(),
+        size_bytes: z.number(),
+        sha256: z.string().optional(),
+        text: z.string()
+      },
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id, artifact_id }) => {
+      return respond("readJobArtifactCompat", () => readJobArtifactCompat(job_id, artifact_id, access), { text: (result) => result.text });
+    });
+
+    server.registerTool("get_job_report", {
+      title: "Get job report",
+      description: "Use when the user wants a concise, final-style summary of an owned KeepGoing job: status, progress and budget use, a checksummed result excerpt, the artifact manifest and the recommended next step. Read-only; never starts or changes a job.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200)
+      },
+      outputSchema: JOB_REPORT_ZOD,
+      securitySchemes: oauthSecuritySchemes,
+      _meta: oauthMeta,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    }, async ({ job_id }) => respond("jobReportCompat", () => jobReportCompat(job_id, access)));
 
     server.registerTool("resume_persistent_job", {
       title: "Resume persistent job",
@@ -1681,12 +1811,7 @@ function createMcpServer(access = {}) {
       _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
     }, async ({ job_id, input }) => {
-      try {
-        const result = await resumePersistentJobCompat(job_id, input, access);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
-      } catch (error) {
-        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
-      }
+      return respond("resumePersistentJobCompat", () => resumePersistentJobCompat(job_id, input, access));
     });
   }
 
@@ -1709,7 +1834,24 @@ function createMcpServer(access = {}) {
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
             context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
-            toolProfile: { type: "string", minLength: 1, maxLength: 64 }
+            toolProfile: { type: "string", minLength: 1, maxLength: 64 },
+            codingWorkspace: { type: "boolean", default: false, description: "Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support." },
+            repositoryUrl: { type: "string", format: "uri", maxLength: 500, description: "Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials." },
+            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." },
+            workspaceFiles: {
+              type: "array",
+              maxItems: 8,
+              description: "Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 180 },
+                  content: { type: "string", maxLength: 32000 }
+                },
+                required: ["path", "content"],
+                additionalProperties: false
+              }
+            }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1743,7 +1885,24 @@ function createMcpServer(access = {}) {
             allowWeb: { type: "boolean", default: true },
             clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
             context: { type: "string", maxLength: 4000, description: "Brief task-specific checkpoint only. Do not send full conversation history, raw transcripts, credentials, or unrelated personal data." },
-            toolProfile: { type: "string", minLength: 1, maxLength: 64 }
+            toolProfile: { type: "string", minLength: 1, maxLength: 64 },
+            codingWorkspace: { type: "boolean", default: false, description: "Create an isolated OpenAI-hosted coding workspace with Bash/apply-patch support." },
+            repositoryUrl: { type: "string", format: "uri", maxLength: 500, description: "Optional public https://github.com/owner/repo URL to clone into /workspace/project. Never include credentials." },
+            repositoryRef: { type: "string", maxLength: 200, description: "Optional safe Git branch/tag/commit ref used only with repositoryUrl." },
+            workspaceFiles: {
+              type: "array",
+              maxItems: 8,
+              description: "Optional explicitly selected non-secret UTF-8 text files to overlay into /workspace/project. Use only for task-relevant local/uncommitted files.",
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 180 },
+                  content: { type: "string", maxLength: 32000 }
+                },
+                required: ["path", "content"],
+                additionalProperties: false
+              }
+            }
           },
           required: ["goal"],
           additionalProperties: false
@@ -1981,6 +2140,102 @@ function createMcpServer(access = {}) {
           required: ["jobs"],
           additionalProperties: false
         },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "list_job_artifacts",
+        title: "List job artifacts",
+        description: "List patch/report artifacts published by an owned KeepGoing coding job. Returns a deterministic manifest (path, name, MIME type, size, readable flag) for files published from /workspace/outputs only.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }
+          },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            artifacts: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  artifact_id: { type: "string" },
+                  path: { type: "string" },
+                  name: { type: "string" },
+                  mime_type: { type: "string" },
+                  size_bytes: { type: "number" },
+                  readable: { type: "boolean" },
+                  turn_id: { type: "string" }
+                },
+                required: ["artifact_id", "path", "size_bytes", "turn_id"],
+                additionalProperties: false
+              }
+            },
+            total_bytes: { type: "number" },
+            truncated: { type: "boolean" }
+          },
+          required: ["job_id", "artifacts"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "read_job_artifact",
+        title: "Read job artifact",
+        description: "Read a small text patch/report artifact (up to 500 KB) published by an owned KeepGoing coding job, with its SHA-256 checksum. Only common text artifact formats under /workspace/outputs are readable; larger files fail rather than being truncated.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            artifact_id: { type: "string", minLength: 1, maxLength: 200 }
+          },
+          required: ["job_id", "artifact_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            artifact_id: { type: "string" },
+            path: { type: "string" },
+            name: { type: "string" },
+            mime_type: { type: "string" },
+            size_bytes: { type: "number" },
+            sha256: { type: "string" },
+            text: { type: "string" }
+          },
+          required: ["job_id", "artifact_id", "path", "size_bytes", "text"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "get_job_report",
+        title: "Get job report",
+        description: "Use when the user wants a concise, final-style summary of an owned KeepGoing job: status, progress and budget use, a checksummed result excerpt, the artifact manifest and the recommended next step. Read-only; never starts or changes a job.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 }
+          },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: JOB_REPORT_JSON_SCHEMA,
         securitySchemes: oauthSecuritySchemes,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         _meta: oauthMeta
@@ -2280,7 +2535,7 @@ app.post("/billing/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    console.error("stripe_claim_error", safeLogError(error));
+    log.error("stripe_claim_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
     return res.status(502).json({ error: "claim_upstream_error" });
   }
 });
@@ -2320,7 +2575,7 @@ app.post("/paypal/start-subscription", async (req, res) => {
     if (!approvalUrl) throw new Error("PayPal approval URL missing or invalid");
     return res.redirect(303, approvalUrl);
   } catch (error) {
-    console.error("paypal_start_subscription_error", safeLogError(error), req.keepgoingRequestId || "");
+    log.error("paypal_start_subscription_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
     return res.status(502).type("html").send(infoPage("Could not start PayPal checkout", "<p>PayPal checkout could not be started. No subscription was activated. Please return and try again.</p>"));
   }
 });
@@ -2376,22 +2631,34 @@ app.post("/paypal/claim", async (req, res) => {
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   } catch (error) {
-    console.error("paypal_claim_error", safeLogError(error));
+    log.error("paypal_claim_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
     return res.status(502).json({ error: "claim_upstream_error" });
   }
 });
 
+// JSON for embedding inside an inline <script>: JSON.stringify alone does not
+// escape "</script>" or HTML comment openers, so a crafted query value could
+// break out of the script element (reflected XSS).
+function scriptJson(value) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 app.get("/billing/success", (req, res) => {
-  const sessionId = String(req.query.session_id || "");
-  const sessionJson = JSON.stringify(sessionId);
-  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing subscription</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:680px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:18px;width:100%;box-sizing:border-box}button,a{color:#A99FFF}code{display:block;word-break:break-all;background:#0d1117;padding:14px;border-radius:10px;margin:14px 0}.ok{color:#3fb950}.muted{color:#8b949e}</style></head><body><div class="card"><h1>KeepGoing subscription</h1><p id="status">Confirming your Stripe subscription…</p><div id="result"></div><p><a href="/subscribe">Return to subscription page</a></p></div><script>const sessionId=' + sessionJson + ';(async()=>{const status=document.getElementById("status"),result=document.getElementById("result");if(!sessionId){status.textContent="Missing checkout session.";return;}for(let i=0;i<12;i++){const r=await fetch("/billing/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:sessionId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){status.innerHTML="<span class=\"ok\">Subscription active.</span>";result.innerHTML="<p>Your "+j.tier+" plan includes "+j.monthly_limit+" KeepGoing jobs per month.</p><p>Save this private activation token. ChatGPT asks for it when you connect KeepGoing:</p><code id=\"mcp\"></code><button id=\"copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p><p class=\"muted\">Keep the token private. Claiming again rotates it.</p>";document.getElementById("mcp").textContent=j.token;document.getElementById("copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error!=="subscription_not_found"){status.textContent=j.error||"Could not activate subscription.";return;}await new Promise(r=>setTimeout(r,1500));}status.textContent="Payment completed, but activation is still processing. Refresh this page in a moment.";})().catch(()=>{document.getElementById("status").textContent="Could not confirm subscription.";});</script></body></html>';
+  const rawSessionId = String(req.query.session_id || "");
+  // Stripe Checkout session ids are cs_test_/cs_live_ followed by [A-Za-z0-9].
+  const sessionId = /^cs_(test|live)_[A-Za-z0-9]{1,200}$/.test(rawSessionId) ? rawSessionId : "";
+  const sessionJson = scriptJson(sessionId);
+  const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeepGoing subscription</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}.card{max-width:680px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:18px;width:100%;box-sizing:border-box}button,a{color:#58a6ff}code{display:block;word-break:break-all;background:#0d1117;padding:14px;border-radius:10px;margin:14px 0}.ok{color:#3fb950}.muted{color:#8b949e}</style></head><body><div class="card"><h1>KeepGoing subscription</h1><p id="status">Confirming your Stripe subscription…</p><div id="result"></div><p><a href="/subscribe">Return to subscription page</a></p></div><script>const sessionId=' + sessionJson + ';(async()=>{const status=document.getElementById("status"),result=document.getElementById("result");if(!sessionId){status.textContent="Missing checkout session.";return;}for(let i=0;i<12;i++){const r=await fetch("/billing/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:sessionId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){status.innerHTML="<span class=\"ok\">Subscription active.</span>";result.innerHTML="<p>Your "+j.tier+" plan includes "+j.monthly_limit+" KeepGoing jobs per month.</p><p>Save this private activation token. ChatGPT asks for it when you connect KeepGoing:</p><code id=\"mcp\"></code><button id=\"copy\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p><p class=\"muted\">Keep the token private. Claiming again rotates it.</p>";document.getElementById("mcp").textContent=j.token;document.getElementById("copy").onclick=()=>navigator.clipboard.writeText(j.token);return;}if(j.error!=="subscription_not_found"){status.textContent=j.error||"Could not activate subscription.";return;}await new Promise(r=>setTimeout(r,1500));}status.textContent="Payment completed, but activation is still processing. Refresh this page in a moment.";})().catch(()=>{document.getElementById("status").textContent="Could not confirm subscription.";});</script></body></html>';
   res.type("html").send(html);
 });
 
 app.get("/subscribe", async (req, res) => {
-  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
-    try { await ensurePayPalSetup(); } catch {}
-  }
+  await maybeEnsurePayPalSetup();
 
   const paypalReady = Boolean(paypalClientId && paypalClientSecret && paypalSetupComplete && paypalConfig.pro_plan_id && paypalConfig.business_plan_id);
   const cancelled = String(req.query?.cancelled || "") === "1";
@@ -2413,7 +2680,7 @@ app.get("/subscribe", async (req, res) => {
     : '<span class="muted">Payment button appears when PayPal checkout is ready.</span>';
 
   const activationScript = canActivate
-    ? '<script>const subscriptionId=' + JSON.stringify(returnedSubscriptionId) + ';const claimId=' + JSON.stringify(returnedClaimId) + ';(async()=>{const result=document.getElementById("kg-result");for(let i=0;i<20;i++){result.textContent="Activating subscription…";const r=await fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:subscriptionId,claim_id:claimId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\" type=\"button\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);history.replaceState(null,"","/subscribe");return;}if(j.error==="subscription_not_active"&&(j.status==="APPROVED"||j.status==="APPROVAL_PENDING")){await new Promise(x=>setTimeout(x,1500));continue;}throw new Error(j.error||"Activation failed");}result.textContent="PayPal approved the subscription, but activation is still processing. Refresh this page in a moment.";})().catch(e=>{document.getElementById("kg-result").textContent=e.message||"Could not confirm subscription.";});</script>'
+    ? '<script>const subscriptionId=' + scriptJson(returnedSubscriptionId) + ';const claimId=' + scriptJson(returnedClaimId) + ';(async()=>{const result=document.getElementById("kg-result");for(let i=0;i<20;i++){result.textContent="Activating subscription…";const r=await fetch("/paypal/claim",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription_id:subscriptionId,claim_id:claimId})});const j=await r.json().catch(()=>({}));if(r.ok&&j.token){result.innerHTML="<strong>Subscription active.</strong><br>Save this private activation token:<code id=\"kg-mcp\"></code><button id=\"kg-copy\" type=\"button\">Copy activation token</button><p><a href=\"/install\">Open installation instructions</a></p>";document.getElementById("kg-mcp").textContent=j.token;document.getElementById("kg-copy").onclick=()=>navigator.clipboard.writeText(j.token);history.replaceState(null,"","/subscribe");return;}if(j.error==="subscription_not_active"&&(j.status==="APPROVED"||j.status==="APPROVAL_PENDING")){await new Promise(x=>setTimeout(x,1500));continue;}throw new Error(j.error||"Activation failed");}result.textContent="PayPal approved the subscription, but activation is still processing. Refresh this page in a moment.";})().catch(e=>{document.getElementById("kg-result").textContent=e.message||"Could not confirm subscription.";});</script>'
     : "";
 
   const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#0d1117"><title>KeepGoing direct subscriptions</title><style>body{font-family:system-ui;background:#0d1117;color:#fff;margin:0;padding:36px;line-height:1.55}.wrap{max-width:900px;margin:auto}.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin:22px 0}.card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:24px}.price{font-size:34px;font-weight:700}.muted{color:#8b949e}.notice{background:#2d2405;border:1px solid #9e7b00;border-radius:12px;padding:14px;margin:18px 0}.good{color:#3fb950}a{color:#A99FFF}code{display:block;word-break:break-all;background:#0d1117;padding:12px;border-radius:9px;margin:10px 0}.checkout{width:100%;border:0;border-radius:999px;background:#ffc439;color:#111;padding:13px 18px;font:700 16px system-ui;cursor:pointer;margin-top:10px}button{padding:10px 14px;margin-top:8px}#kg-result{margin:18px 0}</style></head><body><div class="wrap"><h1>KeepGoing direct subscriptions</h1><p>This is KeepGoing’s direct web checkout, separate from the ChatGPT plugin experience.</p>' + cancelMessage + setupMessage + '<div class="plans"><div class="card"><h2>Pro</h2><div class="price">£7.99<span style="font-size:16px">/mo</span></div><p>100 jobs/month · up to 3 hosted web tool calls per job.</p>' + proAction + '</div><div class="card"><h2>Business</h2><div class="price">£29<span style="font-size:16px">/mo</span></div><p>500 jobs/month · up to 5 hosted web tool calls per job.</p>' + bizAction + '</div></div><div id="kg-result"></div><p class="muted">You are redirected to PayPal to approve the subscription. KeepGoing never receives your PayPal password or full card details. After PayPal confirms an active subscription, KeepGoing issues a private activation token.</p><p><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/refunds">Refunds & cancellation</a> · <a href="/support">Support</a></p></div>' + activationScript + '</body></html>';
@@ -2482,7 +2749,7 @@ app.get("/status", (_req, res) => {
 
 app.get("/changelog", (_req, res) => {
   res.type("html").send(infoPage("Changelog", [
-    "<h2>1.2.0-beta.23 — 30 September 2026</h2><ul><li>Added permission-scoped background MCP tool profiles with explicit allowlists, durable policy hashes and safe tool-call auditing.</li><li>Added the owner-only private GitHub worker with repository allowlists, KeepGoing-safe branch writes, conflict-aware file updates and pull-request creation.</li><li>Added Project Relay read/developer profiles while keeping destructive Relay administration disabled unless explicitly configured.</li><li>Added final Plugin Directory package validation, branded light/dark assets, commerce-neutral plugin listing, reproducible submission ZIP and beta.23 commercial release checks.</li></ul>",
+    "<h2>1.5.0-beta.1 — 5 October 2026</h2><ul><li>Legacy (v1.1) jobs are now bound to the account that started them; status, wait and cancel refuse other accounts' job ids.</li><li>Cancellation is race-safe and also stops a continuation turn that was in flight; cancelled and completed jobs can no longer be resurrected (enforced in code and in the database).</li><li>Jobs waiting for input can now be cancelled.</li><li>Start requests without a client request id no longer risk colliding with an earlier, unrelated job.</li><li>Completion markers are read only from the agent's own output, using the final marker.</li><li>Artifacts: deterministic manifest with MIME types and readable flags, SHA-256 checksums on read, bounded streaming reads, stricter output-path validation.</li><li>New read-only <code>get_job_report</code> tool and <code>/version</code> capability endpoint.</li><li>Coding jobs are instructed to treat repository content as untrusted and to save <code>changes.patch</code> and <code>REPORT.md</code>.</li><li>Provider and store calls have timeouts; the watchdog no longer overlaps itself, defers failing jobs instead of starving the queue, and dead-letters jobs it cannot recover after their deadline.</li><li>Per-account active-job caps, MCP rate limiting, structured JSON logs with request ids, client-safe error messages, startup configuration checks.</li></ul><h2>1.4.0-beta.24</h2><ul><li>Bounded selected-file handoff for coding jobs (up to eight UTF-8 text files, 32 KB each, 128 KB total).</li></ul><h2>1.3.0</h2><ul><li>Opt-in hosted coding workspace that clones a public GitHub repository for local edit/test, with patch/report artifacts.</li></ul>",
     "<h2>1.2.0-beta.22 — 29 September 2026</h2><ul><li>Added final OpenAI submission metadata directly to the plugin package: five positive tests, three negative tests, UK availability, commerce declaration and release notes.</li><li>Polished the public listing description and prepared the upload-ready package copy.</li></ul><h2>1.2.0-beta.21 — 29 September 2026</h2><ul><li>Hardened public-directory metadata and plugin-facing commerce boundaries for current OpenAI review requirements.</li><li>Added the required support URL, directory-length short description, accessible light/dark brand colors, and removed subscription-plan cards from the plugin website.</li><li>Added a complete submission-readiness checklist with reviewer tests and annotation justifications.</li></ul><h2>1.2.0-beta.20 — 29 September 2026</h2><ul><li>Hardened durable job startup against transient provider/session failures.</li><li>Initial Agent-session creation now uses a deterministic idempotency key, retries transient failures, recovers accepted sessions by metadata, and can revive a failed pre-turn reservation from the same client request without consuming quota twice.</li><li>The production startup command now runs the full regression suite before serving traffic.</li></ul><h2>1.2.0-beta.19 — 29 September 2026</h2><ul><li>Replaced the embedded PayPal JavaScript button flow with a server-side PayPal subscription approval redirect after live-browser verification found the embedded buttons were not rendering.</li><li>Added server-generated claim binding, validated PayPal approval URLs, cancellation return handling and post-approval activation recovery.</li></ul><h2>1.2.0-beta.18 — 29 September 2026</h2><ul><li>Cleared stale PayPal setup-error state whenever Live checkout is healthy.</li><li>Final commercial readiness/status cleanup after successful PayPal Live bootstrap.</li></ul><h2>1.2.0-beta.17 — 29 September 2026</h2><ul><li>Added a one-time secure PayPal Live bootstrap page so credentials no longer need to be pasted into chat or Render manually.</li><li>PayPal credentials are validated live, encrypted with KeepGoing's server key and persisted only in the protected billing config.</li><li>Stored PayPal credentials are loaded automatically after service restarts.</li></ul><h2>1.2.0-beta.16 — 29 September 2026</h2><ul><li>Removed unsupported automatic Agent-session webhook provisioning introduced in beta.15.</li><li>Promoted the proven watchdog recovery path to the production durability requirement.</li><li>OpenAI webhook support remains optional and can be enabled only when a compatible event stream is configured.</li><li>Readiness now reports <code>continuation_mode</code> and <code>watchdog_ready</code>.</li></ul><h2>1.2.0-beta.15 — 29 September 2026</h2><ul><li>Added managed OpenAI webhook provisioning using the existing project API key.</li><li>KeepGoing now creates or updates its Agents-session webhook and obtains/rotates the signing secret automatically when no manual secret is configured.</li><li>Readiness exposes only managed/ready/error booleans; the signing secret is never returned.</li></ul><h2>1.2.0-beta.14 — 29 September 2026</h2><ul><li>Added the official portable OpenAI plugin package manifest.</li><li>Bundled the KeepGoing PNG asset as both the plugin composer icon and logo.</li><li>Added the portable MCP package definition for the live KeepGoing endpoint.</li><li>Added CI validation for plugin package metadata and asset paths.</li></ul><h2>1.2.0-beta.13 — 29 September 2026</h2><ul><li>Restored implicit plain-language continuation for the authenticated owner/admin connection only.</li><li>Owner phrases such as <code>continue</code>, <code>keep going</code>, <code>finish it</code> and <code>until done</code> now strongly select <code>continue_until_done</code> without requiring the word KeepGoing.</li><li>Public/customer connections retain explicit KeepGoing intent requirements for directory compliance.</li></ul><h2>1.2.0-beta.12 — 29 September 2026</h2><ul><li>Clarified completion semantics so the execution model does not wait for a nonexistent KeepGoing control tool after the requested work is already done.</li><li>The server remains solely responsible for translating the model’s final <code>STATUS</code> marker into durable job state.</li><li>Added regression tests for this completion rule.</li></ul><h2>1.2.0-beta.11 — 29 September 2026</h2><ul><li>Added graceful SIGTERM/SIGINT shutdown so Render deploys stop the watchdog and drain active HTTP work cleanly.</li><li>Added bounded server request/header/keep-alive timeouts.</li><li>Added safe request IDs for support correlation.</li><li>Reduced detail in failed PayPal webhook verification logs and applied protected-error redaction consistently.</li></ul><h2>1.2.0-beta.10 — 29 September 2026</h2><ul><li>Added bounded timeouts to PayPal, billing, OAuth-ledger, subscription-auth and claim-backend requests.</li><li>Upstream stalls now fail promptly instead of tying up service requests indefinitely.</li></ul><h2>1.2.0-beta.9 — 29 September 2026</h2><ul><li>Added a strict CSP to the OAuth authorization flow.</li><li>Redacted upstream billing errors from customer-facing claim responses.</li><li>Sanitized PayPal bootstrap logging.</li></ul><h2>1.2.0-beta.8 — 29 September 2026</h2><ul><li>Fixed the OAuth connection page for new customers and removed stale sales markup from authorization.</li><li>Added a hosted 256×256 PNG icon for app and social previews.</li><li>Added <code>/.well-known/security.txt</code> and structured SoftwareApplication metadata.</li></ul><h2>1.2.0-beta.7 — 29 September 2026</h2><ul><li>Bound PayPal activation claims to a random checkout-specific <code>custom_id</code>.</li><li>A subscription ID alone can no longer issue or rotate a KeepGoing activation token.</li></ul><h2>1.2.0-beta.6</h2><ul><li>Separated direct web subscription checkout from the public ChatGPT plugin/listing experience.</li><li>Narrowed host context to a brief task-specific checkpoint and explicitly prohibited full transcripts/credentials.</li><li>Aligned MCP metadata versioning and privacy language with the deployed release.</li></ul><h2>1.2.0-beta.5</h2><ul><li>Owner-token configuration now fails closed if the environment value is missing.</li><li>OAuth and internal endpoints use stricter no-store/noindex handling.</li><li>Reduced public infrastructure fingerprinting and PayPal status detail exposure.</li></ul><h2>1.2.0-beta.4</h2><ul><li>Improved commercial landing page and onboarding.</li><li>Added FAQ, status, sitemap and robots routes.</li><li>Added richer social/search metadata.</li></ul>",
     "<h2>1.2.0-beta.3</h2><ul><li>Commercial branding and hosted icon/manifest.</li><li>Refunds & cancellation policy.</li><li>Truthful commercial-readiness blocker reporting.</li><li>PayPal activation hardening: access only after an ACTIVE subscription.</li></ul>",
     "<h2>1.2.0-beta.2</h2><ul><li>Added <code>continue_until_done</code>, host-context passthrough and stricter genuine-block-only stops.</li><li>Secure durable-store proxy and owner-canary rollout.</li></ul>"
@@ -2497,7 +2764,7 @@ app.get("/install", (_req, res) => {
     "<p><strong>Connection endpoint:</strong> <code>" + htmlEscape(PUBLIC_BASE_URL + "/mcp") + "</code></p>",
     "<p>KeepGoing uses OAuth. Existing customers connect with their private activation token. Do not put the token in the MCP URL or paste it into a normal chat message.</p>",
     "<h2>Private beta / developer connection</h2>",
-    "<ol><li>In an eligible ChatGPT account, create or connect a custom MCP app.</li><li>Use the endpoint shown above.</li><li>Select OAuth when prompted.</li><li>Complete the KeepGoing connection page with your activation token.</li><li>Scan the tools and confirm <code>continue_until_done</code>, <code>start_persistent_job</code>, <code>get_persistent_job</code>, <code>wait_for_persistent_job</code>, <code>list_persistent_jobs</code>, <code>resume_persistent_job</code> and <code>cancel_persistent_job</code>.</li><li>Try: <code>Use KeepGoing and finish this job until done.</code></li></ol>",
+    "<ol><li>In an eligible ChatGPT account, create or connect a custom MCP app.</li><li>Use the endpoint shown above.</li><li>Select OAuth when prompted.</li><li>Complete the KeepGoing connection page with your activation token.</li><li>Scan the tools and confirm <code>continue_until_done</code>, <code>start_persistent_job</code>, <code>get_persistent_job</code>, <code>wait_for_persistent_job</code>, <code>list_persistent_jobs</code>, <code>resume_persistent_job</code>, <code>cancel_persistent_job</code>, <code>list_job_artifacts</code>, <code>read_job_artifact</code> and <code>get_job_report</code>.</li><li>Try: <code>Use KeepGoing and finish this job until done.</code></li></ol>",
     "<p class=\"muted\">ChatGPT plan, workspace and plugin/app availability can affect whether custom MCP connections are available. The public Plugin Directory release will use the same hosted service after approval.</p>",
     "<h2>What KeepGoing does</h2><p>It runs supported work as a durable OpenAI job/session, stores the KeepGoing job ID and lets ChatGPT check, recover or resume that same job. The server-side watchdog can continue partial work within hard limits. It does not control ChatGPT's private reasoning, bypass product limits, or force a new chat turn after ChatGPT has already ended one.</p>"
   ].join("")));
@@ -2505,11 +2772,11 @@ app.get("/install", (_req, res) => {
 
 app.get("/privacy", (_req, res) => {
   res.type("html").send(infoPage("Privacy policy", [
-    "<p><strong>Last updated:</strong> 30 September 2026</p>",
-    "<p>KeepGoing processes the minimum information needed to operate account access, durable jobs and any background tools you deliberately select.</p>",
+    "<p><strong>Last updated:</strong> 5 October 2026</p>",
+    "<p>KeepGoing processes the minimum information needed to operate subscriptions and persistent jobs.</p>",
     "<h2>Information processed</h2>",
-    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, options and—only when needed—a brief task-specific checkpoint submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>KeepGoing does not independently retrieve your full ChatGPT history. The MCP context field is intentionally bounded and should never contain full chat transcripts, passwords, API keys, payment credentials or unrelated personal data.</li><li>When an approved tool profile is selected, the minimum arguments/data needed for that call may be sent to the configured tool provider, such as GitHub or Project Relay.</li><li>Tool-audit rows store bounded metadata such as tool type/name/server/status/turn. KeepGoing does not deliberately store tool arguments or tool outputs in that audit table.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
-    "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. When you select a configured background-tool profile, relevant tool calls may also be sent to that profile's MCP provider, such as GitHub or Project Relay. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
+    "<ul><li>Subscriber email address where supplied by the payment provider, provider customer/subscription identifiers, plan and subscription status.</li><li>Monthly usage counters and plan limits.</li><li>KeepGoing activation tokens are stored by the billing backend only as SHA-256 hashes; short-lived OAuth access and refresh tokens are issued for ChatGPT connections.</li><li>The goal, definition of done, options and—only when needed—a brief task-specific checkpoint submitted for a persistent job are sent to OpenAI's API to run that job.</li><li>When codingWorkspace is explicitly enabled, the public GitHub repository locator/ref and the public repository contents cloned from that source are processed in an isolated OpenAI-hosted sandbox so the job can inspect, edit and test code. KeepGoing supports public repositories only and does not perform remote repository writes or request repository credentials.</li><li>When workspaceFiles is explicitly used, only the selected task-relevant text files supplied for that job are sent to the hosted coding workspace. This handoff is size/path bounded and the file bodies are not stored in KeepGoing's durable job database.</li><li>KeepGoing does not independently retrieve your full ChatGPT history. The MCP context field is intentionally bounded and should never contain full chat transcripts, passwords, API keys, payment credentials or unrelated personal data.</li><li>Technical service logs needed for reliability, security and abuse prevention.</li></ul>",
+    "<h2>Service providers</h2><p>Job requests are sent to OpenAI's API for execution. Payment providers process payment details; KeepGoing receives subscription/payment status and identifiers rather than full card details. Hosting and infrastructure providers may process technical request data as needed to operate the service.</p>",
     "<h2>Purpose</h2><p>We use this information to provide the service, enforce plan limits, process subscriptions, secure accounts, diagnose faults and prevent abuse.</p>",
     "<h2>Retention</h2><p>Active subscription and usage records are retained while the subscription is active. Revoked access-token hashes are retained for up to 24 months for support, fraud prevention and security. Inactive subscription/payment metadata is retained for up to six years for accounting, tax, billing reconciliation and dispute handling, or longer where law or an unresolved matter requires it. OAuth access tokens expire after one hour and refresh tokens after 30 days. KeepGoing terminal-job metadata and safe webhook/tool-audit metadata use bounded retention cleanup; active jobs are not removed by that cleanup. OpenAI and any selected MCP provider may retain provider-side state according to the applicable account/data controls. Hosting providers may retain technical logs according to their own policies.</p>",
     "<h2>Your choices</h2><p>Do not submit information you do not want processed by the service. You can cancel a subscription through the available billing provider. For account or privacy questions, contact <a href=\"mailto:info@thesmashroom.co.uk\">info@thesmashroom.co.uk</a>.</p>",
@@ -2557,10 +2824,19 @@ app.get("/security", (_req, res) => {
   ].join("")));
 });
 
+// Public GET routes may nudge PayPal setup, but at most once a minute, so
+// unauthenticated traffic cannot be amplified into PayPal/billing API calls.
+let lastPublicPayPalSetupAttempt = 0;
+async function maybeEnsurePayPalSetup() {
+  if (!paypalClientId || !paypalClientSecret || paypalSetupComplete) return;
+  const now = Date.now();
+  if (now - lastPublicPayPalSetupAttempt < 60_000 && !paypalSetupPromise) return;
+  lastPublicPayPalSetupAttempt = now;
+  try { await ensurePayPalSetup(); } catch {}
+}
+
 app.get("/billing/plans", async (_req, res) => {
-  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
-    try { await ensurePayPalSetup(); } catch {}
-  }
+  await maybeEnsurePayPalSetup();
   res.json({
     free: { price_gbp: 0, jobs_per_month: 3 },
     pro: { price_gbp: 7.99, jobs_per_month: 100, paypal_plan_id: paypalConfig.pro_plan_id || null },
@@ -2574,9 +2850,7 @@ app.get("/billing/plans", async (_req, res) => {
 });
 
 app.get("/paypal/status", async (_req, res) => {
-  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
-    try { await ensurePayPalSetup(); } catch {}
-  }
+  await maybeEnsurePayPalSetup();
   res.json({
     configured: Boolean(paypalClientId && paypalClientSecret),
     ready: paypalSetupComplete,
@@ -2603,7 +2877,7 @@ app.post("/worker-mcp", async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error("keepgoing_worker_mcp_error", safeLogError(error), req.keepgoingRequestId || "");
+    log.error("keepgoing_worker_mcp_error", { error: safeLogError(error), request_id: req.keepgoingRequestId || null });
     if (!res.headersSent) res.status(500).json({ error: "worker_mcp_error" });
   }
 });
@@ -2618,9 +2892,7 @@ app.get("/worker-mcp", (req, res) => {
 });
 
 app.get("/readiness", async (_req, res) => {
-  if (paypalClientId && paypalClientSecret && !paypalSetupComplete) {
-    try { await ensurePayPalSetup(); } catch {}
-  }
+  await maybeEnsurePayPalSetup();
   const engineReady = Boolean(OPENAI_API_KEY);
   const billingBackendReady = Boolean(
     AUTH_URL &&
@@ -2731,7 +3003,48 @@ app.get("/readiness", async (_req, res) => {
     sell_ready: sellReady,
     payment_provider: "paypal",
     paypal_mode: PAYPAL_MODE,
+    // Names of missing/invalid variables are logged at startup, never exposed here.
+    config_ok: STARTUP_CONFIG.ok,
+    config_error_count: STARTUP_CONFIG.errors.length,
+    watchdog: watchdogStatus(),
+    release: APP_VERSION,
     protected: true
+  });
+});
+
+// Structured capability/version document for support and client compatibility
+// checks. Contains no account data and no secrets.
+app.get("/version", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    name: "KeepGoing MCP",
+    release: APP_VERSION,
+    engine: V12_ENABLED ? (V12_CANARY_ONLY ? "durable-canary" : "durable") : "legacy",
+    engine_version: V12_ENABLED ? APP_VERSION : LEGACY_ENGINE_VERSION,
+    mcp_endpoint: PUBLIC_BASE_URL + "/mcp",
+    transport: "streamable-http (stateless)",
+    auth: { type: "oauth2", pkce: "S256", scope: OAUTH_SCOPE },
+    tools: {
+      always: ["start_persistent_job", "continue_until_done", "get_persistent_job", "wait_for_persistent_job", "cancel_persistent_job"],
+      durable: ["get_profile", "list_persistent_jobs", "resume_persistent_job", "list_job_artifacts", "read_job_artifact", "get_job_report"]
+    },
+    limits: {
+      artifact_read_max_bytes: 512_000,
+      workspace_files_max: 8,
+      workspace_file_max_bytes: 32_000,
+      workspace_files_total_max_bytes: 128_000,
+      wait_seconds_max: 25,
+      max_active_jobs: MAX_ACTIVE_JOBS,
+      mcp_requests_per_minute: MCP_RATE_LIMIT_PER_MINUTE
+    },
+    features: {
+      coding_workspace: V12_ENABLED,
+      public_github_clone_only: true,
+      remote_push: false,
+      artifact_checksums: true,
+      job_reports: V12_ENABLED,
+      openai_webhook: Boolean(V12_ENABLED && OPENAI_WEBHOOK_SECRET)
+    }
   });
 });
 
@@ -2782,8 +3095,22 @@ app.post("/mcp", async (req, res) => {
     Object.assign(access, consumed, { _customer_token: customerToken });
   }
 
-  if (access.ok && req.body?.id != null) {
-    access._mcp_request_id = "mcp-" + digest(String(req.body.id));
+  // Per-account limiter on top of the per-IP one, so a single subscription
+  // cannot hammer the provider from many addresses.
+  const subjectRetryAfter = rateLimitHit(
+    "mcp-subject:" + digest(String(access.subject || access._customer_token || "")).slice(0, 32),
+    MCP_RATE_LIMIT_PER_MINUTE,
+    60 * 1000
+  );
+  if (subjectRetryAfter) {
+    res.set("Retry-After", String(subjectRetryAfter));
+    return res.status(429).json({ error: "rate_limited", retry_after_seconds: subjectRetryAfter });
+  }
+
+  access._request_id = req.keepgoingRequestId;
+  if (req.body?.id != null) {
+    // Only an input to fallbackStartRequestIds(); never used alone as a key.
+    access._mcp_rpc_id = String(req.body.id).slice(0, 200);
   }
   const server = createMcpServer(access);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -2794,8 +3121,9 @@ app.post("/mcp", async (req, res) => {
   try {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-  } catch {
-    if (!res.headersSent) res.status(500).json({ error: "mcp_error" });
+  } catch (error) {
+    log.error("mcp_transport_error", { error: safeLogError(error), request_id: req.keepgoingRequestId });
+    if (!res.headersSent) res.status(500).json({ error: "mcp_error", request_id: req.keepgoingRequestId });
   }
 });
 
@@ -2811,23 +3139,42 @@ app.get("/mcp", async (req, res) => {
 let watchdogTimer = null;
 let shuttingDown = false;
 
+const STARTUP_CONFIG = validateEnvironment(process.env);
+for (const warning of STARTUP_CONFIG.warnings) log.warn("config_warning", { issue: warning });
+for (const issue of STARTUP_CONFIG.errors) log.error("config_error", { issue });
+
+function watchdogStatus() {
+  if (!V12_ENABLED || !v12RuntimeCache?.watchdog?.status) return null;
+  return v12RuntimeCache.watchdog.status();
+}
+
+async function runWatchdogPass(label) {
+  if (shuttingDown) return;
+  try {
+    const runtime = getV12Runtime();
+    const result = await runtime.watchdog.runOnce();
+    if (result?.skipped) return;
+    const deadLettered = (result?.results || []).filter((item) => item.action === "dead_lettered");
+    for (const item of deadLettered) log.warn("keepgoing_job_dead_lettered", { job_id: item.job_id, error: item.error });
+    if (result?.checked) {
+      log.debug("keepgoing_watchdog_pass", { label, checked: result.checked, errors: (result.results || []).filter((r) => r.action === "error").length });
+    }
+  } catch (error) {
+    log.error("keepgoing_v12_watchdog_error", { label, error: safeLogError(error) });
+  }
+}
+
 const httpServer = app.listen(PORT, "0.0.0.0", () => {
-  console.log("KeepGoing MCP " + (V12_ENABLED ? "v" + APP_VERSION : "v1.1.0") + " listening on " + PORT);
+  log.info("keepgoing_listening", { release: APP_VERSION, engine: V12_ENABLED ? "durable" : "legacy", port: PORT });
 
   if (V12_ENABLED) {
     try {
-      const runtime = getV12Runtime();
-      watchdogTimer = setInterval(() => {
-        runtime.watchdog.runOnce().catch((error) => {
-          console.error("keepgoing_v12_watchdog_error", safeLogError(error));
-        });
-      }, V12_WATCHDOG_INTERVAL_MS);
+      getV12Runtime();
+      watchdogTimer = setInterval(() => { void runWatchdogPass("interval"); }, V12_WATCHDOG_INTERVAL_MS);
       watchdogTimer.unref();
-      runtime.watchdog.runOnce().catch((error) => {
-        console.error("keepgoing_v12_watchdog_startup_error", safeLogError(error));
-      });
+      void runWatchdogPass("startup");
     } catch (error) {
-      console.error("keepgoing_v12_startup_error", safeLogError(error));
+      log.error("keepgoing_v12_startup_error", { error: safeLogError(error) });
     }
   }
 
@@ -2838,10 +3185,10 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
       }
       if (paypalClientId && paypalClientSecret) {
         await ensurePayPalSetup();
-        console.log("PayPal " + PAYPAL_MODE + " subscriptions ready");
+        log.info("paypal_ready", { mode: PAYPAL_MODE });
       }
     } catch (error) {
-      console.error("PayPal bootstrap failed:", safeLogError(error));
+      log.error("paypal_bootstrap_failed", { error: safeLogError(error) });
     }
   })();
 });
@@ -2854,7 +3201,7 @@ httpServer.maxRequestsPerSocket = 1_000;
 function gracefulShutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log("keepgoing_shutdown_start", signal);
+  log.info("keepgoing_shutdown_start", { signal });
 
   if (watchdogTimer) {
     clearInterval(watchdogTimer);
@@ -2862,20 +3209,26 @@ function gracefulShutdown(signal) {
   }
 
   const forceExit = setTimeout(() => {
-    console.error("keepgoing_shutdown_forced", signal);
+    log.error("keepgoing_shutdown_forced", { signal });
     process.exit(1);
   }, 10_000);
   forceExit.unref();
 
+  // Stop accepting connections, then let an in-flight watchdog pass finish so
+  // a continuation claim is not abandoned mid-write (its lease would expire
+  // and be retried safely anyway, but draining avoids the 60s delay).
+  const watchdogDrained = v12RuntimeCache?.watchdog?.idle ? v12RuntimeCache.watchdog.idle() : Promise.resolve();
   httpServer.close((error) => {
-    clearTimeout(forceExit);
-    if (error) {
-      console.error("keepgoing_shutdown_error", safeLogError(error));
-      process.exitCode = 1;
-      return;
-    }
-    console.log("keepgoing_shutdown_complete", signal);
-    process.exitCode = 0;
+    watchdogDrained.finally(() => {
+      clearTimeout(forceExit);
+      if (error) {
+        log.error("keepgoing_shutdown_error", { error: safeLogError(error) });
+        process.exitCode = 1;
+        return;
+      }
+      log.info("keepgoing_shutdown_complete", { signal });
+      process.exitCode = 0;
+    });
   });
 }
 
