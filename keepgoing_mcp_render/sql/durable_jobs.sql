@@ -8,8 +8,7 @@ create table if not exists public.keepgoing_jobs (
   owner_subject_hash text not null
     check (char_length(owner_subject_hash) between 16 and 128),
   client_request_hash text,
-  engine text not null default 'agents'
-    check (engine in ('agents', 'responses')),
+  engine text not null default 'agents',
   provider_session_id text unique,
   status text not null
     check (status in (
@@ -59,6 +58,19 @@ create table if not exists public.keepgoing_jobs (
   constraint keepgoing_jobs_request_unique
     unique (owner_subject_hash, client_request_hash)
 );
+
+-- Keep the engine constraint migration-safe for existing v1.2 tables while
+-- allowing bounded development-agent fingerprints. The service remains the
+-- only writer; this constraint prevents arbitrary engine labels entering state.
+alter table public.keepgoing_jobs
+  drop constraint if exists keepgoing_jobs_engine_check;
+
+alter table public.keepgoing_jobs
+  add constraint keepgoing_jobs_engine_check
+  check (
+    engine in ('agents', 'responses')
+    or engine ~ '^agents-dev:c([1-9]|1[0-9]|20):v([0-9]|1[0-2]):a[0-9a-f]{16}:q(auto|[0-9a-f]{16}):p[01](:n[01])?(:r[01])?$'
+  );
 
 create index if not exists keepgoing_jobs_status_updated_idx
   on public.keepgoing_jobs (status, updated_at);
