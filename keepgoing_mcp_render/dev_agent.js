@@ -90,8 +90,12 @@ export function normaliseDevTask(input = {}) {
   const allowWeb = input.allowWeb !== false;
   const context = cleanOptionalText(input.context, 4_000);
   const playbook = normaliseDevPlaybook(input.playbook);
-  const acceptanceCriteria = normaliseCriteria(applyDevPlaybookCriteria(input.acceptanceCriteria, playbook));
-  const verificationCommands = normaliseVerificationCommands(input.verificationCommands);
+  const planOnly = input.planOnly === true;
+  const acceptanceCriteria = normaliseCriteria(applyDevPlaybookCriteria(input.acceptanceCriteria, planOnly ? null : playbook));
+  let verificationCommands = normaliseVerificationCommands(input.verificationCommands);
+  if (planOnly && !verificationCommands.includes("git diff --quiet")) {
+    verificationCommands = [...verificationCommands, "git diff --quiet"];
+  }
   const approvalPolicy = normaliseApprovalPolicy(input.approvalPolicy);
 
   return Object.freeze({
@@ -102,13 +106,15 @@ export function normaliseDevTask(input = {}) {
     allowWeb,
     context,
     playbook: playbook?.id || null,
+    planOnly,
     acceptanceCriteria,
     verificationCommands,
     approvalPolicy,
     requireFinalReview: input.requireFinalReview !== false,
-    requirePatchArtifact: input.requirePatchArtifact !== false,
+    requirePatchArtifact: planOnly ? false : input.requirePatchArtifact !== false,
     progressPath: "/workspace/outputs/dev-progress.json",
     patchPath: "/workspace/outputs/changes.patch",
+    planPath: "/workspace/outputs/plan.md",
     handoffPath: "/workspace/outputs/handoff.md"
   });
 }
@@ -123,9 +129,12 @@ export function buildDevJobGoal(taskInput) {
     : "- Auto-detect the project's normal build/test/lint commands from repository files and documentation.";
 
   return [
-    "Complete this software-engineering task autonomously inside the isolated coding workspace.",
+    task.planOnly
+      ? "Analyze this software-engineering task autonomously inside the isolated coding workspace without modifying project files."
+      : "Complete this software-engineering task autonomously inside the isolated coding workspace.",
     `Repository: ${task.repositoryUrl}`,
     `Base ref: ${task.repositoryRef}`,
+    task.planOnly ? "MODE: PLAN ONLY. Do not modify files under /workspace/project. Before completion prove the project tree is unchanged with git diff --quiet." : "MODE: IMPLEMENT AND VERIFY.",
     "",
     "GOAL",
     task.goal,
@@ -139,16 +148,16 @@ export function buildDevJobGoal(taskInput) {
     "WORKFLOW",
     "1. Inspect the repository and project instructions before editing.",
     "2. Produce a short implementation plan mapped to the acceptance criteria.",
-    "3. Implement the smallest coherent change set.",
-    "4. Run relevant syntax, lint, unit, build and integration checks after changes.",
-    "5. On failure, inspect the actual error, repair it and re-run the failed verification.",
-    "6. Review the final diff for correctness, security, regressions and scope creep.",
+    task.planOnly ? "3. Do not edit project files; produce a detailed implementation plan mapped to the acceptance criteria." : "3. Implement the smallest coherent change set.",
+    task.planOnly ? "4. Run only safe read-only inspection/verification needed to validate the plan, then run git diff --quiet." : "4. Run relevant syntax, lint, unit, build and integration checks after changes.",
+    task.planOnly ? "5. If repository changes are detected, revert only the agent-created local edits and re-run git diff --quiet." : "5. On failure, inspect the actual error, repair it and re-run the failed verification.",
+    task.planOnly ? "6. Review the final plan for completeness, sequencing, risks and verification strategy." : "6. Review the final diff for correctness, security, regressions and scope creep.",
     "7. Keep structured progress current and publish the required output artifacts.",
     "8. Return STATUS: COMPLETED only after every required criterion and verification gate passes.",
     "",
     "OUTPUT ARTIFACTS",
     `- Structured progress: ${task.progressPath}`,
-    `- Patch: ${task.patchPath}`,
+    task.planOnly ? `- Plan: ${task.planPath}` : `- Patch: ${task.patchPath}`,
     `- Final handoff: ${task.handoffPath}`,
     "",
     "REMOTE SIDE EFFECTS",
@@ -166,8 +175,8 @@ export function buildDevDefinitionOfDone(taskInput) {
     task.verificationCommands.length
       ? "Every required verification command exits with code 0."
       : "The project's normal verification commands were discovered and executed successfully.",
-    task.requireFinalReview ? "Final diff review is complete with no unresolved blocking findings." : "No unresolved blocking findings remain.",
-    task.requirePatchArtifact ? `A patch artifact exists at ${task.patchPath}.` : "The final changes are fully summarized.",
+    task.requireFinalReview ? (task.planOnly ? "Final plan review is complete with no unresolved blocking findings." : "Final diff review is complete with no unresolved blocking findings.") : "No unresolved blocking findings remain.",
+    task.planOnly ? `A detailed implementation plan exists at ${task.planPath}.` : (task.requirePatchArtifact ? `A patch artifact exists at ${task.patchPath}.` : "The final changes are fully summarized."),
     `A handoff exists at ${task.handoffPath}.`,
     `The latest structured progress at ${task.progressPath} reports stage completed.`,
     "No remote or sensitive side effect was performed without policy permission/approval."
@@ -181,6 +190,7 @@ export function buildDevJobContext(taskInput, extraContext = "") {
     "Development-agent policy checkpoint:",
     `mode=${task.mode}`,
     `playbook=${task.playbook || "none"}`,
+    `planOnly=${task.planOnly ? "true" : "false"}`,
     ...(task.playbook ? [`playbookGuidance=${DEV_PLAYBOOKS[task.playbook].guidance}`] : []),
     `remotePush=${policy.allowRemotePush}`,
     `createPullRequest=${policy.allowCreatePullRequest}`,
@@ -190,7 +200,7 @@ export function buildDevJobContext(taskInput, extraContext = "") {
     `externalMessages=${policy.allowExternalMessages}`,
     `payments=${policy.allowPayments}`,
     `secretAccess=${policy.allowSecretAccess}`,
-    "Local repository inspection/edit/build/test/lint/git-diff/artifact work is allowed in the isolated workspace.",
+    task.planOnly ? "PLAN ONLY: project file edits are forbidden; use read-only inspection and prove the project tree is unchanged with git diff --quiet." : "Local repository inspection/edit/build/test/lint/git-diff/artifact work is allowed in the isolated workspace.",
     cleanOptionalText(extraContext || task.context, 2_500)
   ].filter(Boolean).join("\n");
   return text.slice(0, 4_000);
@@ -328,6 +338,9 @@ export function verificationGate(taskInput, progressInput) {
   if (task.requirePatchArtifact && !progress.artifacts.includes(task.patchPath)) {
     reasons.push(`required patch artifact not reported: ${task.patchPath}`);
   }
+  if (task.planOnly && !progress.artifacts.includes(task.planPath)) {
+    reasons.push(`required plan artifact not reported: ${task.planPath}`);
+  }
   if (!progress.artifacts.includes(task.handoffPath)) {
     reasons.push(`handoff artifact not reported: ${task.handoffPath}`);
   }
@@ -356,13 +369,14 @@ export function buildDevEngineTag(taskInput) {
     `v${task.verificationCommands.length}`,
     `a${criteriaSignature}`,
     `q${verificationSignature}`,
-    `p${task.requirePatchArtifact ? 1 : 0}`
+    `p${task.requirePatchArtifact ? 1 : 0}`,
+    `n${task.planOnly ? 1 : 0}`
   ].join(":");
 }
 
 export function parseDevEngineTag(value) {
   const match = String(value || "").match(
-    /^agents-dev:c(\d+):v(\d+):a([0-9a-f]{16}):q(auto|[0-9a-f]{16}):p([01])$/
+    /^agents-dev:c(\d+):v(\d+):a([0-9a-f]{16}):q(auto|[0-9a-f]{16}):p([01])(?::n([01]))?$/
   );
   if (!match) return null;
   const criteriaCount = Number(match[1]);
@@ -375,7 +389,8 @@ export function parseDevEngineTag(value) {
     verificationCount,
     criteriaSignature: match[3],
     verificationSignature: match[4],
-    requirePatchArtifact: match[5] === "1"
+    requirePatchArtifact: match[5] === "1",
+    planOnly: match[6] === "1"
   };
 }
 
@@ -435,6 +450,9 @@ export function verifyDevTerminalOutput(output = "", engineTag = "") {
     !progress.artifacts.includes("/workspace/outputs/changes.patch")
   ) {
     reasons.push("required patch artifact not reported");
+  }
+  if (spec.planOnly && !progress.artifacts.includes("/workspace/outputs/plan.md")) {
+    reasons.push("required plan artifact not reported");
   }
   if (!progress.artifacts.includes("/workspace/outputs/handoff.md")) {
     reasons.push("required handoff artifact not reported");
@@ -541,11 +559,13 @@ function normaliseMode(value) {
 }
 
 function progressProtocol(task) {
+  const primaryArtifact = task.planOnly ? task.planPath : task.patchPath;
+  const progressStageExample = task.planOnly ? "planning" : "implementing";
   return [
     "STRUCTURED PROGRESS PROTOCOL",
     "Whenever the stage materially changes, update /workspace/outputs/dev-progress.json and include one compact single-line JSON snapshot in your checkpoint output prefixed exactly with DEV_PROGRESS_JSON:.",
     "The JSON shape is:",
-    '{"stage":"implementing","summary":"...","criteria":[{"id":"AC1","status":"pending|pass|fail|blocked","evidence":"..."}],"checks":[{"command":"...","exitCode":0,"required":true}],"risks":[],"artifacts":["/workspace/outputs/changes.patch","/workspace/outputs/handoff.md"],"next":"..."}',
+    `{"stage":"${progressStageExample}","summary":"...","criteria":[{"id":"AC1","status":"pending|pass|fail|blocked","evidence":"..."}],"checks":[{"command":"...","exitCode":0,"required":true}],"risks":[],"artifacts":["${primaryArtifact}","${task.handoffPath}"],"next":"..."}`,
     `All criterion IDs must come from: ${task.acceptanceCriteria.map((c) => c.id).join(", ")}.`,
     "The final checkpoint must use stage completed, include evidence for every criterion, include verification results, list required artifacts, and then end with STATUS: COMPLETED."
   ].join("\n");

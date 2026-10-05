@@ -331,6 +331,22 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   assert.match(createdOptions.instructions, /\/workspace\/project/);
   assert.match(createdOptions.instructions, /Do not attempt to push to GitHub/);
 
+  const planOnlyJob = await codeService.start({
+    goal: "plan without editing the repository",
+    definitionOfDone: "plan is complete and worktree is unchanged",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code-plan-only",
+    codingWorkspace: true,
+    planOnly: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  });
+  assert.equal(planOnlyJob.status, JOB_STATES.WORKING);
+  assert.match(createdOptions.instructions, /PLAN-ONLY/);
+  assert.match(createdOptions.instructions, /do not modify files/i);
+  assert.match(createdOptions.instructions, /git diff --quiet/);
+
+
   const localFileJob = await codeService.start({
     goal: "work with selected local file",
     ownerSubjectHash: "owner-code",

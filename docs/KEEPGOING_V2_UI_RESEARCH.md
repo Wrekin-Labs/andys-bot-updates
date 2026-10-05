@@ -101,7 +101,7 @@ KeepGoing decision:
 - Preserve explicit autonomy mode.
 - Add playbook presets to task creation.
 - Keep destructive/external operations approval-gated.
-- Future controls: Plan Only, Review Loop, Fork, Revert checkpoint, Context inspector and handoff to Project Relay.
+- Plan Only is now implemented as an enforced read-only workflow with a clean-worktree verification check. Future controls: Review Loop, Fork, Revert checkpoint, Context inspector and handoff to Project Relay.
 
 Official source:
 - https://devin.ai/cli
@@ -125,6 +125,7 @@ The interface is deliberately KeepGoing-branded:
 - Sessions list.
 - Spaces, Knowledge, Playbooks and Integrations navigation.
 - New autonomous development-task form.
+- Enforced Plan Only mode: read-only repository analysis, `plan.md` output and `git diff --quiet` proof before completion.
 - Server-enforced Playbook presets for bug fixes, features, audits, refactors, CI repair and dependency updates.
 - Live job detail.
 - Stop and resume controls.

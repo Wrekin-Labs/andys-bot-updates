@@ -17,8 +17,11 @@ A development task contains:
 - autonomy mode
 - task-specific context
 - optional selected workspace files
+- optional enforced plan-only mode
 
 The task is complete only after every required acceptance criterion is reported as passed with evidence, required verification commands exit successfully, the final diff is reviewed, and output artifacts are produced.
+
+Plan-only tasks use the same durable engine but forbid edits under `/workspace/project`, require `/workspace/outputs/plan.md`, and inject `git diff --quiet` as a mandatory verification command so the server can reject a false read-only claim.
 
 ## State model
 
@@ -151,7 +154,7 @@ High-signal patterns used in this design:
 2. Branch-per-task and draft PR creation.
 3. CI run inspection, failure classification and retry/fix loop.
 4. Independent reviewer agent before merge.
-5. Reusable project playbooks and knowledge.
+5. Team-managed custom playbooks and persistent project knowledge.
 6. Parallel specialist workers for large tasks.
 7. Web/desktop control surface with task queue, terminal/log viewer, diff, checks and approvals.
 8. Evaluation harness using representative real repository tasks.

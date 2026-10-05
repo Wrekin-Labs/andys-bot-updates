@@ -13,6 +13,8 @@ assert.match(html, /data-tab="diff"/);
 assert.match(html, /changes\.patch/);
 assert.match(html, /ci_repair/);
 assert.match(html, /playbook:kind/);
+assert.match(html, /intentInput/);
+assert.match(html, /planOnly/);
 assert.match(html, /DEV_PROGRESS_JSON:/);
 assert.match(html, /\/dev\/api\/tasks/);
 assert.match(html, /\/dev\/api\/jobs/);

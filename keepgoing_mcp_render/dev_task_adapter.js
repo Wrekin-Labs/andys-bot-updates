@@ -22,6 +22,7 @@ export function buildStartDevTaskArgs(input = {}) {
       allowWeb: task.allowWeb,
       clientRequestId,
       context: buildDevJobContext(task, extraContext),
+      planOnly: task.planOnly,
       codingWorkspace: true,
       repositoryUrl: task.repositoryUrl,
       repositoryRef: task.repositoryRef,
@@ -31,7 +32,7 @@ export function buildStartDevTaskArgs(input = {}) {
 }
 
 export function devTaskToolDescription() {
-  return "Start one durable autonomous software-engineering task in an isolated coding workspace. The agent inspects the repository, plans, edits, builds, tests, repairs failures, reviews the final diff, and publishes progress/patch/handoff artifacts. Remote push, merge, deploy, production writes, payments, external messages, and secret operations remain approval-gated by default.";
+  return "Start one durable autonomous software-engineering task in an isolated coding workspace. The agent can either implement and verify changes or run a plan-only read-only workflow. It inspects the repository, plans, edits/builds/tests when implementation is enabled, reviews evidence, and publishes progress artifacts. Remote push, merge, deploy, production writes, payments, external messages, and secret operations remain approval-gated by default.";
 }
 
 function cleanOptional(value, maxLength) {

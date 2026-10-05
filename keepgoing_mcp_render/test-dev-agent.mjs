@@ -103,7 +103,7 @@ assert.equal(devCompletionGate(task, output).ok, true);
 assert.equal(devCompletionGate(task, "STATUS: COMPLETED").ok, false);
 
 const engineTag = buildDevEngineTag(task);
-assert.match(engineTag, /^agents-dev:c3:v2:a[0-9a-f]{16}:q[0-9a-f]{16}:p1$/);
+assert.match(engineTag, /^agents-dev:c3:v2:a[0-9a-f]{16}:q[0-9a-f]{16}:p1:n0$/);
 assert.equal(parseDevEngineTag(engineTag).criteriaCount, 3);
 assert.equal(verifyDevTerminalOutput(output, engineTag).ok, true);
 
@@ -184,6 +184,35 @@ assert.throws(
   }),
   /playbook must be one of/
 );
+
+const planTask = normaliseDevTask({
+  goal: "plan a safe migration",
+  repositoryUrl: "https://github.com/example/repo",
+  acceptanceCriteria: [{ id: "PLAN_AC", text: "Plan covers the migration safely" }],
+  planOnly: true
+});
+assert.equal(planTask.planOnly, true);
+assert.equal(planTask.requirePatchArtifact, false);
+assert.ok(planTask.verificationCommands.includes("git diff --quiet"));
+assert.match(buildDevJobGoal(planTask), /MODE: PLAN ONLY/);
+assert.match(buildDevDefinitionOfDone(planTask), /plan\.md/);
+assert.match(buildDevEngineTag(planTask), /^agents-dev:c1:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p0:n1$/);
+const planProgress = {
+  stage: "completed",
+  summary: "plan ready",
+  criteria: [{ id: "PLAN_AC", status: "pass", evidence: "Repository analysis and plan" }],
+  checks: [{ command: "git diff --quiet", exitCode: 0, required: true }],
+  risks: [],
+  artifacts: ["/workspace/outputs/plan.md", "/workspace/outputs/handoff.md"],
+  next: "handoff"
+};
+const planOutput = `DEV_PROGRESS_JSON: ${JSON.stringify(planProgress)}\nSTATUS: COMPLETED`;
+assert.equal(verificationGate(planTask, planProgress).ok, true);
+assert.equal(verifyDevTerminalOutput(planOutput, buildDevEngineTag(planTask)).ok, true);
+const planMissingArtifact = structuredClone(planProgress);
+planMissingArtifact.artifacts = ["/workspace/outputs/handoff.md"];
+assert.equal(verificationGate(planTask, planMissingArtifact).ok, false);
+assert.equal(verifyDevTerminalOutput(`DEV_PROGRESS_JSON: ${JSON.stringify(planMissingArtifact)}\nSTATUS: COMPLETED`, buildDevEngineTag(planTask)).ok, false);
 
 const goal = buildDevJobGoal(task);
 assert.match(goal, /AC1:/);
