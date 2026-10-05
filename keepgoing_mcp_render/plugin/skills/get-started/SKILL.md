@@ -13,6 +13,12 @@ When the user says things such as "keep going", "continue until done", "finish i
 
 Start one durable job for one objective. Preserve the returned `job_id`.
 
+## Handoff promptly
+
+When KeepGoing intent is clear, invoke `continue_until_done` before extended foreground reasoning. The durable worker should own the long-running work. After KeepGoing accepts the job, return the `job_id` and current status to the user rather than leaving the visible ChatGPT turn thinking while the durable job continues in the background.
+
+If the visible ChatGPT turn itself stalls before the tool call reaches KeepGoing, the plugin cannot press or unstick that UI turn. A successfully accepted durable job is protected separately by KeepGoing's watchdog and bounded stalled-turn recovery.
+
 ## Do not create duplicate jobs
 
 If the current conversation already contains a KeepGoing `job_id` for the same objective, inspect or wait on that job instead of starting another.

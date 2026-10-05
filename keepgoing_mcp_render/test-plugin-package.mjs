@@ -8,6 +8,7 @@ const plugin = JSON.parse(readFileSync(resolve(here, "plugin.json"), "utf8"));
 const mcp = JSON.parse(readFileSync(resolve(here, "mcp.json"), "utf8"));
 const packaged = JSON.parse(readFileSync(resolve(here, "plugin/plugin.json"), "utf8"));
 const packagedMcp = JSON.parse(readFileSync(resolve(here, "plugin/mcp.json"), "utf8"));
+const onboardingSkill = readFileSync(resolve(here, "plugin/skills/get-started/SKILL.md"), "utf8").replace(/\r\n/g, "\n");
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
 assert.equal(plugin.name, "keepgoing");
@@ -49,3 +50,6 @@ assert.equal(packaged.extensions?.["com.openai"]?.review?.commerce, false);
 assert.equal(packaged.extensions?.["com.openai"]?.review?.test_cases?.positive?.length, 5);
 assert.equal(packaged.extensions?.["com.openai"]?.review?.test_cases?.negative?.length, 3);
 assert.deepEqual(packagedMcp, mcp);
+assert.match(onboardingSkill, /## Handoff promptly/);
+assert.match(onboardingSkill, /invoke `continue_until_done` before extended foreground reasoning/);
+assert.match(onboardingSkill, /return the `job_id` and current status/);
