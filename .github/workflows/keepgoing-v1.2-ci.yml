@@ -29,5 +29,6 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: keepgoing_mcp_render/package.json
-      - run: npm install --ignore-scripts
+      - run: npm ci --ignore-scripts
       - run: npm run verify
+

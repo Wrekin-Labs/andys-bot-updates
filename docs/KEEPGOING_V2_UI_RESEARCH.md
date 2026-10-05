@@ -1,4 +1,4 @@
-# KeepGoing v2 Command Center — Product Research and UI Decisions
+# KeepGoing v2 Command Center - Product Research and UI Decisions
 
 Date: 5 October 2026
 
@@ -51,6 +51,7 @@ Devin aggregates code diffs, plans, videos and screenshots into a session artifa
 
 KeepGoing decision:
 - Dedicated Artifacts tab backed by existing KeepGoing session artifacts.
+- Dedicated Diff tab opens the real published `changes.patch` artifact for review.
 - Preview text artifacts inside the Command Center.
 - Keep patches and handoff reports visible alongside acceptance evidence.
 
