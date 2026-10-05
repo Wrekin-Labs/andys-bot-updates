@@ -1,0 +1,29 @@
+﻿name: RoundFlow v052 Transfer
+on:
+  push:
+    branches: [roundflow-v052-transfer-20261005]
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roundflow-v052-apk
+          path: RoundFlow-v0.5.2-code28.apk
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roundflow-v052-aab
+          path: RoundFlow-v0.5.2-code28.aab
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roundflow-v052-pc-web
+          path: RoundFlow-v0.5.2-PC-web.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roundflow-v052-source
+          path: RoundFlow-v0.5.2-source.zip
+          compression-level: 0
