@@ -344,7 +344,7 @@ assert.equal(offlineLimits.max_total_tool_calls, 0);
   assert.equal(planOnlyJob.status, JOB_STATES.WORKING);
   assert.match(createdOptions.instructions, /PLAN-ONLY/);
   assert.match(createdOptions.instructions, /do not modify files/i);
-  assert.match(createdOptions.instructions, /git diff --quiet/);
+  assert.match(createdOptions.instructions, /clean-worktree verification command/);
 
 
   const localFileJob = await codeService.start({

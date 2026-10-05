@@ -8,6 +8,7 @@ assert.match(source, /name: "start_dev_task"/);
 assert.match(source, /acceptanceCriteria/);
 assert.match(source, /verificationCommands/);
 assert.match(source, /playbook/);
+assert.match(source, /skills/);
 assert.match(source, /planOnly/);
 assert.match(source, /renderDevDashboard/);
 assert.match(source, /app\.get\("\/dev"/);

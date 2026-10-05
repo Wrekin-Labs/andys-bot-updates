@@ -61,7 +61,7 @@ export function createV12Service({
       initialPrompt: buildJobPrompt(goal, definitionOfDone, mode, context),
       instructions: codingWorkspace
         ? JOB_INSTRUCTIONS + (planOnly
-          ? " A coding workspace is available at /workspace/project in PLAN-ONLY mode. Inspect files and run safe read-only commands, but do not modify files under /workspace/project. Write the implementation plan and handoff under /workspace/outputs, and run git diff --quiet before claiming completion. Do not attempt to push to GitHub or request repository credentials."
+          ? " A coding workspace is available at /workspace/project in PLAN-ONLY mode. Inspect files and run safe read-only commands, but do not modify files under /workspace/project. Write the implementation plan and handoff under /workspace/outputs, and run the clean-worktree verification command before claiming completion. Do not attempt to push to GitHub or request repository credentials."
           : " A coding workspace is available at /workspace/project. Read and modify files there, run appropriate tests, and save useful patch/report artifacts under /workspace/outputs. Do not attempt to push to GitHub or request repository credentials; this workspace mode is read/clone plus local edit/test only.")
         : JOB_INSTRUCTIONS,
       allowWeb,

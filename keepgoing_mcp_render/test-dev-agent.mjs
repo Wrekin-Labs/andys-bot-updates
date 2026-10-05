@@ -193,7 +193,7 @@ const planTask = normaliseDevTask({
 });
 assert.equal(planTask.planOnly, true);
 assert.equal(planTask.requirePatchArtifact, false);
-assert.ok(planTask.verificationCommands.includes("git diff --quiet"));
+assert.ok(planTask.verificationCommands.includes('test -z "$(git status --porcelain=v1 --untracked-files=all)"'));
 assert.match(buildDevJobGoal(planTask), /MODE: PLAN ONLY/);
 assert.match(buildDevDefinitionOfDone(planTask), /plan\.md/);
 assert.match(buildDevEngineTag(planTask), /^agents-dev:c1:v1:a[0-9a-f]{16}:q[0-9a-f]{16}:p0:n1$/);
@@ -201,7 +201,7 @@ const planProgress = {
   stage: "completed",
   summary: "plan ready",
   criteria: [{ id: "PLAN_AC", status: "pass", evidence: "Repository analysis and plan" }],
-  checks: [{ command: "git diff --quiet", exitCode: 0, required: true }],
+  checks: [{ command: 'test -z "$(git status --porcelain=v1 --untracked-files=all)"', exitCode: 0, required: true }],
   risks: [],
   artifacts: ["/workspace/outputs/plan.md", "/workspace/outputs/handoff.md"],
   next: "handoff"

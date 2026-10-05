@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { DEV_PLAYBOOKS, applyDevPlaybookCriteria, normaliseDevPlaybook } from "./dev_playbooks.js";
+import { DEV_SKILLS, applyDevSkillCriteria, normaliseDevSkills } from "./dev_skills.js";
 
 const GITHUB_REPOSITORY_RE = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/;
 const SAFE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
@@ -90,11 +91,14 @@ export function normaliseDevTask(input = {}) {
   const allowWeb = input.allowWeb !== false;
   const context = cleanOptionalText(input.context, 4_000);
   const playbook = normaliseDevPlaybook(input.playbook);
+  const skills = normaliseDevSkills(input.skills);
   const planOnly = input.planOnly === true;
-  const acceptanceCriteria = normaliseCriteria(applyDevPlaybookCriteria(input.acceptanceCriteria, planOnly ? null : playbook));
+  const criteriaWithPlaybook = applyDevPlaybookCriteria(input.acceptanceCriteria, planOnly ? null : playbook);
+  const acceptanceCriteria = normaliseCriteria(applyDevSkillCriteria(criteriaWithPlaybook, skills));
   let verificationCommands = normaliseVerificationCommands(input.verificationCommands);
-  if (planOnly && !verificationCommands.includes("git diff --quiet")) {
-    verificationCommands = [...verificationCommands, "git diff --quiet"];
+  const planOnlyCleanCheck = 'test -z "$(git status --porcelain=v1 --untracked-files=all)"';
+  if (planOnly && !verificationCommands.includes(planOnlyCleanCheck)) {
+    verificationCommands = [...verificationCommands, planOnlyCleanCheck];
   }
   const approvalPolicy = normaliseApprovalPolicy(input.approvalPolicy);
 
@@ -106,6 +110,7 @@ export function normaliseDevTask(input = {}) {
     allowWeb,
     context,
     playbook: playbook?.id || null,
+    skills: Object.freeze(skills.map((skill) => skill.id)),
     planOnly,
     acceptanceCriteria,
     verificationCommands,
@@ -134,7 +139,7 @@ export function buildDevJobGoal(taskInput) {
       : "Complete this software-engineering task autonomously inside the isolated coding workspace.",
     `Repository: ${task.repositoryUrl}`,
     `Base ref: ${task.repositoryRef}`,
-    task.planOnly ? "MODE: PLAN ONLY. Do not modify files under /workspace/project. Before completion prove the project tree is unchanged with git diff --quiet." : "MODE: IMPLEMENT AND VERIFY.",
+    task.planOnly ? 'MODE: PLAN ONLY. Do not modify files under /workspace/project. Before completion prove the project tree is unchanged with `test -z "$(git status --porcelain=v1 --untracked-files=all)"`.' : "MODE: IMPLEMENT AND VERIFY.",
     "",
     "GOAL",
     task.goal,
@@ -149,8 +154,8 @@ export function buildDevJobGoal(taskInput) {
     "1. Inspect the repository and project instructions before editing.",
     "2. Produce a short implementation plan mapped to the acceptance criteria.",
     task.planOnly ? "3. Do not edit project files; produce a detailed implementation plan mapped to the acceptance criteria." : "3. Implement the smallest coherent change set.",
-    task.planOnly ? "4. Run only safe read-only inspection/verification needed to validate the plan, then run git diff --quiet." : "4. Run relevant syntax, lint, unit, build and integration checks after changes.",
-    task.planOnly ? "5. If repository changes are detected, revert only the agent-created local edits and re-run git diff --quiet." : "5. On failure, inspect the actual error, repair it and re-run the failed verification.",
+    task.planOnly ? "4. Run only safe read-only inspection/verification needed to validate the plan, then run the clean-worktree verification command." : "4. Run relevant syntax, lint, unit, build and integration checks after changes.",
+    task.planOnly ? "5. If repository changes are detected, revert only the agent-created local edits and re-run the clean-worktree verification command." : "5. On failure, inspect the actual error, repair it and re-run the failed verification.",
     task.planOnly ? "6. Review the final plan for completeness, sequencing, risks and verification strategy." : "6. Review the final diff for correctness, security, regressions and scope creep.",
     "7. Keep structured progress current and publish the required output artifacts.",
     "8. Return STATUS: COMPLETED only after every required criterion and verification gate passes.",
@@ -190,8 +195,10 @@ export function buildDevJobContext(taskInput, extraContext = "") {
     "Development-agent policy checkpoint:",
     `mode=${task.mode}`,
     `playbook=${task.playbook || "none"}`,
+    `skills=${task.skills.length ? task.skills.join(",") : "none"}`,
     `planOnly=${task.planOnly ? "true" : "false"}`,
     ...(task.playbook ? [`playbookGuidance=${DEV_PLAYBOOKS[task.playbook].guidance}`] : []),
+    ...task.skills.map((skillId) => `skillGuidance[${skillId}]=${DEV_SKILLS[skillId].guidance}`),
     `remotePush=${policy.allowRemotePush}`,
     `createPullRequest=${policy.allowCreatePullRequest}`,
     `mergePullRequest=${policy.allowMergePullRequest}`,
@@ -200,7 +207,7 @@ export function buildDevJobContext(taskInput, extraContext = "") {
     `externalMessages=${policy.allowExternalMessages}`,
     `payments=${policy.allowPayments}`,
     `secretAccess=${policy.allowSecretAccess}`,
-    task.planOnly ? "PLAN ONLY: project file edits are forbidden; use read-only inspection and prove the project tree is unchanged with git diff --quiet." : "Local repository inspection/edit/build/test/lint/git-diff/artifact work is allowed in the isolated workspace.",
+    task.planOnly ? "PLAN ONLY: project file edits are forbidden; use read-only inspection and prove the project tree is unchanged with the clean-worktree verification command." : "Local repository inspection/edit/build/test/lint/git-diff/artifact work is allowed in the isolated workspace.",
     cleanOptionalText(extraContext || task.context, 2_500)
   ].filter(Boolean).join("\n");
   return text.slice(0, 4_000);
