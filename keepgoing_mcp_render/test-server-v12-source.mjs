@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
+// Normalise line endings: Windows checkouts (core.autocrlf) previously made the
+// fixed-width regex windows below fail on CRLF even though the code was fine.
+const source = readFileSync(new URL("./server.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 assert.match(source, /KEEPGOING_V12_ENABLED/);
 assert.match(source, /KEEPGOING_V12_CANARY_ONLY/);
 assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
-assert.match(source, /APP_VERSION = "1\.4\.0-beta\.24"/);
+// The release version is read from package.json, never hard-coded twice.
+assert.match(source, /const APP_VERSION = JSON\.parse\(readFileSync\(new URL\("\.\/package\.json"/);
+assert.doesNotMatch(source, /APP_VERSION = "\d/);
+assert.match(pkg.version, /^1\.5\.0/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
@@ -18,7 +24,7 @@ assert.match(source, /stripe_claim_error/);
 assert.match(source, /paypal_claim_error/);
 assert.match(source, /claim_upstream_error/);
 assert.doesNotMatch(source, /return res\.status\(502\)\.json\(\{ error: String\(error\?\.message \|\| error\) \}\)/);
-assert.match(source, /PayPal bootstrap failed:", safeLogError\(error\)/);
+assert.match(source, /paypal_bootstrap_failed", \{ error: safeLogError\(error\) \}/);
 assert.match(source, /function fetchWithTimeout\(url, init = \{\}, timeoutMs = 10_000\)/);
 assert.match(source, /app\.get\("\/owner\/paypal-setup"/);
 assert.match(source, /app\.post\("\/owner\/paypal-setup"/);
@@ -136,8 +142,12 @@ assert.ok(
 );
 assert.match(source, /authorise\(req, isStart && !V12_ENABLED\)/);
 assert.match(source, /toolName === "start_persistent_job" \|\| toolName === "continue_until_done"/);
-assert.match(source, /access\._mcp_request_id = "mcp-" \+ digest/);
-assert.match(source, /clientRequestId: args\.clientRequestId \|\| access\._mcp_request_id \|\| null/);
+// JSON-RPC ids are per-connection counters; they must never be the sole
+// idempotency key (that made unrelated later jobs return an older job).
+assert.doesNotMatch(source, /access\._mcp_request_id = "mcp-" \+ digest/);
+assert.match(source, /fallbackStartRequestIds\(\{ rpcId: access\._mcp_rpc_id, args \}\)/);
+assert.match(source, /clientRequestId: args\.clientRequestId \|\| derived\.current \|\| null/);
+assert.match(source, /fallbackRequestIds: derived\.previous/);
 assert.match(source, /server\.registerTool\("list_persistent_jobs"/);
 assert.match(source, /server\.registerTool\("resume_persistent_job"/);
 assert.match(source, /server\.registerTool\("continue_until_done"/);
@@ -198,6 +208,37 @@ assert.match(source, /name: "list_persistent_jobs"[\s\S]{0,1800}readOnlyHint: tr
 assert.match(source, /name: "resume_persistent_job"[\s\S]{0,1500}readOnlyHint: false[\s\S]{0,200}openWorldHint: true/);
 assert.match(source, /name: "list_job_artifacts"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,180}openWorldHint: false/);
 assert.match(source, /name: "read_job_artifact"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,180}openWorldHint: false/);
+
+// 1.5 hardening guards
+assert.match(source, /const ALLOW_QUERY_TOKEN = /);
+assert.match(source, /ALLOW_QUERY_TOKEN && typeof req\.query\?\.token === "string"/);
+assert.match(source, /verifyStripeSignature\(\{/);
+assert.doesNotMatch(source, /Object\.fromEntries\(header\.split/);
+assert.match(source, /createLegacyEngine\(\{/);
+assert.match(source, /legacyEngine\.get\(jobId, durableOwnerHash\(access\), Boolean\(access\.admin\)\)/);
+assert.match(source, /legacyEngine\.cancel\(jobId, durableOwnerHash\(access\), Boolean\(access\.admin\)\)/);
+assert.doesNotMatch(source, /async function getJob\(jobId\)/);
+assert.match(source, /return ownerSubjectHash\(access\)/);
+assert.doesNotMatch(source, /access\?\.subject \|\| access\?\.tier \|\| "customer"/);
+assert.match(source, /clientSafeError\(error, access\._request_id\)/);
+assert.doesNotMatch(source, /text: String\(error\?\.message \|\| error\) \}\] \}/);
+assert.match(source, /app\.use\("\/mcp", rateLimit\("mcp-ip"/);
+assert.match(source, /"mcp-subject:"/);
+assert.match(source, /maxActiveJobs: maxActiveJobsFor\(access\)/);
+assert.match(source, /app\.get\("\/version"/);
+assert.match(source, /async function maybeEnsurePayPalSetup\(\)/);
+assert.doesNotMatch(source, /if \(paypalClientId && paypalClientSecret && !paypalSetupComplete\) \{\n    try \{ await ensurePayPalSetup\(\); \} catch \{\}/);
+assert.match(source, /redirect: "error"/);
+assert.match(source, /validateEnvironment\(process\.env\)/);
+assert.match(source, /watchdog\.idle\(\)/);
+assert.match(source, /server\.registerTool\("get_job_report"/);
+assert.ok(source.includes('title: "Get job report"'));
+assert.match(source, /name: "get_job_report"[\s\S]{0,900}readOnlyHint: true[\s\S]{0,120}openWorldHint: false/);
+assert.doesNotMatch(source, /console\.(log|error)\(/);
+assert.match(source, /function scriptJson\(value\)/);
+assert.doesNotMatch(source, /const sessionJson = JSON\.stringify\(sessionId\)/);
+// Request ids must be assigned before the raw-body webhook routes.
+assert.ok(source.indexOf("req.keepgoingRequestId = requestId") < source.indexOf('app.post("/stripe/webhook"'));
 
 console.log("server v1.2 source guards passed");
 

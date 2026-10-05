@@ -1,16 +1,36 @@
+import { createHash } from "node:crypto";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
 export function createAgentsEngine({
   apiKey,
   model = "gpt-6-astra",
   baseUrl = DEFAULT_BASE_URL,
-  fetchImpl = globalThis.fetch
+  fetchImpl = globalThis.fetch,
+  timeoutMs = Number(process.env.KEEPGOING_PROVIDER_TIMEOUT_MS || DEFAULT_PROVIDER_TIMEOUT_MS)
 } = {}) {
   if (!apiKey) throw new Error("OpenAI API key required");
   if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
+  const providerTimeoutMs = Math.max(1_000, Math.min(120_000, Number(timeoutMs) || DEFAULT_PROVIDER_TIMEOUT_MS));
+
+  // Every provider call is bounded: a stalled upstream must surface as a
+  // classified, retryable error rather than hanging the watchdog or a tool call.
+  async function send(path, init = {}) {
+    try {
+      return await fetchImpl(baseUrl + path, {
+        ...init,
+        signal: init.signal || AbortSignal.timeout(providerTimeoutMs)
+      });
+    } catch (error) {
+      if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+        throw providerError("Agents API request timed out", 504, "provider_timeout");
+      }
+      throw providerError("Agents API is unreachable", 0, "provider_unreachable");
+    }
+  }
 
   async function request(path, init = {}) {
-    const response = await fetchImpl(baseUrl + path, {
+    const response = await send(path, {
       ...init,
       headers: {
         Authorization: "Bearer " + apiKey,
@@ -21,9 +41,10 @@ export function createAgentsEngine({
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const error = new Error(data?.error?.message || ("Agents API request failed (" + response.status + ")"));
-      error.status = response.status;
-      throw error;
+      throw providerError(
+        data?.error?.message || ("Agents API request failed (" + response.status + ")"),
+        response.status
+      );
     }
     return data;
   }
@@ -275,8 +296,7 @@ export function createAgentsEngine({
       throw new Error("artifact exceeds the readable text size limit");
     }
 
-    const response = await fetchImpl(
-      baseUrl +
+    const response = await send(
       "/agents/sessions/" + encodeURIComponent(sessionId) +
       "/artifacts/" + encodeURIComponent(id) + "/content",
       {
@@ -290,22 +310,26 @@ export function createAgentsEngine({
     );
 
     if (!response.ok) {
-      const message = await response.text().catch(() => "");
-      const error = new Error(
-        message || ("Artifact content request failed (" + response.status + ")")
-      );
-      error.status = response.status;
-      throw error;
+      // Never echo a raw upstream body to the caller.
+      throw providerError("Artifact content request failed (" + response.status + ")", response.status);
     }
 
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > safeMax) {
+    // Read at most safeMax bytes even if size_bytes metadata was wrong, so a
+    // hostile or runaway artifact cannot exhaust server memory.
+    const bytes = await readBounded(response, safeMax);
+    if (bytes === null) {
       throw new Error("artifact exceeds the readable text size limit");
     }
+    if (bytes.includes(0)) {
+      throw new Error("artifact type is not readable as text");
+    }
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 
     return {
       artifact: metadata,
-      text
+      text,
+      sha256: sha256Bytes(bytes),
+      byteLength: bytes.length
     };
   }
 
@@ -624,20 +648,24 @@ function normaliseWorkspaceFilePath(value) {
   return parts.join("/");
 }
 
-function looksSensitiveWorkspacePath(path) {
+const SENSITIVE_BASENAMES = new Set([
+  ".env", ".npmrc", ".pypirc", ".netrc", "_netrc", ".git-credentials", ".htpasswd",
+  "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials", "credentials.json",
+  "client_secret.json", "service-account.json", "secrets.json", "secrets.yml", "secrets.yaml"
+]);
+const SENSITIVE_DIRS = new Set([".ssh", ".aws", ".gnupg", ".docker", ".kube", ".azure", ".gcloud"]);
+const SENSITIVE_EXTENSIONS = [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".ppk", ".asc", ".gpg", ".tfstate", ".tfvars"];
+
+export function looksSensitiveWorkspacePath(path) {
   const lower = String(path).toLowerCase();
-  const base = lower.split("/").at(-1) || lower;
+  const parts = lower.split("/");
+  const base = parts.at(-1) || lower;
   return (
-    base === ".env" ||
+    SENSITIVE_BASENAMES.has(base) ||
     base.startsWith(".env.") ||
-    base === ".npmrc" ||
-    base === ".pypirc" ||
-    base === "id_rsa" ||
-    base === "id_ed25519" ||
-    lower.endsWith(".pem") ||
-    lower.endsWith(".key") ||
-    lower.endsWith(".p12") ||
-    lower.endsWith(".pfx")
+    /^service[-_]?account.*\.json$/.test(base) ||
+    parts.slice(0, -1).some((part) => SENSITIVE_DIRS.has(part)) ||
+    SENSITIVE_EXTENSIONS.some((ext) => lower.endsWith(ext))
   );
 }
 
@@ -736,8 +764,15 @@ function collectText(value, out) {
   }
   if (typeof value !== "object") return;
 
+  // User/system input (the job prompt, continuation prompts and resume input)
+  // lists the allowed STATUS markers verbatim. Treating it as model output
+  // would let an empty assistant turn be misread as "STATUS: COMPLETED".
+  const role = String(value.role || "").toLowerCase();
+  if (role === "user" || role === "system" || role === "developer") return;
+  if (String(value.type || "").toLowerCase() === "agent.session.input.message") return;
+
   if (typeof value.text === "string" &&
-      (value.type === "output_text" || value.type === "text" || value.type === "input_text")) {
+      (value.type === "output_text" || value.type === "text")) {
     out.push(value.text);
   }
   if (typeof value.output_text === "string") out.push(value.output_text);
@@ -747,6 +782,48 @@ function collectText(value, out) {
     if (key === "metadata") continue;
     collectText(child, out);
   }
+}
+
+function providerError(message, status = 0, code = null) {
+  const error = new Error(String(message || "Agents API request failed").slice(0, 300));
+  error.status = Number(status) || 0;
+  error.code = code || (
+    error.status === 429 ? "provider_rate_limited"
+      : error.status >= 500 ? "provider_unavailable"
+      : error.status >= 400 ? "provider_rejected"
+      : "provider_error"
+  );
+  error.retryable = error.code !== "provider_rejected";
+  return error;
+}
+
+async function readBounded(response, maxBytes) {
+  const declared = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (!response.body || typeof response.body.getReader !== "function") {
+    const buffer = typeof response.arrayBuffer === "function"
+      ? Buffer.from(await response.arrayBuffer())
+      : Buffer.from(String(await response.text()), "utf8");
+    return buffer.length > maxBytes ? null : buffer;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch {}
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function sha256Bytes(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function normaliseIdempotencyKey(value) {

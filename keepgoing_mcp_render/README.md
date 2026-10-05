@@ -1,6 +1,38 @@
-# KeepGoing v1.4 beta
+# KeepGoing v1.5 beta
 
-**Current beta:** `1.4.0-beta.24` — durable multi-turn jobs, public-GitHub coding workspaces, and bounded selected-file handoff for local/uncommitted text files, alongside watchdog-first recovery, idempotent startup/continuation, owner auto-continue, secure external PayPal checkout and runtime hardening.
+**Current beta:** `1.5.0-beta.1` (artifact-finalisation line) — durable multi-turn jobs, public-GitHub coding workspaces, bounded selected-file handoff, checksummed artifact manifests and job reports, alongside watchdog-first recovery, idempotent startup/continuation, owner auto-continue, secure external PayPal checkout and runtime hardening.
+
+The release version lives in `package.json` only; `server.js`, `/version`, `/readiness` and `plugin.json` (checked by tests) follow it.
+
+## What's new in 1.5.0-beta.1
+
+Security
+- Legacy (v1.1) jobs are bound to their owner via Responses metadata; get/wait/cancel refuse other accounts' ids. Previously any authenticated customer could read or cancel any response id in KeepGoing's OpenAI project.
+- Durable owner identity fails closed instead of falling back to a shared tier-wide owner.
+- Query-string tokens (`/mcp?token=`) are refused unless `KEEPGOING_ALLOW_QUERY_TOKEN=1`.
+- Tool errors are client-safe: KeepGoing validation messages pass through, provider/store internals are replaced by a generic message with a request reference.
+- Stripe webhooks accept every `v1` signature during secret rotation.
+- Per-IP and per-account MCP rate limits; per-account caps on concurrently running jobs.
+
+Durable correctness
+- Start requests without `clientRequestId` derive their idempotency key from the JSON-RPC id **and** the arguments (10-minute window). The old key used the JSON-RPC id alone, so an unrelated later job could silently return an earlier one.
+- Cancel retries on version conflicts, stops a continuation that was in flight, and works on `input_required` jobs. Completed/cancelled/budget-exhausted jobs can never be resurrected (application CAS filter + optional DB trigger).
+- Completion markers are read from agent output only (never the prompt), using the final marker.
+- `resume_persistent_job` no longer wedges permanently after an unconfirmed delivery from an earlier checkpoint.
+- Watchdog: no overlapping passes, failing jobs are deferred instead of starving the queue, jobs unrecoverable after their deadline are dead-lettered as `recovery_failed`, and shutdown drains an in-flight pass.
+- Provider (30 s) and store (10 s) calls are bounded and classified (`provider_timeout`, `provider_rate_limited`, `store_timeout`, …).
+
+Artifacts and coding
+- Deterministic artifact manifest (sorted; name, MIME type, size, `readable` flag); strict `/workspace/outputs/` path validation (no `..`, no directory entries).
+- `read_job_artifact` streams with a hard 500 KB cap, rejects binary content, and returns a SHA-256 checksum.
+- New read-only `get_job_report` tool: status, progress, budget diagnostics, checksummed result excerpt, artifact manifest and next step.
+- Coding jobs are told to treat repository content as untrusted and to finish with `/workspace/outputs/changes.patch` and `REPORT.md`.
+- Wider credential-file rejection for selected-file handoff (`.netrc`, `.git-credentials`, `.ssh/`, `.aws/`, keystores, Terraform state, service-account JSON…).
+
+Operations
+- Structured JSON logs (`logger.js`) with request ids and secret redaction; startup configuration validation (`config_check.js`) that logs variable names, never values.
+- `/version` capability endpoint; `/readiness` adds `release`, `config_ok`, `watchdog`.
+- `npm run preflight -- --v12` now requires the watchdog (webhook only with `--webhook`); `--release=<version>` catches stale deployments.
 
 KeepGoing is an MCP service for durable AI jobs. A KeepGoing job has its own stable job ID and can span multiple OpenAI Agents API turns. The server persists safe orchestration state, watches for completed/partial turns, and can start the next continuation without requiring the user to repeatedly type "continue".
 
@@ -111,7 +143,8 @@ These are safety/cost ceilings, not promised consumption targets. A job stops ea
 - `list_persistent_jobs` — list the authenticated customer's own recent/active jobs using safe metadata only.
 - `resume_persistent_job` — deliver required user input to the same durable job with race-safe/idempotent delivery.
 - `list_job_artifacts` — list patch/report artifacts published by an owned coding job.
-- `read_job_artifact` — read a small text patch/report artifact from an owned coding job.
+- `read_job_artifact` — read a small text patch/report artifact (≤ 500 KB) from an owned coding job, with SHA-256.
+- `get_job_report` — read-only, deterministic summary of an owned job (status, diagnostics, checksummed result excerpt, artifact manifest, next step).
 
 ## Durable states
 
@@ -136,6 +169,7 @@ The server validates that marker against provider turn state and tool failures; 
 - `/` — public informational/plugin landing page (no subscription transaction UI)
 - `/health` — lightweight process/config health
 - `/readiness` — production readiness, including live durable-store reachability when v1.2 is enabled
+- `/version` — release, engine, tool names, limits and feature flags for support/compatibility checks (no account data)
 - `/mcp` — protected MCP endpoint
 - `/openai/webhook` — signed OpenAI Agents session webhook receiver (v1.2)
 - `/subscribe` — direct web subscription checkout; intentionally unlinked/noindex from the public plugin experience
@@ -180,7 +214,15 @@ v1.2 durable engine:
 - optional `OPENAI_WEBHOOK_SECRET` only when a compatible OpenAI webhook event stream is used; watchdog continuation does not require it
 - optional watchdog interval configuration
 
-Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access.
+Apply `sql/durable_jobs.sql` through the normal reviewed Supabase migration workflow before enabling v1.2. The schema uses RLS plus explicit service-role-only access. For 1.5, also apply `sql/durable_jobs_v1_5.sql` (re-runnable; adds a no-resurrection/owner-immutability trigger and a recovery index; the app works with or without it). `sql/verify_durable_migrations.sql` exercises both against a scratch PostgreSQL database.
+
+Optional 1.5 tuning (all have safe defaults):
+- `KEEPGOING_MAX_ACTIVE_JOBS_PRO` / `_BUSINESS` / `_OWNER` (defaults 5 / 15 / 50 running jobs)
+- `KEEPGOING_MCP_RATE_LIMIT_PER_MINUTE` (default 120 per account; 2× per IP)
+- `KEEPGOING_PROVIDER_TIMEOUT_MS` (default 30000), `KEEPGOING_STORE_TIMEOUT_MS` (default 10000)
+- `KEEPGOING_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `info`)
+- `KEEPGOING_ALLOW_QUERY_TOKEN=1` — temporary escape hatch to accept `?token=` (not recommended)
+- `KEEPGOING_LEGACY_ALLOW_UNBOUND_READS=1` — temporary escape hatch to let customers read legacy jobs created before owner binding
 
 PayPal live checkout:
 - `PAYPAL_MODE=live`
@@ -233,6 +275,8 @@ Before enabling v1.2 for paid customers, verify:
 10. Privacy, Terms, Support and Security pages match the deployed data flow.
 
 ## Current commercial beta status
+
+Production evidence below was recorded for the beta.24 candidate. It has **not** been re-collected for 1.5.0-beta.1; repeat the release checks above on the 1.5 deployment before relying on it.
 
 As of the beta.24 candidate:
 - OAuth connection is live and verified with the owner account.

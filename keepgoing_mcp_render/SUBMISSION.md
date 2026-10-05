@@ -1,7 +1,7 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.4.0-beta.24
-Updated: 29 September 2026
+Version: 1.5.0-beta.1
+Updated: 5 October 2026
 
 This is a submission/reviewer worksheet. It contains no passwords, activation tokens, API keys, PayPal credentials, or reviewer secrets.
 
@@ -144,6 +144,12 @@ Review boundary:
 - destructiveHint: false — does not modify or delete the artifact.
 - idempotentHint: true — repeated reads have no additional effect.
 
+### get_job_report
+- readOnlyHint: true — returns a deterministic summary of the authenticated account's own job (status, progress, budget diagnostics, checksummed result excerpt, artifact manifest, next step).
+- openWorldHint: false — reads only KeepGoing durable state and bounded provider state for that owned job.
+- destructiveHint: false — never starts, changes, cancels or deletes anything.
+- idempotentHint: true — repeated calls against an unchanged job return identical output.
+
 ### resume_persistent_job
 - readOnlyHint: false — sends user-supplied missing information into the same provider session and resumes work.
 - openWorldHint: true — resumed work may access the public web if that job was allowed to do so.
@@ -153,7 +159,7 @@ Review boundary:
 ### cancel_persistent_job
 - readOnlyHint: false — cancels the active durable job/provider turn.
 - openWorldHint: false — operates only on the bounded authenticated KeepGoing job.
-- destructiveHint: true — cancellation ends the current job and cannot restore that same running provider turn.
+- destructiveHint: true — cancellation ends the current job (including one waiting for input) and cannot restore that same running provider turn; a cancelled job can never be resumed or continued.
 - idempotentHint: true — repeated cancellation has no additional destructive effect.
 
 ## Exactly five positive review cases
@@ -256,6 +262,14 @@ Initial public-directory submission candidate.
 
 KeepGoing provides durable AI jobs that can continue bounded multi-turn work, survive chat changes, recover by job ID, pause for genuine user input, and resume the same job without repeatedly restarting completed work.
 
+1.5.0-beta.1 adds, on top of beta.24:
+
+- owner binding for legacy-engine jobs (cross-account read/cancel is refused);
+- race-safe cancellation that also stops in-flight continuations, and no resurrection of finished jobs;
+- argument-bound start idempotency when no client request id is supplied;
+- deterministic, checksummed artifact manifests and the read-only `get_job_report` tool;
+- client-safe error messages with support references, structured logs, rate limits and active-job caps.
+
 Beta.24 includes:
 
 - opt-in coding workspace for public GitHub repositories, with local file inspection/edit/test support;
@@ -322,7 +336,7 @@ The following require the OpenAI submission portal or a user-controlled identity
 3. Complete individual or business verification for the exact publisher identity.
 4. Create a `With MCP` plugin draft and select the Universal MCP URL type.
 5. Supply dedicated reviewer credentials that work without MFA/SMS/email confirmation/additional setup.
-6. Select Scan Tools against the production MCP endpoint and verify the beta.21 metadata.
+6. Select Scan Tools against the production MCP endpoint and verify the 1.5.0-beta.1 metadata (eleven tools for durable accounts, including `get_job_report`).
 7. Paste the annotation justifications above into the submission form.
 8. Complete the generated domain-verification challenge.
 9. Provide the required demo-recording URL.
@@ -342,4 +356,4 @@ Immediately before beta.21 policy hardening:
 - the entire regression suite passed during production startup;
 - the previously failed durable reservation was successfully revived in-place by reusing its original client request ID after the beta.20 start-recovery fix.
 
-Re-run these checks on beta.21 before using this kit for submission.
+This evidence predates 1.5.0-beta.1. Re-run these checks (and `npm run preflight -- --v12 --release=1.5.0-beta.1`) on the 1.5 deployment before using this kit for submission.

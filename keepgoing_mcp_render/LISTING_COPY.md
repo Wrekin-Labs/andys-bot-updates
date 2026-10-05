@@ -1,6 +1,6 @@
 # KeepGoing — Final Plugin Listing Copy
 
-Release candidate: `1.4.0-beta.24`
+Release candidate: `1.5.0-beta.1`
 
 ## Logo
 

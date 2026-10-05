@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "keepgoing",
-  "version": "1.4.0-beta.24",
+  "version": "1.5.0-beta.1",
   "description": "Durable AI jobs that continue substantial work without repeated continue prompts.",
   "author": {
     "name": "KeepGoing",
@@ -9,7 +9,7 @@
     "url": "https://keepgoing-mcp.onrender.com/"
   },
   "homepage": "https://keepgoing-mcp.onrender.com/",
-  "repository": "https://github.com/chipblock2/andys-bot-updates",
+  "repository": "https://github.com/Wrekin-Labs/andys-bot-updates",
   "keywords": [
     "productivity",
     "ai",
@@ -29,7 +29,8 @@
           "Durable AI jobs",
           "Cross-chat job recovery",
           "Opt-in coding workspace",
-          "Selected local file handoff"
+          "Selected local file handoff",
+          "Job reports and artifact checksums"
         ],
         "websiteURL": "https://keepgoing-mcp.onrender.com/",
         "privacyPolicyURL": "https://keepgoing-mcp.onrender.com/privacy",
@@ -100,7 +101,7 @@
         "countries": [
           "GB"
         ],
-        "release_notes": "Beta.24 adds bounded selected-file handoff for coding jobs. A foreground client may send up to eight task-relevant UTF-8 text files (32 KB each, 128 KB total) into the isolated coding workspace before the Agent starts. Safe relative paths are required, common credential/config key filenames are rejected, file validation happens before quota reservation, and handoff content is not written into KeepGoing durable job storage."
+        "release_notes": "1.5.0-beta.1 is a reliability and security release. Jobs started on the legacy engine are now bound to the account that started them; cancellation is race-safe, also stops an in-flight continuation, and works for jobs waiting on input; finished jobs can no longer be resurrected. Coding artifacts gain a deterministic manifest, MIME types and SHA-256 checksums, and a read-only get_job_report tool summarises any owned job. Selected-file handoff for coding jobs is unchanged: up to eight UTF-8 text files (32 KB each, 128 KB total), safe relative paths only, credential-like files rejected, and file bodies are not stored in KeepGoing's durable job database."
       }
     }
   }

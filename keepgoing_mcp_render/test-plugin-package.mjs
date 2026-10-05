@@ -9,7 +9,9 @@ const mcp = JSON.parse(readFileSync(resolve(here, "mcp.json"), "utf8"));
 
 assert.equal(plugin.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
 assert.equal(plugin.name, "keepgoing");
-assert.equal(plugin.version, "1.4.0-beta.24");
+const pkg = JSON.parse(readFileSync(resolve(here, "package.json"), "utf8"));
+assert.equal(plugin.version, pkg.version, "plugin.json and package.json versions must match");
+assert.equal(plugin.repository, "https://github.com/Wrekin-Labs/andys-bot-updates");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.displayName, "KeepGoing");
 assert.equal(plugin.extensions?.["com.openai"]?.interface?.category, "Productivity");
 assert.ok(plugin.extensions?.["com.openai"]?.interface?.shortDescription.length <= 30);

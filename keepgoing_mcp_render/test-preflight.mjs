@@ -30,8 +30,12 @@ const fetchOk = async (url, init = {}) => {
       durable_engine_enabled: true,
       durable_engine_ready: true,
       durable_store_ready: true,
-      openai_webhook_ready: true
+      watchdog_ready: true,
+      openai_webhook_ready: false
     });
+  }
+  if (path === "/version") {
+    return response(200, { release: "1.5.0-beta.1", engine: "durable", features: { remote_push: false } });
   }
   if (path === "/.well-known/oauth-protected-resource") {
     return response(200, {
@@ -65,11 +69,40 @@ const ok = await runDeploymentPreflight({
   fetchImpl: fetchOk,
   requireSellReady: true,
   requireV12: true,
-  requireChallenge: true
+  requireChallenge: true,
+  expectedRelease: "1.5.0-beta.1"
 });
-assert.equal(ok.ok, true);
+assert.equal(ok.ok, true, JSON.stringify(ok.failed));
 assert.deepEqual(ok.failed, []);
-assert.equal(ok.checks.length, 10);
+assert.equal(ok.checks.length, 11);
+
+// Webhook is optional unless explicitly required.
+const webhookRequired = await runDeploymentPreflight({ baseUrl: base, fetchImpl: fetchOk, requireWebhook: true });
+assert.ok(webhookRequired.failed.includes("readiness"));
+
+// A stale deployment is caught by --release.
+const staleRelease = await runDeploymentPreflight({ baseUrl: base, fetchImpl: fetchOk, expectedRelease: "9.9.9" });
+assert.ok(staleRelease.failed.includes("version"));
+
+// Older servers without /version still pass when no release is demanded.
+const noVersion = await runDeploymentPreflight({
+  baseUrl: base,
+  fetchImpl: async (url, init) => new URL(url).pathname === "/version" ? response(404, "not found") : fetchOk(url, init)
+});
+assert.equal(noVersion.ok, true);
+
+// requireV12 needs the watchdog.
+const noWatchdog = await runDeploymentPreflight({
+  baseUrl: base,
+  requireV12: true,
+  fetchImpl: async (url, init) => {
+    if (new URL(url).pathname === "/readiness") {
+      return response(200, { ok: true, durable_engine_enabled: true, durable_engine_ready: true, durable_store_ready: true, watchdog_ready: false });
+    }
+    return fetchOk(url, init);
+  }
+});
+assert.ok(noWatchdog.failed.includes("readiness"));
 
 const broken = await runDeploymentPreflight({
   baseUrl: base,

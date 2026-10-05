@@ -3,7 +3,9 @@ export async function runDeploymentPreflight({
   fetchImpl = globalThis.fetch,
   requireSellReady = false,
   requireV12 = false,
-  requireChallenge = false
+  requireWebhook = false,
+  requireChallenge = false,
+  expectedRelease = null
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
   const base = normalizeBase(baseUrl);
@@ -46,13 +48,31 @@ export async function runDeploymentPreflight({
       if (!readiness.durable_engine_enabled) throw new Error("durable engine is not enabled");
       if (!readiness.durable_engine_ready) throw new Error("durable engine configuration is not ready");
       if (!readiness.durable_store_ready) throw new Error("durable store is not reachable");
-      if (!readiness.openai_webhook_ready) throw new Error("OpenAI webhook is not ready");
+      // The watchdog is the production continuation path; the OpenAI webhook
+      // is optional and only required with --webhook.
+      if (!readiness.watchdog_ready) throw new Error("watchdog is not ready");
+    }
+    if (requireWebhook && !readiness.openai_webhook_ready) {
+      throw new Error("OpenAI webhook is not ready");
     }
     return {
       sell_ready: Boolean(readiness.sell_ready),
       durable_engine_enabled: Boolean(readiness.durable_engine_enabled),
       durable_store_ready: Boolean(readiness.durable_store_ready)
     };
+  });
+
+  await check("version", async () => {
+    const response = await fetchImpl(base + "/version", { method: "GET" });
+    if (response.status === 404 && !expectedRelease) {
+      return { available: false, optional: true };
+    }
+    const data = await jsonResponse(response, "version");
+    if (expectedRelease && data.release !== expectedRelease) {
+      throw new Error("deployed release " + String(data.release || "unknown") + " does not match expected " + expectedRelease);
+    }
+    if (data.features?.remote_push) throw new Error("version endpoint advertises remote push, which KeepGoing must not do");
+    return { release: data.release || null, engine: data.engine || null };
   });
 
   await check("protected_resource_metadata", async () => {
