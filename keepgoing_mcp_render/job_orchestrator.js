@@ -9,6 +9,10 @@ import {
 import { latestRootTurn, latestSessionText, classifySession } from "./agents_engine.js";
 
 const CONTINUATION_LEASE_MS = 60_000;
+// After the wall deadline, a job whose provider state still cannot be read is
+// given this much extra time before it is dead-lettered as recovery_failed.
+const RECOVERY_GRACE_MS = 15 * 60_000;
+const CAS_RETRIES = 5;
 
 export class KeepGoingOrchestrator {
   constructor({
@@ -29,14 +33,11 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb = true,
-    mcpTools = [],
-    toolProfileName = "web",
-    toolPolicyHash = "",
-    toolWriteCapable = false,
     reasoningEffort = "medium",
     ownerSubjectHash,
     clientRequestId = null,
     limits = {},
+    workspace = null,
     beforeCreateSession = null
   }) {
     if (!String(initialPrompt || "").trim()) throw new Error("initial prompt required");
@@ -49,9 +50,6 @@ export class KeepGoingOrchestrator {
       definitionHash: sha256(instructions || ""),
       ownerSubjectHash,
       engine: "agents",
-      toolProfileName,
-      toolPolicyHash,
-      toolWriteCapable,
       now,
       limits
     });
@@ -71,12 +69,9 @@ export class KeepGoingOrchestrator {
         initialPrompt,
         instructions,
         allowWeb,
-        mcpTools,
-        toolProfileName,
-        toolPolicyHash,
-        toolWriteCapable,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
       return { created: false, job: retried };
     }
@@ -105,16 +100,12 @@ export class KeepGoingOrchestrator {
         initialPrompt,
         instructions,
         allowWeb,
-        mcpTools,
-        toolProfileName,
-        toolPolicyHash,
-        toolWriteCapable,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
     } catch (error) {
-      const status = Number(error?.status || 0);
-      const definitelyRejected = status >= 400 && status < 500;
+      const definitelyRejected = isDefinitiveRejection(error);
       const next = definitelyRejected
         ? {
             ...reserved.job,
@@ -171,20 +162,14 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb,
-    mcpTools = [],
-    toolProfileName = "web",
-    toolPolicyHash = "",
-    toolWriteCapable = false,
     reasoningEffort,
-    clientRequestId
+    clientRequestId,
+    workspace = null
   }) {
     const metadata = {
       keepgoing: "v1.2",
       keepgoing_job_id: jobId,
-      request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined,
-      tool_profile: String(toolProfileName || "web").slice(0, 64),
-      tool_policy_hash: String(toolPolicyHash || "").slice(0, 64) || undefined,
-      write_tools: Boolean(toolWriteCapable) ? "true" : "false"
+      request_hash: clientRequestId ? sha256(clientRequestId).slice(0, 24) : undefined
     };
     const idempotencyKey = startKey(jobId);
     let lastError = null;
@@ -195,15 +180,14 @@ export class KeepGoingOrchestrator {
           prompt: initialPrompt,
           instructions,
           allowWeb,
-          mcpTools,
           reasoningEffort,
           metadata,
-          idempotencyKey
+          idempotencyKey,
+          workspace
         });
       } catch (error) {
         lastError = error;
-        const status = Number(error?.status || 0);
-        if (status >= 400 && status < 500) throw error;
+        if (isDefinitiveRejection(error)) throw error;
 
         if (typeof this.engine.findSessionByMetadata === "function") {
           try {
@@ -231,12 +215,9 @@ export class KeepGoingOrchestrator {
     initialPrompt,
     instructions,
     allowWeb,
-    mcpTools = [],
-    toolProfileName = "web",
-    toolPolicyHash = "",
-    toolWriteCapable = false,
     reasoningEffort,
-    clientRequestId
+    clientRequestId,
+    workspace = null
   }) {
     let current = existing;
     if (!current || current.providerSessionId || Number(current.attempt || 0) > 0) {
@@ -290,16 +271,12 @@ export class KeepGoingOrchestrator {
         initialPrompt,
         instructions,
         allowWeb,
-        mcpTools,
-        toolProfileName,
-        toolPolicyHash,
-        toolWriteCapable,
         reasoningEffort,
-        clientRequestId
+        clientRequestId,
+        workspace
       });
     } catch (error) {
-      const status = Number(error?.status || 0);
-      const definitelyRejected = status >= 400 && status < 500;
+      const definitelyRejected = isDefinitiveRejection(error);
       const next = definitelyRejected
         ? {
             ...current,
@@ -427,7 +404,6 @@ export class KeepGoingOrchestrator {
           ? this.engine.listAllItems(providerId, { order: "desc", pageSize: 100, maxPages: 5 })
           : this.engine.listItems(providerId, { order: "desc", limit: 100 });
     const items = await itemRead;
-    await this._recordToolAudit(jobId, items);
     const output = latestSessionText(items);
     const provider = classifySession(session, output, turns, items);
     const now = this.now();
@@ -571,47 +547,6 @@ export class KeepGoingOrchestrator {
     return this._sendClaimedContinuation(claimed.job, provider.output);
   }
 
-  async _recordToolAudit(jobId, itemsResponse) {
-    if (typeof this.store.recordEvent !== "function") return;
-
-    const items = Array.isArray(itemsResponse)
-      ? itemsResponse
-      : Array.isArray(itemsResponse?.data)
-        ? itemsResponse.data
-        : Array.isArray(itemsResponse?.items)
-          ? itemsResponse.items
-          : [];
-
-    for (const item of items) {
-      const type = String(item?.type || "").toLowerCase();
-      if (!(type.includes("call") || type.includes("tool") || type.includes("execution") || type.includes("search"))) {
-        continue;
-      }
-
-      const itemId = String(item?.id || "").trim();
-      if (!itemId) continue;
-
-      const safeDetail = {
-        type: type.slice(0, 80),
-        status: String(item?.status || "").slice(0, 40) || null,
-        tool_name: typeof item?.name === "string" ? item.name.slice(0, 160) : null,
-        server_label: typeof item?.server_label === "string" ? item.server_label.slice(0, 80) : null,
-        turn_id: typeof item?.turn_id === "string" ? item.turn_id.slice(0, 160) : null
-      };
-
-      try {
-        await this.store.recordEvent({
-          jobId,
-          providerEventId: ("tool:" + jobId + ":" + itemId).slice(0, 500),
-          eventType: "agent.tool." + type,
-          safeDetail
-        });
-      } catch {
-        // Tool audit is best-effort and deliberately excludes arguments/results.
-      }
-    }
-  }
-
   async _sendClaimedContinuation(claimedJob, previousOutput) {
     const providerId = claimedJob.providerSessionId;
     const key = claimedJob.continuationIdempotencyKey;
@@ -636,9 +571,14 @@ export class KeepGoingOrchestrator {
         claimedJob.version,
         working
       );
-      return saved.ok
-        ? { job: saved.job, action: "continued" }
-        : { job: saved.job || claimedJob, action: "already_updated" };
+      if (!saved.ok) {
+        // The job changed while the continuation was in flight. If it was
+        // cancelled meanwhile, the turn we just started is an orphan that
+        // would keep spending tokens: stop it.
+        await this._stopOrphanTurnIfCancelled(saved.job, providerId, key);
+        return { job: saved.job || claimedJob, action: "already_updated" };
+      }
+      return { job: saved.job, action: "continued" };
     } catch (error) {
       // The request outcome may be unknown. Keep the claim durable and retry
       // the same idempotency key later instead of risking a duplicate turn.
@@ -657,26 +597,111 @@ export class KeepGoingOrchestrator {
   }
 
   async cancel(jobId) {
-    const current = await this.store.get(jobId);
+    // Retry the CAS: the watchdog or a webhook may legitimately bump the
+    // version between our read and write. A single attempt used to report
+    // success while silently leaving the job running (and resumable).
+    let current = await this.store.get(jobId);
     if (!current) throw new Error("job not found");
-    if (isTerminal(current.status)) return current;
-    if (current.providerSessionId) {
-      await this.engine.cancelTurn(
-        current.providerSessionId,
-        "kg-cancel-" + jobId
-      );
+    let providerCancelled = false;
+
+    for (let attempt = 0; attempt < CAS_RETRIES; attempt++) {
+      if (!current) throw new Error("job not found");
+      if (current.status === JOB_STATES.CANCELLED) return current;
+      // input_required is resting, not finished: a user may cancel it.
+      if (isTerminal(current.status) && current.status !== JOB_STATES.INPUT_REQUIRED) return current;
+
+      if (current.providerSessionId && !providerCancelled) {
+        try {
+          await this.engine.cancelTurn(current.providerSessionId, "kg-cancel-" + jobId);
+          providerCancelled = true;
+        } catch (error) {
+          // A session with no running turn may reject cancel; that is fine.
+          // Anything else is surfaced so the caller can retry safely.
+          if (!isDefinitiveRejection(error)) throw error;
+          providerCancelled = true;
+        }
+      }
+
+      const next = {
+        ...current,
+        status: JOB_STATES.CANCELLED,
+        continuationNeeded: false,
+        startLeaseUntil: null,
+        continuationLeaseUntil: null,
+        continuationIdempotencyKey: null,
+        safeErrorCode: "cancelled_by_user",
+        safeErrorMessage: null,
+        updatedAt: this.now()
+      };
+      const saved = await this.store.compareAndSet(jobId, current.version, next);
+      if (saved.ok) return saved.job;
+      current = saved.job;
     }
-    const next = {
-      ...current,
-      status: JOB_STATES.CANCELLED,
-      continuationNeeded: false,
-      startLeaseUntil: null,
-      continuationLeaseUntil: null,
-      updatedAt: this.now()
-    };
-    const saved = await this.store.compareAndSet(jobId, current.version, next);
-    return saved.job || current;
+    const error = new Error("KeepGoing could not confirm cancellation because the job kept changing. Retry cancel.");
+    error.code = "cancel_conflict";
+    error.userFacing = true;
+    throw error;
   }
+
+  /**
+   * Called by the watchdog when reconcile/recoverStart throws. Pushes the job
+   * to the back of the recovery queue (so a few permanently failing jobs cannot
+   * starve everyone else) and dead-letters it once it is well past its wall
+   * deadline, instead of retrying forever.
+   */
+  async recordRecoveryFailure(jobId, error) {
+    const current = await this.store.get(jobId);
+    if (!current || isTerminal(current.status)) return { job: current, action: "terminal" };
+    const now = this.now();
+    const code = String(error?.code || "recovery_error").slice(0, 64);
+    const deadLetter = now >= Number(current.wallDeadlineAt || 0) + RECOVERY_GRACE_MS;
+    const next = deadLetter
+      ? {
+          ...current,
+          status: JOB_STATES.FAILED,
+          continuationNeeded: false,
+          startLeaseUntil: null,
+          continuationLeaseUntil: null,
+          safeErrorCode: "recovery_failed",
+          safeErrorMessage: "KeepGoing could not recover this job from its provider before the deadline (" + code + ").",
+          updatedAt: now
+        }
+      : {
+          ...current,
+          safeErrorCode: "recovery_retrying",
+          safeErrorMessage: "KeepGoing is retrying recovery after a transient error (" + code + ").",
+          updatedAt: now
+        };
+    const saved = await this.store.compareAndSet(jobId, current.version, next);
+    if (saved.ok && deadLetter && current.providerSessionId) {
+      try { await this.engine.cancelTurn(current.providerSessionId, "kg-deadletter-" + jobId); } catch {}
+    }
+    return {
+      job: saved.job || current,
+      action: saved.ok ? (deadLetter ? "dead_lettered" : "recovery_deferred") : "already_updated"
+    };
+  }
+
+  async _stopOrphanTurnIfCancelled(job, providerId, key) {
+    let latest = job;
+    if (!latest) {
+      try { latest = await this.store.get(job?.id); } catch { latest = null; }
+    }
+    if (latest?.status === JOB_STATES.CANCELLED && providerId) {
+      try { await this.engine.cancelTurn(providerId, ("kg-cancel-orphan-" + key).slice(0, 256)); } catch {}
+    }
+  }
+}
+
+// 4xx responses are definitive EXCEPT the transient ones: request timeout,
+// idempotency-key conflict (same request still in flight), too early, and rate
+// limiting. Treating 429 as definitive used to fail a job permanently at start
+// and, on cancel, to mark a job cancelled while its provider turn kept running.
+const TRANSIENT_4XX = new Set([408, 409, 425, 429]);
+
+export function isDefinitiveRejection(error) {
+  const status = Number(error?.status || 0);
+  return status >= 400 && status < 500 && !TRANSIENT_4XX.has(status);
 }
 
 function startKey(jobId) {

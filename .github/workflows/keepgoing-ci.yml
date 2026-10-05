@@ -1,0 +1,43 @@
+name: KeepGoing CI
+
+# Runs on every KeepGoing release/feature branch and on main, not one pinned
+# historical branch. Renamed from keepgoing-v1.2-ci.yml in 1.5.0.
+on:
+  push:
+    branches:
+      - main
+      - "keepgoing-**"
+    paths:
+      - "keepgoing_mcp_render/**"
+      - ".github/workflows/keepgoing-ci.yml"
+  pull_request:
+    paths:
+      - "keepgoing_mcp_render/**"
+      - ".github/workflows/keepgoing-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keepgoing-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: keepgoing_mcp_render
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: keepgoing_mcp_render/package.json
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm run verify
+      - name: Import smoke test (server module graph resolves with real dependencies)
+        run: node --input-type=module -e "await import('@modelcontextprotocol/sdk/server/mcp.js'); await import('express'); await import('openai'); console.log('dependency imports ok')"

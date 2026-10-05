@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifySession, createAgentsEngine, latestRootTurn, latestSessionText, turnHasFailedWork, turnToolCallCount } from "./agents_engine.js";
+import { buildAgentEnvironment, classifySession, createAgentsEngine, latestRootTurn, latestSessionText, normaliseCodingWorkspace, turnHasFailedWork, turnToolCallCount } from "./agents_engine.js";
 
 const calls = [];
 const fakeFetch = async (url, init) => {
@@ -50,41 +50,195 @@ assert.equal(createBody.agent.tools[0].mode, "live");
 assert.equal(calls[0].init.headers["OpenAI-Beta"], "agents=v1");
 assert.equal(calls[0].init.headers["Idempotency-Key"], "kg-start-test");
 
-const mcpCreated = await engine.createSession({
-  prompt: "edit the repo",
-  instructions: "use approved tools",
-  allowWeb: false,
-  mcpTools: [{
-    type: "mcp",
-    server_label: "github",
-    transport: {
-      type: "http",
-      server_url: "https://mcp.example.com/github"
-    },
-    allowed_tools: ["search", "fetch_file"],
-    connection_origin: "service",
-    required: true,
-    credential_id: "cred_123"
-  }],
-  idempotencyKey: "kg-mcp-start"
+assert.deepEqual(normaliseCodingWorkspace(null), {
+  enabled: false,
+  repositoryUrl: null,
+  repositoryRef: null,
+  files: []
 });
-assert.equal(mcpCreated.id, "sess_abc");
-const mcpCall = calls.at(-1);
-const mcpBody = JSON.parse(mcpCall.init.body);
-assert.equal(mcpBody.agent.tools.length, 1);
-assert.equal(mcpBody.agent.tools[0].type, "mcp");
-assert.equal(mcpBody.agent.tools[0].server_label, "github");
-assert.deepEqual(mcpBody.agent.tools[0].allowed_tools, ["search", "fetch_file"]);
-assert.equal(mcpBody.agent.tools[0].credential_id, "cred_123");
-assert.equal(mcpCall.init.headers["Idempotency-Key"], "kg-mcp-start");
 
-await assert.rejects(
-  () => engine.createSession({
-    prompt: "bad",
-    mcpTools: [{ type: "not-mcp" }]
+const hosted = buildAgentEnvironment({
+  enabled: true,
+  repositoryUrl: "https://github.com/chipblock2/project-relay",
+  repositoryRef: "v0.4.5"
+});
+assert.equal(hosted.type, "openai_hosted");
+assert.equal(hosted.container_size, "small");
+assert.equal(hosted.network.access, "restricted");
+assert.ok(hosted.network.allowed_domains.includes("github.com"));
+assert.ok(hosted.network.allowed_domains.includes("registry.npmjs.org"));
+assert.match(hosted.setup_commands[0].command, /git clone/);
+assert.match(hosted.setup_commands[0].command, /https:\/\/github\.com\/chipblock2\/project-relay\.git/);
+assert.equal(hosted.setup_commands[1].cwd, "/workspace/project");
+assert.match(hosted.setup_commands[1].command, /v0\.4\.5/);
+assert.equal(hosted.setup_commands[2].cwd, "/workspace/project");
+assert.match(hosted.setup_commands.at(-1).command, /workspace\/outputs/);
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryUrl: "https://user:secret@github.com/chipblock2/project-relay"
   }),
-  /Invalid KeepGoing MCP tool configuration/
+  /without credentials/
 );
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryUrl: "https://example.com/chipblock2/project-relay"
+  }),
+  /github\.com/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main; rm -rf /"
+  }),
+  /safe Git ref/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    repositoryRef: "main"
+  }),
+  /requires repositoryUrl/
+);
+
+const workspaceCalls = [];
+const workspaceEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (_url, init) => {
+    workspaceCalls.push(init);
+    return { ok: true, status: 200, async json() { return { id: "sess_workspace" }; } };
+  }
+});
+await workspaceEngine.createSession({
+  prompt: "fix the code",
+  instructions: "work in the repo",
+  workspace: {
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  }
+});
+const workspaceBody = JSON.parse(workspaceCalls[0].body);
+assert.equal(workspaceBody.environment.type, "openai_hosted");
+assert.equal(workspaceBody.environment.network.access, "restricted");
+assert.match(workspaceBody.environment.setup_commands[0].command, /git clone/);
+
+const inlineWorkspace = buildAgentEnvironment({
+  enabled: true,
+  repositoryUrl: "https://github.com/chipblock2/project-relay",
+  repositoryRef: "main",
+  files: [
+    { path: "src/local-change.js", content: "export const local = true;\n" },
+    { path: "notes/task.txt", content: "local-only task note\n" }
+  ]
+});
+assert.equal(inlineWorkspace.files.length, 2);
+assert.equal(inlineWorkspace.files[0].type, "inline");
+assert.equal(inlineWorkspace.files[0].path, "/workspace/input/src/local-change.js");
+assert.equal(
+  Buffer.from(inlineWorkspace.files[0].data, "base64").toString("utf8"),
+  "export const local = true;\n"
+);
+const overlayCommands = inlineWorkspace.setup_commands.filter(
+  (cmd) => cmd.command.includes("KeepGoing inline file path escaped project workspace")
+);
+assert.equal(overlayCommands.length, 2);
+for (const cmd of overlayCommands) {
+  assert.match(cmd.command, /realpath -m/);
+  assert.match(cmd.command, /\/workspace\/project/);
+  assert.match(cmd.command, /rm -rf/);
+  assert.match(cmd.command, /cp --/);
+}
+const firstOverlayIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => cmd.command.includes("KeepGoing inline file path escaped project workspace")
+);
+const checkoutIndex = inlineWorkspace.setup_commands.findIndex(
+  (cmd) => /git checkout/.test(cmd.command)
+);
+assert.ok(firstOverlayIndex > checkoutIndex, "local file overlay must happen after repository checkout");
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "../escape.txt", content: "x" }]
+  }),
+  /safe relative project path/
+);
+
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/./file.txt", content: "x" }]
+  }),
+  /safe relative project path/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/.git/config", content: "x" }]
+  }),
+  /safe relative project path/
+);
+const dottedNameWorkspace = buildAgentEnvironment({
+  enabled: true,
+  files: [{ path: "src/version..txt", content: "ok" }]
+});
+assert.equal(dottedNameWorkspace.files.length, 1);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "config/.env", content: "x" }]
+  }),
+  /not allowed for inline handoff/
+);
+
+const binaryLike = "a" + String.fromCharCode(0) + "b";
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/binary.txt", content: binaryLike }]
+  }),
+  /UTF-8 text/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "keys/client.pem", content: "x" }]
+  }),
+  /not allowed for inline handoff/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: Array.from({ length: 9 }, (_, i) => ({
+      path: "src/f" + i + ".js",
+      content: "x"
+    }))
+  }),
+  /at most 8 files/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: [{ path: "src/huge.txt", content: "x".repeat(32001) }]
+  }),
+  /32 KB/
+);
+assert.throws(
+  () => buildAgentEnvironment({
+    enabled: true,
+    files: Array.from({ length: 5 }, (_, i) => ({
+      path: "src/big" + i + ".txt",
+      content: "x".repeat(30000)
+    }))
+  }),
+  /128 KB/
+);
+
+
 
 await engine.sendMessage("sess_abc", "continue", "kg-cont-test");
 const sentCall = calls.at(-1);
@@ -173,6 +327,101 @@ await assert.rejects(
   /valid turn id/
 );
 
+const artifactCalls = [];
+const artifactEngine = createAgentsEngine({
+  apiKey: "test-key",
+  fetchImpl: async (url, init) => {
+    artifactCalls.push({ url, init });
+    if (url.endsWith("/artifacts?order=desc&limit=10")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            data: [{
+              id: "artifact_patch",
+              path: "/workspace/outputs/change.patch",
+              size_bytes: 12,
+              turn_id: "turn_code"
+            }]
+          };
+        }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_patch")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "artifact_patch",
+            path: "/workspace/outputs/change.patch",
+            size_bytes: 12,
+            turn_id: "turn_code"
+          };
+        }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_patch/content")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() { return "patch text\n"; }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_bin")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "artifact_bin",
+            path: "/workspace/outputs/build.zip",
+            size_bytes: 10,
+            turn_id: "turn_code"
+          };
+        }
+      };
+    }
+    if (url.endsWith("/artifacts/artifact_big")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "artifact_big",
+            path: "/workspace/outputs/huge.log",
+            size_bytes: 900000,
+            turn_id: "turn_code"
+          };
+        }
+      };
+    }
+    return { ok: false, status: 404, async json() { return {}; }, async text() { return ""; } };
+  }
+});
+const artifacts = await artifactEngine.listArtifacts("sess_abc", { limit: 10 });
+assert.equal(artifacts.data[0].id, "artifact_patch");
+const artifactText = await artifactEngine.readArtifactText("sess_abc", "artifact_patch");
+assert.equal(artifactText.text, "patch text\n");
+assert.equal(artifactText.artifact.path, "/workspace/outputs/change.patch");
+assert.equal(
+  artifactCalls.at(-1).init.headers.Accept,
+  "application/octet-stream"
+);
+await assert.rejects(
+  () => artifactEngine.readArtifactText("sess_abc", "artifact_bin"),
+  /not readable as text/
+);
+await assert.rejects(
+  () => artifactEngine.readArtifactText("sess_abc", "artifact_big"),
+  /size limit/
+);
+await assert.rejects(
+  () => artifactEngine.readArtifactText("sess_abc", "../bad"),
+  /valid artifact id/
+);
+
 const recoveryCalls = [];
 const recoveryEngine = createAgentsEngine({
   apiKey: "test-key",
@@ -204,6 +453,27 @@ const failedItems = {
 };
 assert.equal(turnHasFailedWork(failedItems, "turn_root"), true);
 assert.equal(turnToolCallCount(failedItems, "turn_root"), 1);
+
+const sandboxItems = {
+  data: [
+    { type: "command_execution", turn_id: "turn_root", status: "completed" },
+    { type: "web_search_call", turn_id: "turn_root", status: "completed" },
+    { type: "mcp_call", turn_id: "turn_root", status: "completed" },
+    { type: "function_call", turn_id: "turn_root", status: "completed" }
+  ]
+};
+assert.equal(
+  turnToolCallCount(sandboxItems, "turn_root"),
+  3,
+  "local command execution must not consume external-tool allowance"
+);
+assert.equal(
+  turnHasFailedWork({
+    data: [{ type: "command_execution", turn_id: "turn_root", status: "failed" }]
+  }, "turn_root"),
+  true,
+  "failed sandbox commands must still prevent false completion"
+);
 assert.equal(
   classifySession(session, "done\nSTATUS: COMPLETED", turns, failedItems).providerStatus,
   "incomplete"

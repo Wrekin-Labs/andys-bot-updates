@@ -7,9 +7,6 @@ const baseRow = {
   owner_subject_hash: "1234567890abcdef",
   client_request_hash: "hash",
   engine: "agents",
-  tool_profile: "developer-owner",
-  tool_policy_hash: "a".repeat(64),
-  tool_write_capable: true,
   provider_session_id: null,
   status: "queued",
   version: 1,
@@ -42,9 +39,6 @@ const fakeFetch = async (url, init) => {
     const body = JSON.parse(init.body);
     assert.equal(body.p_job_id, baseRow.job_id);
     assert.notEqual(body.p_client_request_hash, "req-secret");
-    assert.equal(body.p_tool_profile, "developer-owner");
-    assert.equal(body.p_tool_policy_hash, "a".repeat(64));
-    assert.equal(body.p_tool_write_capable, true);
     return reply([baseRow]);
   }
   if (url.includes("/rpc/cleanup_keepgoing_durable_state")) {
@@ -79,9 +73,6 @@ const reservation = await store.createOrGet({
     engine: "agents",
     goalHash: "goal",
     definitionHash: "done",
-    toolProfileName: "developer-owner",
-    toolPolicyHash: "a".repeat(64),
-    toolWriteCapable: true,
     maxAttempts: 6,
     tokenBudgetTotal: 120000,
     toolCallBudgetTotal: 30,
@@ -93,9 +84,6 @@ const reservation = await store.createOrGet({
 });
 assert.equal(reservation.created, true);
 assert.equal(reservation.job.id, baseRow.job_id);
-assert.equal(reservation.job.toolProfileName, "developer-owner");
-assert.equal(reservation.job.toolPolicyHash, "a".repeat(64));
-assert.equal(reservation.job.toolWriteCapable, true);
 
 const saved = await store.compareAndSet(baseRow.job_id, 1, {
   ...reservation.job,

@@ -1,5 +1,3 @@
-import OpenAI from "openai";
-
 const RECONCILE_EVENTS = new Set([
   "agent.session.idle",
   "agent.session.action_required",
@@ -9,14 +7,22 @@ const RECONCILE_EVENTS = new Set([
 export function createOpenAIWebhookVerifier({
   apiKey,
   webhookSecret,
-  OpenAIClass = OpenAI
+  OpenAIClass = null
 } = {}) {
   if (!apiKey) throw new Error("OpenAI API key required");
   if (!webhookSecret) throw new Error("OpenAI webhook secret required");
-  const client = new OpenAIClass({ apiKey, webhookSecret });
+  // The OpenAI SDK is loaded lazily so the durable engine, watchdog and their
+  // tests do not require it; only signature verification does.
+  let clientPromise = OpenAIClass
+    ? Promise.resolve(new OpenAIClass({ apiKey, webhookSecret }))
+    : null;
 
   return async function verify(rawBody, headers) {
     if (typeof rawBody !== "string") throw new Error("raw webhook body must be text");
+    if (!clientPromise) {
+      clientPromise = import("openai").then(({ default: OpenAI }) => new OpenAI({ apiKey, webhookSecret }));
+    }
+    const client = await clientPromise;
     return client.webhooks.unwrap(rawBody, headers);
   };
 }

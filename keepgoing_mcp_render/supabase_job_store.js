@@ -1,12 +1,17 @@
 import crypto from "node:crypto";
 
+const ACTIVE_STATUSES = ["queued", "working", "continuing", "input_required"];
+const STATUS_RE = /^[a-z_]{1,32}$/;
+const DEFAULT_STORE_TIMEOUT_MS = 10_000;
+
 export class SupabaseJobStore {
   constructor({
     supabaseUrl,
     serviceKey,
     proxyUrl = "",
     proxyToken = "",
-    fetchImpl = globalThis.fetch
+    fetchImpl = globalThis.fetch,
+    timeoutMs = Number(process.env.KEEPGOING_STORE_TIMEOUT_MS || DEFAULT_STORE_TIMEOUT_MS)
   } = {}) {
     if (typeof fetchImpl !== "function") throw new Error("fetch implementation required");
     const directReady = Boolean(supabaseUrl && serviceKey);
@@ -19,6 +24,8 @@ export class SupabaseJobStore {
     this.proxyUrl = String(proxyUrl || "");
     this.proxyToken = String(proxyToken || "");
     this.fetchImpl = fetchImpl;
+    // A hung store call must never stall the watchdog loop or an MCP request.
+    this.timeoutMs = Math.max(1_000, Math.min(60_000, Number(timeoutMs) || DEFAULT_STORE_TIMEOUT_MS));
   }
 
   async healthCheck() {
@@ -43,10 +50,7 @@ export class SupabaseJobStore {
         p_token_budget_total: job.tokenBudgetTotal,
         p_tool_call_budget_total: job.toolCallBudgetTotal,
         p_wall_deadline_at: toIso(job.wallDeadlineAt),
-        p_start_lease_until: toIso(job.startLeaseUntil),
-        p_tool_profile: job.toolProfileName || "web",
-        p_tool_policy_hash: job.toolPolicyHash || null,
-        p_tool_write_capable: Boolean(job.toolWriteCapable)
+        p_start_lease_until: toIso(job.startLeaseUntil)
       })
     });
     const row = Array.isArray(rows) ? rows[0] : rows;
@@ -82,7 +86,7 @@ export class SupabaseJobStore {
     return Array.isArray(rows) && rows[0] ? fromRow(rows[0]) : null;
   }
 
-  async listOwnerJobs(ownerSubjectHash, { limit = 20, activeOnly = false } = {}) {
+  async listOwnerJobs(ownerSubjectHash, { limit = 20, activeOnly = false, statuses = null } = {}) {
     const owner = String(ownerSubjectHash || "").trim();
     if (!owner) throw new Error("owner subject hash required");
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
@@ -91,8 +95,11 @@ export class SupabaseJobStore {
       order: "updated_at.desc",
       limit: String(safeLimit)
     });
-    if (activeOnly) {
-      q.set("status", "in.(queued,working,continuing,input_required)");
+    const wanted = Array.isArray(statuses) && statuses.length
+      ? statuses.map(String).filter((value) => STATUS_RE.test(value))
+      : activeOnly ? ACTIVE_STATUSES : [];
+    if (wanted.length) {
+      q.set("status", "in.(" + wanted.join(",") + ")");
     }
     const rows = await this.request("/rest/v1/keepgoing_jobs?" + q.toString(), { method: "GET" });
     return Array.isArray(rows) ? rows.map(fromRow) : [];
@@ -135,6 +142,16 @@ export class SupabaseJobStore {
       job_id: "eq." + jobId,
       version: "eq." + String(expectedVersion)
     });
+    // Defence in depth against resurrecting a finished job: unless the write
+    // keeps the job in an absorbing state, the row must not currently be
+    // completed/cancelled/budget_exhausted, and may only leave FAILED when no
+    // provider session was ever attached (a retryable start failure).
+    if (!["completed", "cancelled", "budget_exhausted"].includes(String(next?.status || ""))) {
+      q.set("status", "not.in.(completed,cancelled,budget_exhausted)");
+      if (String(next?.status || "") !== "failed") {
+        q.set("or", "(status.neq.failed,provider_session_id.is.null)");
+      }
+    }
     const rows = await this.request("/rest/v1/keepgoing_jobs?" + q.toString(), {
       method: "PATCH",
       headers: { Prefer: "return=representation" },
@@ -146,7 +163,9 @@ export class SupabaseJobStore {
     const current = await this.get(jobId);
     return {
       ok: false,
-      reason: current ? "version_conflict" : "not_found",
+      reason: !current
+        ? "not_found"
+        : Number(current.version) === Number(expectedVersion) ? "illegal_transition" : "version_conflict",
       job: current
     };
   }
@@ -173,6 +192,32 @@ export class SupabaseJobStore {
 
   async request(path, init = {}) {
     let response;
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    try {
+      response = await this._send(path, init, signal);
+    } catch (error) {
+      if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+        const timeout = new Error("KeepGoing durable store request timed out");
+        timeout.code = "store_timeout";
+        timeout.status = 504;
+        throw timeout;
+      }
+      const network = new Error("KeepGoing durable store is unreachable");
+      network.code = "store_unreachable";
+      throw network;
+    }
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const error = new Error(data?.message || data?.error || ("Supabase request failed (" + response.status + ")"));
+      error.status = response.status;
+      error.code = "store_error";
+      throw error;
+    }
+    return data;
+  }
+
+  async _send(path, init, signal) {
+    let response;
     if (this.proxyUrl && this.proxyToken) {
       const prefer = init.headers?.Prefer || init.headers?.prefer || null;
       response = await this.fetchImpl(this.proxyUrl, {
@@ -187,7 +232,8 @@ export class SupabaseJobStore {
           method: String(init.method || "GET").toUpperCase(),
           headers: prefer ? { Prefer: String(prefer) } : {},
           body: init.body == null ? null : String(init.body)
-        })
+        }),
+        signal
       });
     } else {
       response = await this.fetchImpl(this.base + path, {
@@ -198,25 +244,17 @@ export class SupabaseJobStore {
           "Content-Type": "application/json",
           Accept: "application/json",
           ...(init.headers || {})
-        }
+        },
+        signal
       });
     }
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      const error = new Error(data?.message || data?.error || ("Supabase request failed (" + response.status + ")"));
-      error.status = response.status;
-      throw error;
-    }
-    return data;
+    return response;
   }
 }
 
 function toPatchRow(job, version) {
   return compact({
     engine: job.engine,
-    tool_profile: job.toolProfileName,
-    tool_policy_hash: job.toolPolicyHash,
-    tool_write_capable: job.toolWriteCapable,
     provider_session_id: job.providerSessionId,
     status: job.status,
     version,
@@ -250,9 +288,6 @@ function fromRow(row) {
     id: row.job_id,
     ownerSubjectHash: row.owner_subject_hash,
     engine: row.engine,
-    toolProfileName: row.tool_profile || "web",
-    toolPolicyHash: row.tool_policy_hash || null,
-    toolWriteCapable: Boolean(row.tool_write_capable),
     providerSessionId: row.provider_session_id,
     status: row.status,
     version: Number(row.version),

@@ -18,8 +18,33 @@ export function createWatchdog({
   }
 
   let lastCleanupAt = 0;
+  let inFlight = null;
+  let consecutiveFailures = 0;
 
-  async function runOnce() {
+  // setInterval does not wait for async work. Without this guard a slow pass
+  // (50 jobs x several provider calls) overlapped the next tick and the same
+  // jobs were reconciled concurrently in one process.
+  function runOnce() {
+    if (inFlight) return Promise.resolve({ skipped: true, reason: "previous_run_in_progress" });
+    inFlight = runPass()
+      .then((result) => { consecutiveFailures = 0; return result; })
+      .catch((error) => { consecutiveFailures += 1; throw error; })
+      .finally(() => { inFlight = null; });
+    return inFlight;
+  }
+
+  /** Resolves when no pass is running (used for graceful shutdown). */
+  async function idle() {
+    if (inFlight) {
+      try { await inFlight; } catch {}
+    }
+  }
+
+  function status() {
+    return { running: Boolean(inFlight), consecutive_failures: consecutiveFailures };
+  }
+
+  async function runPass() {
     const currentTime = now();
     const jobs = await store.listRecoverableJobs({
       before: currentTime - Math.max(5_000, Number(staleAfterMs) || 30_000),
@@ -42,9 +67,15 @@ export function createWatchdog({
         const result = await orchestrator.reconcile(job.id);
         results.push({ job_id: job.id, action: result.action });
       } catch (error) {
+        let deferred = null;
+        if (typeof orchestrator.recordRecoveryFailure === "function") {
+          try {
+            deferred = await orchestrator.recordRecoveryFailure(job.id, error);
+          } catch {}
+        }
         results.push({
           job_id: job.id,
-          action: "error",
+          action: deferred?.action === "dead_lettered" ? "dead_lettered" : "error",
           error: safeError(error)
         });
       }
@@ -75,7 +106,7 @@ export function createWatchdog({
     };
   }
 
-  return { runOnce };
+  return { runOnce, idle, status };
 }
 
 function safeError(error) {

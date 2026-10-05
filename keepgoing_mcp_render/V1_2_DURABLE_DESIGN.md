@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation status: **feature-flagged beta candidate on `keepgoing-v1.2-durable-agent`**.
+Implementation status: **historical v1.2 design document** (originally on `keepgoing-v1.2-durable-agent`). The durable engine has since shipped; see README.md for current 1.5 behaviour, including the cancellation, transition-legality and watchdog changes.
 
 The production v1.1 path remains available. v1.2 must not be enabled for paid traffic until the durable SQL migration, OpenAI webhook, live readiness probe and end-to-end production drills are complete.
 

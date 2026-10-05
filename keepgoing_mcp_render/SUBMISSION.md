@@ -1,7 +1,7 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.2.0-beta.231
-Updated: 29 September 2026
+Version: 1.5.0-beta.1
+Updated: 5 October 2026
 
 This is a submission/reviewer worksheet. It contains no passwords, activation tokens, API keys, PayPal credentials, or reviewer secrets.
 
@@ -13,17 +13,18 @@ This is a submission/reviewer worksheet. It contains no passwords, activation to
 
 **Category:** Productivity
 
-**Short description:** Finish long AI work
+**Short description:** Durable AI jobs that continue
 
 **Long description:** KeepGoing preserves substantial AI work as a durable job so ChatGPT can continue, check, resume, and recover the same objective without repeatedly restarting it.
 
 **Developer name:** Use the exact verified individual/business identity selected in the OpenAI Platform submission portal. The manifest currently uses `KeepGoing`; change it before submission if the verified publisher identity differs.
 
-**Website:** https://keepgoing-mcp.onrender.com/plugin  
+**Website:** https://keepgoing-mcp.onrender.com/  
 **Support:** https://keepgoing-mcp.onrender.com/support  
 **Privacy:** https://keepgoing-mcp.onrender.com/privacy  
 **Terms:** https://keepgoing-mcp.onrender.com/terms  
 **Security:** https://keepgoing-mcp.onrender.com/security  
+**Icon:** https://keepgoing-mcp.onrender.com/icon.png  
 **MCP server:** https://keepgoing-mcp.onrender.com/mcp
 
 **MCP URL type:** Universal
@@ -63,6 +64,36 @@ The submitted ChatGPT plugin is for existing KeepGoing accounts. The plugin list
 
 KeepGoing may explain that a requested feature is unavailable under the user's existing entitlement. The separately hosted `/subscribe` route is an off-plugin direct web route; it is intentionally excluded from the plugin website navigation, install page, FAQ/status navigation, sitemap, and plugin metadata, and is marked noindex/no-store.
 
+## Coding workspace boundary
+
+Beta.23 adds an opt-in coding workspace for code tasks.
+
+When `codingWorkspace=true`, KeepGoing creates an isolated OpenAI-hosted sandbox. If a public GitHub `repositoryUrl` and optional `repositoryRef` are provided, the repository is cloned into `/workspace/project` before provider work begins.
+
+Reviewer expectations:
+- public `https://github.com/owner/repo` repositories only;
+- repository locator/ref validation happens before session creation;
+- this release does not support private-repository access or remote repository writes;
+- edits and tests happen inside the isolated workspace;
+- outbound sandbox networking is restricted to common source/package hosts;
+- local Bash/apply-patch operations do not consume the 3/5 external web/MCP/function-call allowance;
+- failed shell work still prevents false completion;
+- coding sandbox wall limits are Pro 30 minutes and Business/owner 60 minutes.
+
+### Selected-file handoff
+
+Beta.24 can accept an explicitly selected set of task-relevant UTF-8 text files through `workspaceFiles` when `codingWorkspace=true`.
+
+Review boundary:
+- maximum 8 files;
+- maximum 32 KB per file and 128 KB total;
+- safe relative paths only;
+- selected files are copied into `/workspace/project` after any public-repository checkout;
+- high-risk key/config filename patterns are rejected;
+- validation happens before quota reservation;
+- KeepGoing durable job storage remains metadata-only; selected file bodies are not stored there;
+- this does not grant arbitrary desktop/filesystem access.
+
 ## Tool annotation justifications
 
 ### get_profile
@@ -70,13 +101,6 @@ KeepGoing may explain that a requested feature is unavailable under the user's e
 - openWorldHint: false — accesses only the bounded authenticated KeepGoing account.
 - destructiveHint: false — does not create, update, delete, send, or cancel anything.
 - idempotentHint: true — repeated reads have no additional effect.
-
-### list_tool_profiles
-- readOnlyHint: true — returns only the tool-profile metadata visible to the authenticated account.
-- openWorldHint: false — reads KeepGoing's bounded server-side profile catalogue and does not itself contact the external tool providers.
-- destructiveHint: false — no external tool is executed and no data is changed.
-- idempotentHint: true — repeated listing has no additional effect.
-- Privacy/security note: secret authorization values, vault credentials and raw tool arguments are not returned.
 
 ### start_persistent_job
 - readOnlyHint: false — creates/reserves a durable job and starts provider work.
@@ -108,6 +132,24 @@ KeepGoing may explain that a requested feature is unavailable under the user's e
 - destructiveHint: false — no state-changing action is performed.
 - idempotentHint: true — repeated listing is safe.
 
+### list_job_artifacts
+- readOnlyHint: true — lists immutable metadata for published output files belonging to the authenticated job.
+- openWorldHint: false — reads only bounded provider state for that owned KeepGoing job.
+- destructiveHint: false — does not modify or delete artifacts.
+- idempotentHint: true — repeated listings have no additional effect.
+
+### read_job_artifact
+- readOnlyHint: true — retrieves a bounded text artifact already published by the authenticated job.
+- openWorldHint: false — reads only bounded provider state for that owned KeepGoing job.
+- destructiveHint: false — does not modify or delete the artifact.
+- idempotentHint: true — repeated reads have no additional effect.
+
+### get_job_report
+- readOnlyHint: true — returns a deterministic summary of the authenticated account's own job (status, progress, budget diagnostics, checksummed result excerpt, artifact manifest, next step).
+- openWorldHint: false — reads only KeepGoing durable state and bounded provider state for that owned job.
+- destructiveHint: false — never starts, changes, cancels or deletes anything.
+- idempotentHint: true — repeated calls against an unchanged job return identical output.
+
 ### resume_persistent_job
 - readOnlyHint: false — sends user-supplied missing information into the same provider session and resumes work.
 - openWorldHint: true — resumed work may access the public web if that job was allowed to do so.
@@ -117,7 +159,7 @@ KeepGoing may explain that a requested feature is unavailable under the user's e
 ### cancel_persistent_job
 - readOnlyHint: false — cancels the active durable job/provider turn.
 - openWorldHint: false — operates only on the bounded authenticated KeepGoing job.
-- destructiveHint: true — cancellation ends the current job and cannot restore that same running provider turn.
+- destructiveHint: true — cancellation ends the current job (including one waiting for input) and cannot restore that same running provider turn; a cancelled job can never be resumed or continued.
 - idempotentHint: true — repeated cancellation has no additional destructive effect.
 
 ## Exactly five positive review cases
@@ -146,15 +188,18 @@ Expected:
 - returns only the authenticated review account's fixture job;
 - returns `job_id`, `status`, `output`, `error`, and bounded progress metadata.
 
-### Positive 3 — wait without duplicating
+### Positive 3 — coding workspace against a public GitHub fixture
 
 Prompt:
-`Wait briefly for that same KeepGoing job.`
+`Use KeepGoing to inspect the public GitHub repository chipblock2/project-relay on branch main, make one small code-quality improvement locally, run an appropriate test, and report the result. Use the coding workspace.`
 
 Expected:
-- calls `wait_for_persistent_job` with the same job ID;
-- never starts a second job;
-- if still active, returns `should_continue_polling: true`.
+- calls `continue_until_done` or `start_persistent_job` with `codingWorkspace: true`;
+- passes the public GitHub repository URL and safe ref;
+- the hosted sandbox clones the repo into `/workspace/project`;
+- the Agent may read/edit/test the real files locally;
+- no private-repository or push capability is used;
+- local shell commands do not consume the external web/MCP/function-call allowance.
 
 ### Positive 4 — recover in a new chat
 
@@ -217,8 +262,19 @@ Initial public-directory submission candidate.
 
 KeepGoing provides durable AI jobs that can continue bounded multi-turn work, survive chat changes, recover by job ID, pause for genuine user input, and resume the same job without repeatedly restarting completed work.
 
-Beta.23 includes:
+1.5.0-beta.1 adds, on top of beta.24:
 
+- owner binding for legacy-engine jobs (cross-account read/cancel is refused);
+- race-safe cancellation that also stops in-flight continuations, and no resurrection of finished jobs;
+- argument-bound start idempotency when no client request id is supplied;
+- deterministic, checksummed artifact manifests and the read-only `get_job_report` tool;
+- client-safe error messages with support references, structured logs, rate limits and active-job caps.
+
+Beta.24 includes:
+
+- opt-in coding workspace for public GitHub repositories, with local file inspection/edit/test support;
+- bounded selected-file handoff for task-relevant local/uncommitted text files;
+- restricted sandbox networking and strict repository URL/ref validation;
 - watchdog recovery;
 - deterministic/idempotent initial-session startup;
 - retry and metadata recovery for transient provider-start failures;
@@ -280,7 +336,7 @@ The following require the OpenAI submission portal or a user-controlled identity
 3. Complete individual or business verification for the exact publisher identity.
 4. Create a `With MCP` plugin draft and select the Universal MCP URL type.
 5. Supply dedicated reviewer credentials that work without MFA/SMS/email confirmation/additional setup.
-6. Select Scan Tools against the production MCP endpoint and verify the beta.23 metadata.
+6. Select Scan Tools against the production MCP endpoint and verify the 1.5.0-beta.1 metadata (eleven tools for durable accounts, including `get_job_report`).
 7. Paste the annotation justifications above into the submission form.
 8. Complete the generated domain-verification challenge.
 9. Provide the required demo-recording URL.
@@ -289,16 +345,15 @@ The following require the OpenAI submission portal or a user-controlled identity
 12. Complete policy attestations only after the scanned production build and review materials match.
 13. Submit for review. Submission begins review; public publication is a separate post-approval action.
 
-## Production release evidence required for beta.23
+## Production evidence at beta.20 checkpoint
 
-Before submission, capture fresh evidence from the exact beta.23 production commit:
+Immediately before beta.21 policy hardening:
+- production `/health` and `/readiness` were healthy;
+- durable engine/store/watchdog and OAuth were ready;
+- owner-canary mode was disabled;
+- `commercial_blockers` was empty and `sell_ready` was true;
+- PayPal Live was configured and recovered across restart;
+- the entire regression suite passed during production startup;
+- the previously failed durable reservation was successfully revived in-place by reusing its original client request ID after the beta.20 start-recovery fix.
 
-- CI completed successfully and produced the submission ZIP artifact.
-- Production `/health` and `/readiness` are healthy.
-- Durable engine/store/watchdog/OAuth are ready.
-- Tool profiles report ready; optional GitHub/Relay profiles report ready only when deliberately configured.
-- `commercial_blockers` is empty and `sell_ready` reflects the independent website state.
-- The complete production preflight passes.
-- Five positive and three negative reviewer cases pass against the dedicated review account.
-
-Do not reuse an older beta checkpoint as release evidence.
+This evidence predates 1.5.0-beta.1. Re-run these checks (and `npm run preflight -- --v12 --release=1.5.0-beta.1`) on the 1.5 deployment before using this kit for submission.

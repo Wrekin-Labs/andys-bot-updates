@@ -1,3 +1,7 @@
+import { isLegalTransition } from "./durable_job.js";
+
+const ACTIVE_STATUSES = ["queued", "working", "continuing", "input_required"];
+
 export class MemoryJobStore {
   constructor() {
     this.jobs = new Map();
@@ -41,15 +45,17 @@ export class MemoryJobStore {
     return row ? structuredClone(row) : null;
   }
 
-  async listOwnerJobs(ownerSubjectHash, { limit = 20, activeOnly = false } = {}) {
+  async listOwnerJobs(ownerSubjectHash, { limit = 20, activeOnly = false, statuses = null } = {}) {
     const owner = String(ownerSubjectHash || "");
     if (!owner) throw new Error("owner subject hash required");
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
-    const active = new Set(["queued", "working", "continuing", "input_required"]);
+    const wanted = new Set(
+      Array.isArray(statuses) && statuses.length ? statuses : activeOnly ? ACTIVE_STATUSES : []
+    );
     const rows = [...this.jobs.values()]
       .filter((row) =>
         row.ownerSubjectHash === owner &&
-        (!activeOnly || active.has(row.status))
+        (wanted.size === 0 || wanted.has(row.status))
       )
       .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
       .slice(0, safeLimit);
@@ -97,7 +103,17 @@ export class MemoryJobStore {
     if (current.version !== expectedVersion) {
       return { ok: false, reason: "version_conflict", job: structuredClone(current) };
     }
-    const record = { ...structuredClone(next), id: current.id, version: current.version + 1 };
+    // Mirrors the Supabase guard: absorbing states are never left, and the
+    // owner of a job is immutable after reservation.
+    if (!isLegalTransition(current, next)) {
+      return { ok: false, reason: "illegal_transition", job: structuredClone(current) };
+    }
+    const record = {
+      ...structuredClone(next),
+      id: current.id,
+      ownerSubjectHash: current.ownerSubjectHash,
+      version: current.version + 1
+    };
     this.jobs.set(current.id, record);
     return { ok: true, job: structuredClone(record) };
   }

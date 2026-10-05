@@ -3,7 +3,6 @@ import { createV12Service, planLimits, buildJobPrompt, JOB_INSTRUCTIONS } from "
 import { MemoryJobStore } from "./durable_store.js";
 import { KeepGoingOrchestrator } from "./job_orchestrator.js";
 import { JOB_STATES, newJobRecord } from "./durable_job.js";
-import { createToolProfileRegistry } from "./tool_profiles.js";
 
 assert.match(JOB_INSTRUCTIONS, /do not need a KeepGoing control tool/i);
 assert.match(JOB_INSTRUCTIONS, /server converts your final STATUS marker/i);
@@ -74,7 +73,6 @@ assert.equal("limits" in started, false);
 const ownedActive = await service.list("ownerhash", { activeOnly: true });
 assert.equal(ownedActive.jobs.length, 1);
 assert.equal(ownedActive.jobs[0].job_id, started.job_id);
-assert.equal(ownedActive.jobs[0].tool_profile, "web");
 const otherOwner = await service.list("different-owner", { activeOnly: false });
 assert.equal(otherOwner.jobs.length, 0);
 
@@ -96,7 +94,6 @@ await orchestrator.reconcile(started.job_id);
 viewedTurns.length = 0;
 const finished = await service.get(started.job_id, "ownerhash");
 assert.equal(finished.status, JOB_STATES.COMPLETED);
-assert.equal(finished.tool_profile, "web");
 assert.match(finished.output, /COMPLETED/);
 assert.deepEqual(viewedTurns, ["turn_2"]);
 assert.deepEqual(Object.keys(finished.progress).sort(), ["attempt", "max_attempts"]);
@@ -273,93 +270,6 @@ assert.match(sent.at(-1).key, /^kg-user-/);
   assert.ok(!active.jobs.some((job) => job.job_id === started.job_id));
 }
 
-// Tool profiles reach the durable Agents session with owner-only writes gated.
-{
-  const toolRegistry = createToolProfileRegistry({
-    rawJson: JSON.stringify({
-      profiles: {
-        "developer-owner": {
-          ownerOnly: true,
-          writeCapable: true,
-          allowWeb: false,
-          maxToolCalls: 20,
-          servers: [{
-            label: "github",
-            url: "https://mcp.example.com/github",
-            authorization_env: "TEST_GITHUB_MCP_AUTH",
-            allowed_tools: ["search", "fetch_file", "update_file"]
-          }]
-        }
-      }
-    }),
-    env: { TEST_GITHUB_MCP_AUTH: "Bearer test-secret" }
-  });
-
-  const captured = [];
-  const profileEngine = {
-    async createSession(args) {
-      captured.push(args);
-      return { id: "sess_tools" };
-    },
-    async cancelTurn() {}
-  };
-  const profileStore = new MemoryJobStore();
-  let profileClock = 40_000;
-  const profileOrchestrator = new KeepGoingOrchestrator({
-    engine: profileEngine,
-    store: profileStore,
-    now: () => ++profileClock
-  });
-  const profileService = createV12Service({
-    engine: profileEngine,
-    store: profileStore,
-    orchestrator: profileOrchestrator,
-    toolProfiles: toolRegistry,
-    now: () => ++profileClock
-  });
-
-  const publicProfiles = profileService.listToolProfiles(false);
-  assert.ok(publicProfiles.profiles.some((p) => p.name === "web"));
-  assert.ok(!publicProfiles.profiles.some((p) => p.name === "developer-owner"));
-
-  const ownerProfiles = profileService.listToolProfiles(true);
-  assert.ok(ownerProfiles.profiles.some((p) => p.name === "developer-owner"));
-
-  await assert.rejects(
-    () => profileService.start({
-      goal: "edit code",
-      ownerSubjectHash: "customer-owner",
-      tier: "business",
-      admin: false,
-      toolProfile: "developer-owner"
-    }),
-    /owner-only/
-  );
-  assert.equal(captured.length, 0);
-
-  const toolJob = await profileService.start({
-    goal: "edit code",
-    ownerSubjectHash: "real-owner",
-    tier: "owner",
-    admin: true,
-    allowWeb: false,
-    toolProfile: "developer-owner",
-    clientRequestId: "tool-job-1"
-  });
-  assert.equal(toolJob.tool_profile, "developer-owner");
-  assert.equal(captured.length, 1);
-  assert.equal(captured[0].allowWeb, false);
-  assert.equal(captured[0].mcpTools.length, 1);
-  assert.deepEqual(captured[0].mcpTools[0].allowed_tools, ["search", "fetch_file", "update_file"]);
-  assert.equal(captured[0].mcpTools[0].transport.authorization, "Bearer test-secret");
-
-  const storedToolJob = await profileStore.get(toolJob.job_id);
-  assert.equal(storedToolJob.toolCallBudgetTotal, 20);
-  assert.equal(storedToolJob.toolProfileName, "developer-owner");
-  assert.equal(storedToolJob.toolWriteCapable, true);
-  assert.ok(/^[0-9a-f]{64}$/.test(storedToolJob.toolPolicyHash));
-}
-
 const limits = planLimits("business", true);
 assert.equal(limits.max_attempts, 8);
 assert.equal(limits.max_total_tokens, 30_000);
@@ -373,13 +283,204 @@ assert.equal(proLimits.max_total_tool_calls, 3);
 const offlineLimits = planLimits("pro", false);
 assert.equal(offlineLimits.max_total_tool_calls, 0);
 
-const externalOnly = planLimits("pro", false, true);
-assert.equal(externalOnly.max_total_tool_calls, 3);
 
-const ownerToolLimits = planLimits("owner", false, true);
-assert.equal(ownerToolLimits.max_attempts, 12);
-assert.equal(ownerToolLimits.max_total_tokens, 60_000);
-assert.equal(ownerToolLimits.max_total_tool_calls, 40);
+
+// Coding workspace is explicit, forwarded to the provider, and has a shorter
+// wall-clock budget to bound hosted-container cost.
+{
+  const codeStore = new MemoryJobStore();
+  let createdOptions = null;
+  const codeEngine = {
+    async createSession(options) {
+      createdOptions = options;
+      return { id: "sess_code_workspace" };
+    },
+    async cancelTurn() {}
+  };
+  let codeClock = 300_000;
+  const codeOrchestrator = new KeepGoingOrchestrator({
+    engine: codeEngine,
+    store: codeStore,
+    now: () => ++codeClock,
+    sleep: async () => {}
+  });
+  const codeService = createV12Service({
+    engine: codeEngine,
+    store: codeStore,
+    orchestrator: codeOrchestrator,
+    now: () => ++codeClock,
+    sleep: async () => {}
+  });
+
+  const codeJob = await codeService.start({
+    goal: "inspect and improve the project",
+    definitionOfDone: "tests pass and changes are explained",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code",
+    codingWorkspace: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay",
+    repositoryRef: "main"
+  });
+  assert.equal(codeJob.status, JOB_STATES.WORKING);
+  assert.deepEqual(createdOptions.workspace, {
+    enabled: true,
+    repositoryUrl: "https://github.com/chipblock2/project-relay.git",
+    repositoryRef: "main",
+    files: []
+  });
+  assert.match(createdOptions.instructions, /\/workspace\/project/);
+  assert.match(createdOptions.instructions, /Do not attempt to push to GitHub/);
+
+  const localFileJob = await codeService.start({
+    goal: "work with selected local file",
+    ownerSubjectHash: "owner-code",
+    clientRequestId: "req-code-files",
+    codingWorkspace: true,
+    workspaceFiles: [{
+      path: "src/local-only.js",
+      content: "export const localOnly = 1;\n"
+    }]
+  });
+  assert.equal(localFileJob.status, JOB_STATES.WORKING);
+  assert.deepEqual(createdOptions.workspace.files, [{
+    path: "src/local-only.js",
+    content: "export const localOnly = 1;\n"
+  }]);
+
+  await assert.rejects(
+    () => codeService.start({
+      goal: "bad repo configuration",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-bad",
+      repositoryUrl: "https://github.com/chipblock2/project-relay"
+    }),
+    /require codingWorkspace=true/
+  );
+
+  let invalidQuotaReservations = 0;
+  await assert.rejects(
+    () => codeService.start({
+      goal: "invalid workspace should fail before quota",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-invalid",
+      codingWorkspace: true,
+      repositoryUrl: "https://example.com/not/github",
+      beforeCreateSession: async () => { invalidQuotaReservations++; }
+    }),
+    /github\.com/
+  );
+  assert.equal(invalidQuotaReservations, 0);
+  assert.equal(
+    await codeStore.findByRequest("owner-code", "req-code-invalid"),
+    null
+  );
+
+  let secretFileQuota = 0;
+  await assert.rejects(
+    () => codeService.start({
+      goal: "unsafe selected file",
+      ownerSubjectHash: "owner-code",
+      clientRequestId: "req-code-secret",
+      codingWorkspace: true,
+      workspaceFiles: [{ path: ".env", content: "example" }],
+      beforeCreateSession: async () => { secretFileQuota++; }
+    }),
+    /(not allowed for inline handoff|safe relative project path)/
+  );
+  assert.equal(secretFileQuota, 0);
+  assert.equal(
+    await codeStore.findByRequest("owner-code", "req-code-secret"),
+    null
+  );
+}
+
+// Coding artifacts are job-owner scoped and only /workspace/outputs is exposed.
+{
+  const artifactStore = new MemoryJobStore();
+  const artifactEngine = {
+    async listArtifacts() {
+      return {
+        data: [
+          {
+            id: "artifact_patch",
+            path: "/workspace/outputs/fix.patch",
+            size_bytes: 123,
+            turn_id: "turn_artifact"
+          },
+          {
+            id: "artifact_internal",
+            path: "/workspace/project/.env",
+            size_bytes: 20,
+            turn_id: "turn_artifact"
+          }
+        ]
+      };
+    },
+    async readArtifactText(_sessionId, artifactId) {
+      return {
+        artifact: {
+          id: artifactId,
+          path: "/workspace/outputs/fix.patch",
+          size_bytes: 123
+        },
+        text: "diff --git a/a b/a\n"
+      };
+    }
+  };
+  const artifactOrchestrator = {
+    async cancel() { throw new Error("not used"); }
+  };
+  const artifactService = createV12Service({
+    engine: artifactEngine,
+    store: artifactStore,
+    orchestrator: artifactOrchestrator
+  });
+  const artifactJob = newJobRecord({
+    id: "kgj_33333333333333333333333333333333",
+    ownerSubjectHash: "artifact-owner",
+    now: 40_000
+  });
+  artifactJob.status = JOB_STATES.COMPLETED;
+  artifactJob.providerSessionId = "sess_artifacts";
+  await artifactStore.createOrGet({
+    job: artifactJob,
+    ownerSubjectHash: artifactJob.ownerSubjectHash
+  });
+
+  const listedArtifacts = await artifactService.artifacts(
+    artifactJob.id,
+    "artifact-owner",
+    false,
+    50
+  );
+  assert.equal(listedArtifacts.artifacts.length, 1);
+  assert.equal(listedArtifacts.artifacts[0].artifact_id, "artifact_patch");
+  assert.equal(listedArtifacts.artifacts[0].path, "/workspace/outputs/fix.patch");
+
+  const readArtifact = await artifactService.readArtifact(
+    artifactJob.id,
+    "artifact_patch",
+    "artifact-owner"
+  );
+  assert.match(readArtifact.text, /^diff --git/);
+
+  await assert.rejects(
+    () => artifactService.artifacts(artifactJob.id, "other-owner"),
+    /not found/i
+  );
+  await assert.rejects(
+    () => artifactService.readArtifact(artifactJob.id, "artifact_patch", "other-owner"),
+    /not found/i
+  );
+}
+
+const proCodingLimits = planLimits("pro", true, true);
+assert.equal(proCodingLimits.max_wall_seconds, 30 * 60);
+assert.equal(proCodingLimits.max_total_tool_calls, 3);
+
+const businessCodingLimits = planLimits("business", true, true);
+assert.equal(businessCodingLimits.max_wall_seconds, 60 * 60);
+assert.equal(businessCodingLimits.max_total_tool_calls, 5);
 
 console.log("v1.2 service tests passed");
 
