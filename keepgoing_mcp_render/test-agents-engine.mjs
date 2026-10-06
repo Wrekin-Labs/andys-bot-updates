@@ -481,10 +481,25 @@ assert.equal(
 
 // Idle alone is not proof of success.
 assert.equal(classifySession({ status: "idle" }, "", { data: [] }).providerStatus, "working");
-assert.equal(
-  classifySession({ status: "idle" }, "", { data: [{ id: "t2", status: "failed", subagent_id: null }] }).providerStatus,
-  "failed"
+const failedTurn = classifySession(
+  { status: "idle" },
+  "",
+  { data: [{ id: "t2", status: "failed", subagent_id: null, error: { code: "credit_balance_exhausted", message: "No API credits remain." } }] }
 );
+assert.equal(failedTurn.providerStatus, "failed");
+assert.deepEqual(failedTurn.providerError, {
+  code: "credit_balance_exhausted",
+  message: "No API credits remain."
+});
+
+const failedSession = classifySession(
+  { status: "failed", error: "Authentication failed for sk-proj-supersecret123456789" },
+  "",
+  { data: [] }
+);
+assert.equal(failedSession.providerStatus, "failed");
+assert.match(failedSession.providerError.message, /\[redacted-key\]/);
+assert.doesNotMatch(failedSession.providerError.message, /supersecret/);
 assert.equal(
   classifySession({ status: "idle" }, "", { data: [{ id: "t3", status: "cancelled", subagent_id: null }] }).providerStatus,
   "cancelled"

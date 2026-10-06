@@ -403,7 +403,13 @@ export function classifySession(session, latestText = "", turnsResponse = null, 
     return { providerStatus: "action_required", output: latestText, turnId: null, tokensUsed: 0 };
   }
   if (status === "failed") {
-    return { providerStatus: "failed", output: latestText, turnId: null, tokensUsed: 0 };
+    return {
+      providerStatus: "failed",
+      output: latestText,
+      turnId: null,
+      tokensUsed: 0,
+      providerError: normaliseProviderFailure(session?.error)
+    };
   }
 
   const turn = latestRootTurn(turnsResponse);
@@ -422,7 +428,14 @@ export function classifySession(session, latestText = "", turnsResponse = null, 
     };
   }
   if (turnStatus === "failed") {
-    return { providerStatus: "failed", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
+    return {
+      providerStatus: "failed",
+      output: latestText,
+      turnId: turn?.id || null,
+      tokensUsed,
+      toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null),
+      providerError: normaliseProviderFailure(turn?.error)
+    };
   }
   if (turnStatus === "cancelled") {
     return { providerStatus: "cancelled", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
@@ -434,6 +447,30 @@ export function classifySession(session, latestText = "", turnsResponse = null, 
   // Session idle means no turn is currently running; it does not prove the
   // last turn succeeded. Without a terminal root turn, fail safe as working.
   return { providerStatus: "working", output: latestText, turnId: turn?.id || null, tokensUsed, toolCallsUsed: turnToolCallCount(itemsResponse, turn?.id || null) };
+}
+
+export function normaliseProviderFailure(value) {
+  if (value == null) return null;
+  const source = typeof value === "string"
+    ? { code: null, message: value }
+    : {
+        code: value?.code == null ? null : String(value.code),
+        message: value?.message == null ? "" : String(value.message)
+      };
+
+  const code = /^[A-Za-z0-9_.:-]{1,80}$/.test(String(source.code || ""))
+    ? String(source.code)
+    : null;
+
+  const message = String(source.message || "")
+    .replace(/sk-[A-Za-z0-9_-]{10,}/g, "[redacted-key]")
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
+
+  if (!code && !message) return null;
+  return { code, message: message || null };
 }
 
 export function turnToolCallCount(itemsResponse, turnId = null) {
