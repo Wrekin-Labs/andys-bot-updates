@@ -105,6 +105,7 @@ export function assessRun(job, {
   output = "",
   tokensUsed = 0,
   toolCallsUsed = 0,
+  providerError = null,
   now = Date.now(),
   runId = null
 } = {}) {
@@ -127,7 +128,7 @@ export function assessRun(job, {
   if (providerStatus === "failed") {
     next.status = JOB_STATES.FAILED;
     next.safeErrorCode = "provider_failed";
-    next.safeErrorMessage = "The model run failed.";
+    next.safeErrorMessage = providerFailureMessage(providerError);
     next.continuationNeeded = false;
     return next;
   }
@@ -223,6 +224,22 @@ export function continuationPrompt(previousOutput, attempt, maxAttempts) {
     "STATUS: NEEDS_USER",
     "STATUS: PARTIAL"
   ].join("\n");
+}
+
+function providerFailureMessage(providerError) {
+  const code = /^[A-Za-z0-9_.:-]{1,80}$/.test(String(providerError?.code || ""))
+    ? String(providerError.code)
+    : "";
+  const message = String(providerError?.message || "")
+    .replace(/sk-[A-Za-z0-9_-]{10,}/g, "[redacted-key]")
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
+
+  if (!code && !message) return "The model run failed.";
+  const detail = [code ? "[" + code + "]" : "", message].filter(Boolean).join(" ");
+  return ("The model run failed: " + detail).slice(0, 360);
 }
 
 function hashText(text) {

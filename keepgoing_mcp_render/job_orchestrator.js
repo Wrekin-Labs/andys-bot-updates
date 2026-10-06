@@ -593,6 +593,7 @@ export class KeepGoingOrchestrator {
       output: provider.output,
       tokensUsed: provider.tokensUsed || 0,
       toolCallsUsed: provider.toolCallsUsed || 0,
+      providerError: provider.providerError || null,
       now,
       runId: terminalTurnId || providerId
     });
