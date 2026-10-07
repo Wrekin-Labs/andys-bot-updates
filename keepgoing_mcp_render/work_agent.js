@@ -55,7 +55,8 @@ export function buildWorkGoal(input={}) {
     "Payments, legal acceptance, secret writes and destructive actions must never be inferred from a broad goal.",
     "If a required action is not permitted, complete all safe preparatory work first, then return STATUS: NEEDS_USER with the exact approval required.",
     "","PROGRESS PROTOCOL","At the end of every root turn include exactly one single-line marker:",
-    'WORK_PROGRESS_JSON: {"stage":"planning|executing|verifying|reviewing|input_required|blocked|completed|failed","summary":"...","plan":[{"id":"C1","text":"...","status":"pending|working|pass|fail|blocked"}],"checks":[{"label":"...","ok":true,"evidence":"..."}],"blockers":[],"requested_approval":null,"next":"..."}',
+    'WORK_PROGRESS_JSON: {"stage":"planning|executing|verifying|reviewing|input_required|blocked|completed|failed","summary":"...","plan":[{"id":"C1","text":"...","status":"pending|working|pass|fail|blocked"}],"checks":[{"label":"...","ok":true,"evidence":"..."}],"blockers":[],"requested_approval":null,"host_handoff":null,"next":"..."}',
+    'When a host-executed tool is required, set host_handoff to {"capability":"read_local_computer|operate_local_computer|read_connected_app|change_connected_app","target":"short non-secret target","summary":"exact requested action","approval_required":true|false} and return STATUS: NEEDS_USER.',
     "Use acceptance-criterion IDs in plan entries so completion can be verified.",
     "Do not mark completed while a required criterion or check is missing or failed.",
     "","FINAL STATUS","End with exactly one of:","STATUS: COMPLETED","STATUS: NEEDS_USER","STATUS: PARTIAL"
@@ -98,6 +99,19 @@ export function parseWorkProgress(output="") {
   try{return normaliseProgress(JSON.parse(line));}catch{return null;}
 }
 
+export function parseWorkHostHandoff(output="") {
+  const progress=parseWorkProgress(output);
+  if(!progress||!progress.host_handoff) return null;
+  const handoff=progress.host_handoff;
+  if(!handoff.capability||!handoff.summary) return null;
+  return {
+    capability:handoff.capability,
+    target:handoff.target||"",
+    summary:handoff.summary,
+    approval_required:handoff.approval_required===true
+  };
+}
+
 export function workCompletionGate(input={},output="") {
   const task=isNormalised(input)?input:normaliseWorkTask(input),progress=parseWorkProgress(output),reasons=[];
   if(!progress) return {ok:false,reasons:["missing or invalid WORK_PROGRESS_JSON"],progress:null};
@@ -117,7 +131,7 @@ function normaliseProgress(value={}) {
   const plan=Array.isArray(value.plan)?value.plan.slice(0,40).map((x,i)=>({id:optionalText(x?.id,80)||`S${i+1}`,text:optionalText(x?.text,1000)||"Work step",status:["pending","working","pass","fail","blocked"].includes(String(x?.status||""))?String(x.status):"pending"})):[];
   const checks=Array.isArray(value.checks)?value.checks.slice(0,40).map(x=>({label:optionalText(x?.label,500)||"Verification",ok:x?.ok===true,evidence:optionalText(x?.evidence,1500)})):[];
   const blockers=Array.isArray(value.blockers)?value.blockers.slice(0,20).map(x=>optionalText(x,1000)).filter(Boolean):[];
-  return {stage,summary:optionalText(value.summary,2000),plan,checks,blockers,requested_approval:value.requested_approval&&typeof value.requested_approval==="object"?{action:optionalText(value.requested_approval.action,120),reason:optionalText(value.requested_approval.reason,1200)}:null,next:optionalText(value.next,1200)};
+  return {stage,summary:optionalText(value.summary,2000),plan,checks,blockers,requested_approval:value.requested_approval&&typeof value.requested_approval==="object"?{action:optionalText(value.requested_approval.action,120),reason:optionalText(value.requested_approval.reason,1200)}:null,host_handoff:value.host_handoff&&typeof value.host_handoff==="object"?{capability:optionalText(value.host_handoff.capability,120),target:optionalText(value.host_handoff.target,500),summary:optionalText(value.host_handoff.summary,1200),approval_required:value.host_handoff.approval_required===true}:null,next:optionalText(value.next,1200)};
 }
 
 function normaliseRepositoryUrl(value){if(value==null||String(value).trim()==="")return null;const text=String(value).trim().replace(/\.git$/,"");if(!SAFE_REPO_RE.test(text))throw new Error("repositoryUrl must be a public https://github.com/owner/repo URL");return text;}
