@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { isTerminal } from "./durable_job.js";
 import { latestRootTurn, latestSessionText, normaliseCodingWorkspace } from "./agents_engine.js";
+import { parseWorkHostHandoff } from "./work_agent.js";
 import {
   artifactMimeType,
   isDurableJobId,
@@ -468,6 +469,7 @@ export function createV12Service({
       tool_profile: job.toolProfileName || "web",
       output,
       error: job.safeErrorMessage || null,
+      host_handoff: String(job.engine || "").startsWith("agents-work") ? parseWorkHostHandoff(output) : null,
       progress: {
         attempt: job.attempt,
         max_attempts: job.maxAttempts

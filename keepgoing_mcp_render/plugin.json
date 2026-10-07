@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "keepgoing",
-  "version": "1.5.0-beta.1",
+  "version": "1.6.0-beta.1",
   "description": "Durable AI jobs that continue substantial work without repeated continue prompts.",
   "author": {
     "name": "KeepGoing",
@@ -107,7 +107,7 @@
         "countries": [
           "GB"
         ],
-        "release_notes": "KeepGoing 1.5.0-beta.1 keeps the beta.23 permission-scoped GitHub and Project Relay tooling plus selected local file handoff, and adds stronger owner isolation, race-safe cancellation, safer idempotency, checksummed artifacts, get_job_report, rate limits, safe structured logging, and bounded stall recovery. A provider turn that remains working without advancing turn/token/tool progress for five minutes is restarted in the same durable job, up to two times by default."
+        "release_notes": "KeepGoing 1.6.0-beta.1 adds Work mode: one durable objective can plan, execute, verify and review across web research and isolated coding, expose a structured host_handoff when a Project Relay or connected-app action is required, accept a bounded host result through submit_work_host_result, and resume the same durable job without fabricating unexecuted actions. It retains selected local file handoff plus the 1.5 security, owner isolation, tool-profile, artifact, race-safety and stall-recovery hardening."
       }
     }
   }

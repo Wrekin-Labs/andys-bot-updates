@@ -35,7 +35,7 @@ const fetchOk = async (url, init = {}) => {
     });
   }
   if (path === "/version") {
-    return response(200, { release: "1.5.0-beta.1", engine: "durable", features: { remote_push: false } });
+    return response(200, { release: "1.6.0-beta.1", engine: "durable", features: { remote_push: false } });
   }
   if (path === "/.well-known/oauth-protected-resource") {
     return response(200, {
@@ -76,7 +76,7 @@ const ok = await runDeploymentPreflight({
   requireSellReady: true,
   requireV12: true,
   requireChallenge: true,
-  expectedRelease: "1.5.0-beta.1"
+  expectedRelease: "1.6.0-beta.1"
 });
 assert.equal(ok.ok, true, JSON.stringify(ok.failed));
 assert.deepEqual(ok.failed, []);

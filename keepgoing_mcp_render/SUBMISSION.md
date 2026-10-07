@@ -1,6 +1,6 @@
 # KeepGoing — Public Plugin Submission Kit
 
-Version: 1.5.0-beta.1
+Version: 1.6.0-beta.1
 Updated: 5 October 2026
 
 This is a submission/reviewer worksheet. It contains no passwords, activation tokens, API keys, PayPal credentials, or reviewer secrets.

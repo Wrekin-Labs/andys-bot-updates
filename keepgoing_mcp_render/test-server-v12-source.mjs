@@ -12,7 +12,7 @@ assert.match(source, /version: v12Access \? APP_VERSION : "1\.1\.0"/);
 // The release version is read from package.json, never hard-coded twice.
 assert.match(source, /const APP_VERSION = JSON\.parse\(readFileSync\(new URL\("\.\/package\.json"/);
 assert.doesNotMatch(source, /APP_VERSION = "\d/);
-assert.match(pkg.version, /^1\.5\.0/);
+assert.match(pkg.version, /^1\.6\.0/);
 assert.match(source, /app\.get\("\/icon\.svg"/);
 assert.match(source, /app\.get\("\/icon\.png"/);
 assert.match(source, /keepgoing-icon\.png/);
@@ -213,6 +213,7 @@ assert.match(source, /sell_ready: sellReady/);
 assert.match(source, /runtime\.watchdog\.runOnce\(\)/);
 assert.match(source, /name: "get_profile"[\s\S]{0,900}"openai\/profile": true/);
 for (const title of [
+  "Start Work task",
   "Start persistent job",
   "Continue until done",
   "Get persistent job",
@@ -220,13 +221,14 @@ for (const title of [
   "Cancel persistent job",
   "List KeepGoing tool profiles",
   "List persistent jobs",
+  "Submit Work host result",
   "Resume persistent job",
   "List job artifacts",
   "Read job artifact"
 ]) {
   assert.ok(source.includes('title: "' + title + '"'), "missing tool title: " + title);
 }
-assert.match(source, /name: "get_persistent_job"[\s\S]{0,1300}openWorldHint: false/);
+assert.match(source, /name: "get_persistent_job"[\s\S]{0,1900}openWorldHint: false/);
 assert.match(source, /name: "wait_for_persistent_job"[\s\S]{0,1900}openWorldHint: false/);
 assert.match(source, /name: "cancel_persistent_job"[\s\S]{0,1200}destructiveHint: true[\s\S]{0,120}openWorldHint: false/);
 assert.match(source, /name: "list_persistent_jobs"[\s\S]{0,1800}readOnlyHint: true[\s\S]{0,160}openWorldHint: false/);
