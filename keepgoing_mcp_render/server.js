@@ -1079,6 +1079,20 @@ app.post("/dev/api/tasks", async (req, res) => {
   }
 });
 
+app.post("/dev/api/work-tasks", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  try {
+    const result = await startWorkTaskCompat(req.body || {}, access);
+    res.status(202).json(result);
+  } catch (error) {
+    const message = String(error?.message || error);
+    res.status(/required|invalid|at most|exceeds/i.test(message) ? 400 : 500).json({
+      error: message.slice(0, 500)
+    });
+  }
+});
+
 app.post("/dev/api/jobs/:jobId/cancel", async (req, res) => {
   const access = await devDashboardAccess(req, res);
   if (!access) return;
