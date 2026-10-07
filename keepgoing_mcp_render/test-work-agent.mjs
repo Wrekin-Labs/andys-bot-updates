@@ -74,5 +74,9 @@ const serverSource = readFileSync(new URL("./server.js", import.meta.url), "utf8
 assert.match(serverSource, /registerTool\("start_work_task"/);
 assert.match(serverSource, /startWorkTaskCompat/);
 assert.match(serverSource, /workTaskToolDescription/);
+assert.match(serverSource, /name: "start_work_task"/);
+assert.match(serverSource, /registerTool\("submit_work_host_result"/);
+assert.match(serverSource, /name: "submit_work_host_result"/);
+assert.match(serverSource, /host_handoff/);
 
 console.log("work agent tests passed");

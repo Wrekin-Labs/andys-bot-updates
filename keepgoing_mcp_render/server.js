@@ -1386,6 +1386,30 @@ async function resumePersistentJobCompat(jobId, input, access) {
   );
 }
 
+async function resumeWorkHostResultCompat(jobId, result, access) {
+  const current = await getPersistentJobCompat(jobId, access);
+  const handoff = current?.host_handoff;
+  if (current?.status !== "input_required" || !handoff) {
+    throw new Error("Work job is not waiting for a host action result");
+  }
+  const status = ["ok","failed","cancelled"].includes(String(result?.status || ""))
+    ? String(result.status)
+    : "ok";
+  const summary = String(result?.summary || "").trim().slice(0, 1200);
+  const evidence = String(result?.evidence || "").trim().slice(0, 3000);
+  if (!summary && !evidence) throw new Error("host result summary or evidence required");
+  const message = [
+    "HOST RESULT FOR CURRENT WORK HANDOFF",
+    "capability=" + String(handoff.capability || "").slice(0, 120),
+    "target=" + String(handoff.target || "").slice(0, 500),
+    "status=" + status,
+    "summary=" + summary,
+    "evidence=" + evidence,
+    "Use this as direct host evidence. Update the Work checkpoint and continue the same durable task. Do not claim anything beyond this result."
+  ].join("\n");
+  return resumePersistentJobCompat(jobId, message, access);
+}
+
 function createMcpServer(access = {}) {
   const v12Access = v12ForAccess(access);
   const ownerAutoContinue = Boolean(access?.admin || access?.tier === "owner");
@@ -1599,6 +1623,7 @@ function createMcpServer(access = {}) {
       status: z.string(),
       output: z.string(),
       error: z.string().nullable(),
+      host_handoff: z.object({ capability: z.string(), target: z.string(), summary: z.string(), approval_required: z.boolean() }).nullable().optional(),
       progress: z.object({
         attempt: z.number(),
         max_attempts: z.number()
@@ -1628,6 +1653,7 @@ function createMcpServer(access = {}) {
       status: z.string(),
       output: z.string(),
       error: z.string().nullable(),
+      host_handoff: z.object({ capability: z.string(), target: z.string(), summary: z.string(), approval_required: z.boolean() }).nullable().optional(),
       progress: z.object({
         attempt: z.number(),
         max_attempts: z.number()
@@ -1745,6 +1771,32 @@ function createMcpServer(access = {}) {
       try {
         const result = await readJobArtifactCompat(job_id, artifact_id, access);
         return { content: [{ type: "text", text: result.text }], structuredContent: result };
+      } catch (error) {
+        return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
+      }
+    });
+
+    server.registerTool("submit_work_host_result", {
+      title: "Submit Work host result",
+      description: "Use only when a Work task is waiting on its structured host_handoff. Supplies the bounded result of that exact host action and resumes the same durable job.",
+      inputSchema: {
+        job_id: z.string().min(1).max(200),
+        status: z.enum(["ok","failed","cancelled"]).default("ok"),
+        summary: z.string().max(1200).optional(),
+        evidence: z.string().max(3000).optional()
+      },
+      outputSchema: {
+        job_id: z.string(),
+        status: z.string(),
+        message: z.string()
+      },
+      securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }],
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: [OAUTH_SCOPE] }] },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    }, async ({ job_id, status, summary, evidence }) => {
+      try {
+        const result = await resumeWorkHostResultCompat(job_id, { status, summary, evidence }, access);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {
         return { isError: true, content: [{ type: "text", text: String(error?.message || error) }] };
       }
@@ -2006,6 +2058,44 @@ function createMcpServer(access = {}) {
         _meta: { ...oauthMeta, "openai/profile": true }
       });
 
+      tools.push({
+        name: "start_work_task",
+        title: "Start Work task",
+        description: workTaskToolDescription(),
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: { type: "string", minLength: 1, maxLength: 12000 },
+            definitionOfDone: { type: "string", minLength: 1, maxLength: 4000 },
+            acceptanceCriteria: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", minLength: 1, maxLength: 1000 } },
+            verificationCommands: { type: "array", maxItems: 12, items: { type: "string", minLength: 1, maxLength: 1000 } },
+            mode: { type: "string", enum: ["safe","balanced","max"], default: "max" },
+            allowWeb: { type: "boolean", default: true },
+            clientRequestId: { type: "string", minLength: 1, maxLength: 200 },
+            context: { type: "string", maxLength: 6000 },
+            repositoryUrl: { type: "string", format: "uri", maxLength: 500 },
+            repositoryRef: { type: "string", minLength: 1, maxLength: 200 },
+            workspaceFiles: { type: "array", maxItems: 8, items: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 180 }, content: { type: "string", maxLength: 32000 } }, required: ["path","content"], additionalProperties: false } }
+          },
+          required: ["goal"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            duplicate: { type: "boolean" },
+            message: { type: "string" }
+          },
+          required: ["job_id","status","message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: oauthMeta
+      });
+
       if (DEV_AGENT_ENABLED) tools.push({
         name: "start_dev_task",
         title: "Start autonomous development task",
@@ -2166,6 +2256,36 @@ function createMcpServer(access = {}) {
         },
         securitySchemes: oauthSecuritySchemes,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: oauthMeta
+      });
+
+      tools.push({
+        name: "submit_work_host_result",
+        title: "Submit Work host result",
+        description: "Use only when a Work task is waiting on its structured host_handoff. Supplies the bounded result of that exact host action and resumes the same durable job.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", minLength: 1, maxLength: 200 },
+            status: { type: "string", enum: ["ok","failed","cancelled"], default: "ok" },
+            summary: { type: "string", maxLength: 1200 },
+            evidence: { type: "string", maxLength: 3000 }
+          },
+          required: ["job_id"],
+          additionalProperties: false
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            status: { type: "string" },
+            message: { type: "string" }
+          },
+          required: ["job_id","status","message"],
+          additionalProperties: false
+        },
+        securitySchemes: oauthSecuritySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
         _meta: oauthMeta
       });
 
