@@ -101,6 +101,16 @@ The durable engine also applies aggregate per-job continuation budgets:
 
 These are safety/cost ceilings, not promised consumption targets. A job stops earlier when completed or when user input is genuinely required.
 
+## Work mode (beta)
+
+Work mode turns one outcome into a durable multi-step job with explicit planning, execution, verification and review checkpoints.
+
+Use `start_work_task` for general Work-style objectives. A Work task may use live web research and, when a public GitHub repository is supplied, the isolated coding workspace. The background runtime does not pretend it has access to local computers or connected apps that are only available to the ChatGPT host.
+
+When a host-executed capability is required, the latest Work checkpoint includes a structured `host_handoff` with capability, a non-secret target, the exact requested action, and whether specific approval is required. `get_persistent_job` and `wait_for_persistent_job` expose that handoff. The host can perform the exact authorised action with Project Relay or another connected app, then call `submit_work_host_result` with only a bounded status, summary and evidence payload. KeepGoing resumes the same durable job ID and the agent verifies that result before continuing.
+
+This preserves one durable objective across model work and host-tool work without creating duplicate jobs or claiming unexecuted actions.
+
 ## MCP tools
 
 - `continue_until_done` — preferred natural-language autopilot entrypoint for "continue / keep going / finish it / until done".
