@@ -1109,6 +1109,22 @@ app.post("/dev/api/jobs/:jobId/cancel", async (req, res) => {
   }
 });
 
+app.post("/dev/api/jobs/:jobId/host-result", async (req, res) => {
+  const access = await devDashboardAccess(req, res);
+  if (!access) return;
+  if (!validDashboardJobId(req.params.jobId)) return res.status(400).json({ error: "invalid_job_id" });
+  try {
+    const result = await resumeWorkHostResultCompat(req.params.jobId, {
+      status: String(req.body?.status || "ok"),
+      summary: String(req.body?.summary || ""),
+      evidence: String(req.body?.evidence || "")
+    }, access);
+    res.json(result);
+  } catch (error) {
+    res.status(409).json({ error: String(error?.message || "host_result_not_accepted").slice(0, 500) });
+  }
+});
+
 app.post("/dev/api/jobs/:jobId/resume", async (req, res) => {
   const access = await devDashboardAccess(req, res);
   if (!access) return;
