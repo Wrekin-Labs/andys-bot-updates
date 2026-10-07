@@ -1,4 +1,6 @@
 ﻿
+import { buildWorkRoutingInstructions } from "./work_router.js";
+
 const SAFE_REPO_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
 const SAFE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/;
 
@@ -62,7 +64,7 @@ export function buildWorkGoal(input={}) {
 
 export function buildWorkContext(input={}) {
   const task=isNormalised(input)?input:normaliseWorkTask(input),p=task.approvalPolicy;
-  return ["KeepGoing Work policy:",`mode=${task.mode}`,`repository=${task.repositoryUrl||"none"}`,
+  return [buildWorkRoutingInstructions({allowWeb:task.allowWeb,workspace:Boolean(task.repositoryUrl),projectRelay:false,connectedApps:false}),"KeepGoing Work policy:",`mode=${task.mode}`,`repository=${task.repositoryUrl||"none"}`,
     `remoteCodeWrites=${p.allowRemoteCodeWrites}`,`pullRequests=${p.allowPullRequests}`,`deploy=${p.allowDeploy}`,
     `productionWrites=${p.allowProductionWrites}`,`externalMessages=${p.allowExternalMessages}`,`accountChanges=${p.allowAccountChanges}`,
     `payments=${p.allowPayments}`,`secretAccess=${p.allowSecretAccess}`,task.context].filter(Boolean).join("\n").slice(0,8000);
