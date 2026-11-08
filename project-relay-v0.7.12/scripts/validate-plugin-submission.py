@@ -29,13 +29,13 @@ def require(condition: bool, message: str) -> None:
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     require(isinstance(data, dict), f"{path} must contain a JSON object")
     return data
 
 
 def validate_static() -> dict[str, Any]:
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8-sig"))
     version = str(pyproject["project"]["version"])
 
     plugin_path = PLUGIN_DIR / "plugin.json"
@@ -77,7 +77,7 @@ def validate_static() -> dict[str, Any]:
 
 
 def local_hosted_contract() -> dict[str, Any]:
-    source = HOSTED_MCP_SOURCE.read_text(encoding="utf-8")
+    source = HOSTED_MCP_SOURCE.read_text(encoding="utf-8-sig")
     version_match = re.search(
         r'serverInfo:\{name:"Project Relay",version:"([^"]+)"\}',
         source,
