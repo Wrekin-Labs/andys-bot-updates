@@ -14,6 +14,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = ROOT / "plugins" / "project-relay"
 HOSTED_MCP_SOURCE = ROOT / "supabase" / "functions" / "project-relay-mcp" / "index.ts"
+if not HOSTED_MCP_SOURCE.is_file():
+    HOSTED_MCP_SOURCE = ROOT / "hosted" / "project-relay-mcp" / "index.ts"
+RETRYABLE_HTTP_STATUSES = {502, 503, 504}
 CANONICAL_MCP = "https://project-relay-mcp-gateway.onrender.com/mcp"
 SITE = "https://project-relay-mcp-gateway.onrender.com"
 OAUTH_DISCOVERY = SITE + "/.well-known/oauth-authorization-server"
@@ -92,6 +95,9 @@ def local_hosted_contract() -> dict[str, Any]:
     require(public_match is not None, "hosted MCP PUBLIC_TOOLS catalogue is missing")
     tool_names = set(re.findall(r'"([a-z0-9_]+)"', public_match.group(1)))
     require(bool(tool_names), "hosted MCP PUBLIC_TOOLS catalogue is empty")
+    package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8-sig"))
+    require(version_match.group(1) == package["project"]["version"],
+            "hosted MCP version does not match package version")
     return {
         "version": version_match.group(1),
         "tools": tool_names,
@@ -105,6 +111,12 @@ def request_status(url: str, *, timeout: float = 60.0, attempts: int = 2) -> int
         try:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 return int(response.status)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            exc.close()
+            if status not in RETRYABLE_HTTP_STATUSES or attempt + 1 >= attempts:
+                return status
+            time.sleep(2.0)
         except (urllib.error.URLError, TimeoutError) as exc:
             last_error = exc
             if attempt + 1 < attempts:
@@ -135,7 +147,12 @@ def request_json(
                 text = response.read().decode("utf-8", errors="replace")
                 return response.status, json.loads(text)
         except urllib.error.HTTPError as exc:
+            if method == "GET" and exc.code in RETRYABLE_HTTP_STATUSES and attempt + 1 < attempts:
+                exc.close()
+                time.sleep(2.0)
+                continue
             text = exc.read().decode("utf-8", errors="replace")
+            exc.close()
             try:
                 parsed = json.loads(text)
             except json.JSONDecodeError:

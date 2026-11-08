@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - project-relay-v0.7.12-unattended-recovery
+      - repair/relay-0712-readiness-20261108
   pull_request:
     paths:
       - "project-relay-v0.7.12/**"
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run unattended recovery tests
+      - name: Run recovery, security and submission regression tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Compile Python package
         run: python -m compileall -q project_relay

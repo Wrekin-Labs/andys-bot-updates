@@ -831,7 +831,7 @@ Deno.serve(async(req:Request)=>{
     if(method==="initialize") return rpc(id,{
       protocolVersion:"2025-11-25",
       capabilities:{tools:{listChanged:true}},
-      serverInfo:{name:"Project Relay",version:"0.7.11"},
+      serverInfo:{name:"Project Relay",version:"0.7.12"},
       instructions:"Project Relay requires account linking for tool calls. Read-only inspection is available to linked accounts. Owner workstation administration requires both OAuth role=owner and the workstation-local Owner Full Control switch. Normal customer mutations remain exact approval-gated. OAuth owners with workstation-local Owner Full Control may remotely approve one existing exact pending approval through commandport_owner_approve. Sensitive file/document/terminal reads are owner-only. Unknown actions fail closed."
     });
     if(method==="notifications/initialized") return new Response(null,{status:202,headers:cors()});
@@ -879,7 +879,7 @@ Deno.serve(async(req:Request)=>{
         if(allowedIds){
           if(allowedIds.length===0){
             const value={
-              hosted_version:"0.7.11",
+              hosted_version:"0.7.12",
               protocol_version:"2025-11-25",
               published_tool_count:advertisedTools().length,
               stable_release_version:null,
@@ -917,7 +917,7 @@ Deno.serve(async(req:Request)=>{
             owner_full_control:info.owner_full_control === true,
           };
         });
-        const hostedVersion="0.7.11";
+        const hostedVersion="0.7.12";
         const stableReleaseVersion=typeof release?.version==="string" ? release.version : null;
         const versionsMatch=workstations.every((w:any)=>w.version===hostedVersion);
         const allOnline=workstations.every((w:any)=>w.online===true);

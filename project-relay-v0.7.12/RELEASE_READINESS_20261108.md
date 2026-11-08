@@ -2,6 +2,18 @@
 
 Status: NOT READY for production release or plugin resubmission.
 
+## Follow-up fixes and validation
+
+The follow-up retains the production hold. Candidate source now consistently reports 0.7.12 in MCP initialization, hosted status and version-comparison logic. This is source preparation only: the live service still requires an approved deployment.
+
+The validator now recognizes the recovered hosted/ layout while preferring the canonical supabase/functions/ layout when present, and rejects a hosted/package version mismatch. Missing plugin files still block submission.
+
+Public-page GET checks return permanent HTTP failures immediately, including 403. Both public-page and JSON GET checks retry 502/503/504 within the existing attempt limit. JSON POST HTTP failures are not replayed. No WAF settings changed.
+
+Added 13 tests, including actual temporary-state update backoff/recovery, successful post-update confirmation, wrong-version rejection and expired health windows. Combined result: **32 tests passed on Linux Python**, supplementing the previous 19-test Windows result. Physical reboot/recovery is still untested. The review branch is now included in the Windows CI trigger; no deployment job was added.
+
+The named project-relay repository was checked again and still returns 404. Workflow #295 and the missing plugin bundle remain unresolved. The earlier findings below describe the first review; the hosted path limitation and source version mismatch are repaired by this follow-up.
+
 ## Recovery and scope
 Recovered commit 2f6de5aa0b3b38e9d0695162f6822219bc206865 (Project Relay 0.7.12 unattended recovery), originally on project-relay-v0.7.12-unattended-recovery in Wrekin-Labs/andys-bot-updates.
 Created isolated branch repair/relay-0712-readiness-20261108 and worktree C:\Users\andye\ProjectRelayReview20261108 on Andy Home. Original checkout C:\Users\andye\ProjectRelay0712Work was clean and preserved.
