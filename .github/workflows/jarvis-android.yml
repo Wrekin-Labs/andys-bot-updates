@@ -1,0 +1,33 @@
+name: Jarvis Android preview
+on:
+  push:
+    branches: [feature/jarvis-android-20261108]
+    paths: ['jarvis-android/**', 'research/jarvis-2/prototype/**', '.github/workflows/jarvis-android.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Test existing ledger and mobile export
+        working-directory: research/jarvis-2/prototype
+        run: python -m unittest discover -v
+      - name: Build and lint preview APK
+        working-directory: jarvis-android
+        run: gradle --no-daemon assembleDebug lintDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Android-0.1.0-preview
+          path: jarvis-android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
