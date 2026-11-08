@@ -12,7 +12,11 @@ Public-page GET checks return permanent HTTP failures immediately, including 403
 
 Added 13 tests, including actual temporary-state update backoff/recovery, successful post-update confirmation, wrong-version rejection and expired health windows. Combined result: **32 tests passed on Linux Python**, supplementing the previous 19-test Windows result. Physical reboot/recovery is still untested. The review branch is now included in the Windows CI trigger; no deployment job was added.
 
-The named project-relay repository was checked again and still returns 404. Workflow #295 and the missing plugin bundle remain unresolved. The earlier findings below describe the first review; the hosted path limitation and source version mismatch are repaired by this follow-up.
+The named project-relay repository was checked again and still returns 404. Workflow #295 and the missing plugin bundle remain unresolved. GitHub Windows CI run 42486915554 passed both jobs for code commit a7d7ba7174c22cb00f249cc728181ca4075d2158: Python regression tests/compilation and PowerShell parsing.
+
+A further release blocker is confirmed: the recovered hosted PUBLIC_TOOLS catalogue contains 128 names, while the live service advertises 150 tools. This recovery snapshot must not replace production merely because its version fields now match. Recover and reconcile the newer hosted source first.
+
+The earlier findings below describe the first review; the hosted path limitation and source version mismatch are repaired by this follow-up.
 
 ## Recovery and scope
 Recovered commit 2f6de5aa0b3b38e9d0695162f6822219bc206865 (Project Relay 0.7.12 unattended recovery), originally on project-relay-v0.7.12-unattended-recovery in Wrekin-Labs/andys-bot-updates.
