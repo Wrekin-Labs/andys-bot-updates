@@ -1,6 +1,8 @@
 # Project Relay release-readiness review — 8 November 2026
 
-Status: NOT READY for production release or plugin resubmission.
+Status update: the scoped hosted 0.7.12 fixes have now been deployed successfully with all 150 tools preserved. See [deployment result and rollback](DEPLOYMENT_20261108.md) for the current outcome. Full plugin submission remains blocked by repository access and missing canonical submission evidence.
+
+The review sections below are historical pre-deployment findings. The 128-tool snapshot blocker was resolved by recovering the actual 150-tool production function; it was not deployed over production.
 
 ## Follow-up fixes and validation
 
