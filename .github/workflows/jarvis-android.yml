@@ -29,9 +29,11 @@ jobs:
       - name: Build and lint preview APK
         working-directory: jarvis-android
         run: gradle --no-daemon assembleDebug lintDebug
+      - name: Show lint report
+        if: always()
+        run: cat jarvis-android/app/build/reports/lint-results-debug.txt || true
       - uses: actions/upload-artifact@v4
         with:
           name: Jarvis-Android-0.1.0-preview
           path: jarvis-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
