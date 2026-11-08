@@ -44,3 +44,13 @@ jobs:
             $errors | Format-List
             exit 1
           }
+
+  hosted-regression:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Parse deployed TypeScript and test hosted security and catalogue
+        run: node project-relay-v0.7.12/tests/hosted-regression.cjs

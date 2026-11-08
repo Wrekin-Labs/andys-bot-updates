@@ -1,5 +1,6 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeSite, siteAccountRoute, siteSubject } from "./site-auth.ts";
 // Parsed in CI so hosted MCP syntax errors cannot reach production unnoticed.
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -42,6 +43,12 @@ const ACTIONS = new Set([
   "commandport_owner_service",
   "commandport_owner_update",
   "commandport_owner_run_command",
+  "commandport_owner_capture_screen",
+  "commandport_owner_click",
+  "commandport_owner_drag",
+  "commandport_owner_keypress",
+  "commandport_owner_type_text",
+  "commandport_owner_scroll",
   "commandport_owner_approve",
   "supervised_list_apps",
   "supervised_app_status",
@@ -196,6 +203,12 @@ const PUBLIC_TOOLS = new Set([
   "commandport_prepare_type_text",
   "commandport_type_text",
   "commandport_owner_run_command",
+  "commandport_owner_capture_screen",
+  "commandport_owner_click",
+  "commandport_owner_drag",
+  "commandport_owner_keypress",
+  "commandport_owner_type_text",
+  "commandport_owner_scroll",
   "commandport_owner_approve",
   "commandport_hash_file",
   "commandport_read_url",
@@ -272,6 +285,22 @@ const PUBLIC_TOOLS = new Set([
   "commandport_write_file",
   "commandport_prepare_run_command",
   "commandport_run_command",
+  "project_list",
+  "project_create",
+  "project_get",
+  "project_update",
+  "project_assign_device",
+  "project_submit_job",
+  "project_jobs",
+  "project_job_control",
+  "project_dashboard",
+  "project_audit",
+  "project_usage",
+  "project_files",
+  "project_register_file",
+  "project_resource_locks",
+  "project_members",
+  "project_set_member",
 ]);
 
 const OWNER_CONTROL_TOOLS = new Set([
@@ -284,6 +313,12 @@ const OWNER_CONTROL_TOOLS = new Set([
   "commandport_scroll",
   "commandport_switch_tab",
   "commandport_owner_run_command",
+  "commandport_owner_capture_screen",
+  "commandport_owner_click",
+  "commandport_owner_drag",
+  "commandport_owner_keypress",
+  "commandport_owner_type_text",
+  "commandport_owner_scroll",
   "commandport_owner_approve",
   "commandport_owner_read_multiple_files",
   "commandport_owner_preview_text_replace",
@@ -386,7 +421,30 @@ const PROFILE_OUTPUT_SCHEMA = {
 };
 
 const tools = [
+  { name:"project_list", description:"List Project Relay project workspaces visible to the signed-in account, with queue counts and isolation settings.", inputSchema:{type:"object",properties:{}}, annotations:PURE_READ },
+  { name:"project_create", description:"Create an isolated Project Relay workspace with its own queue, limits, audit and usage accounting.", inputSchema:{type:"object",properties:{name:{type:"string",minLength:1,maxLength:120},slug:{type:"string",maxLength:63},customer_ref:{type:"string",maxLength:120},default_priority:{type:"string",enum:["background","normal","urgent"],default:"normal"},concurrency_limit:{type:"integer",minimum:1,maximum:32,default:3},rate_limit_per_minute:{type:"integer",minimum:1,maximum:600,default:30}},required:["name"]}, annotations:CONTROL },
+  { name:"project_get", description:"Read one Project Relay workspace and its assigned workstations, members and current queue counts.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_update", description:"Update project name, customer reference, status, priority or concurrency/rate limits. Requires owner/admin project role.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},name:{type:"string",minLength:1,maxLength:120},customer_ref:{type:"string",maxLength:120},status:{type:"string",enum:["active","paused","archived"]},default_priority:{type:"string",enum:["background","normal","urgent"]},concurrency_limit:{type:"integer",minimum:1,maximum:32},rate_limit_per_minute:{type:"integer",minimum:1,maximum:600}},required:["project_id"]}, annotations:CONTROL },
+  { name:"project_assign_device", description:"Assign, tune or disable a workstation for one project. The device must already belong to the project owner.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},relay_device:{type:"string"},enabled:{type:"boolean",default:true},weight:{type:"integer",minimum:1,maximum:1000,default:100},max_concurrency:{type:"integer",minimum:1,maximum:16,default:2}},required:["project_id","relay_device"]}, annotations:CONTROL },
+  { name:"project_submit_job", description:"Queue one Project Relay workstation action inside an isolated project. Scheduler applies project limits, priorities, resource locks, retries and machine assignment.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},action:{type:"string",minLength:1,maxLength:160},payload:{type:"object"},relay_device:{type:"string"},priority:{type:"string",enum:["background","normal","urgent"]},resource_keys:{type:"array",items:{type:"string",maxLength:80},maxItems:12},max_attempts:{type:"integer",minimum:1,maximum:10,default:3},safe_summary:{type:"string",maxLength:500}},required:["project_id","action"]}, annotations:DESKTOP_MUTATION },
+  { name:"project_jobs", description:"List recent jobs for a project without exposing stored command/file payload values.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},state:{type:"string"},limit:{type:"integer",minimum:1,maximum:200,default:50}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_job_control", description:"Pause, resume, cancel or reprioritise one project job. Running cancellation is best-effort and never claims to undo effects already performed.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},job_id:{type:"string",format:"uuid"},operation:{type:"string",enum:["pause","resume","cancel","priority"]},priority:{type:"string",enum:["background","normal","urgent"]}},required:["project_id","job_id","operation"]}, annotations:CONTROL },
+  { name:"project_dashboard", description:"Live project dashboard: Queued / Running / Waiting / Failed / Complete counts, assigned PCs, locks, recent jobs and today's usage.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_audit", description:"Read bounded project-level orchestration audit history.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},limit:{type:"integer",minimum:1,maximum:200,default:50}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_usage", description:"Read per-project daily jobs, failures, runtime and billable-unit accounting for up to 90 days.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},days:{type:"integer",minimum:1,maximum:90,default:30}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_files", description:"List a project's file registry metadata. File contents remain on assigned workstations and are not copied into the control plane.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},limit:{type:"integer",minimum:1,maximum:200,default:100}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_register_file", description:"Register or update non-secret project file metadata for an assigned workstation. Does not upload or read file content.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},logical_name:{type:"string",minLength:1,maxLength:180},file_ref:{type:"string",minLength:1,maxLength:1000},relay_device:{type:"string"},sha256:{type:"string",maxLength:64},size_bytes:{type:"integer",minimum:0},kind:{type:"string",maxLength:80}},required:["project_id","logical_name","file_ref"]}, annotations:CONTROL },
+  { name:"project_resource_locks", description:"Inspect current per-workstation project resource locks that prevent concurrent jobs fighting over one desktop/browser/file resource.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_members", description:"List project members and roles.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"}},required:["project_id"]}, annotations:PURE_READ },
+  { name:"project_set_member", description:"Add, change or remove a project member role. Owner role cannot be delegated with this tool.", inputSchema:{type:"object",properties:{project_id:{type:"string",format:"uuid"},user_id:{type:"string",format:"uuid"},role:{type:"string",enum:["admin","operator","viewer","remove"]}},required:["project_id","user_id","role"]}, annotations:CONTROL },
+
   { name:"commandport_owner_run_command", description:"Owner Full Control: run one bounded PowerShell command on an explicitly owner-linked workstation. Output and timeout remain bounded by the local adapter.", inputSchema:{type:"object",properties:{...relayDeviceProp,command:{type:"string",maxLength:12000},cwd:{type:"string"},timeout_seconds:{type:"integer",default:60,minimum:1,maximum:300}},required:["command"]}, annotations:DESKTOP_MUTATION },
+  { name:"commandport_owner_capture_screen", description:"Owner Full Control: capture the primary Windows desktop as a bounded JPEG preview for visual inspection. Requires OAuth owner role and the workstation-local Owner Full Control switch.", inputSchema:{type:"object",properties:{...relayDeviceProp,max_width:{type:"integer",default:1280,minimum:128,maximum:1920},jpeg_quality:{type:"integer",default:70,minimum:30,maximum:85}}}, annotations:INSPECTION },
+  { name:"commandport_owner_click", description:"Owner Full Control: click fixed screen coordinates inside the current foreground window after context and bounds checks. Requires OAuth owner role and the workstation-local Owner Full Control switch.", inputSchema:{type:"object",properties:{...relayDeviceProp,x:{type:"integer"},y:{type:"integer"},button:{type:"string",enum:["left","right"],default:"left"},clicks:{type:"integer",enum:[1,2],default:1}},required:["x","y"]}, annotations:DESKTOP_MUTATION },
+  { name:"commandport_owner_drag", description:"Owner Full Control: drag from one point to another inside the current foreground window while continuously checking that the foreground context has not changed.", inputSchema:{type:"object",properties:{...relayDeviceProp,x1:{type:"integer"},y1:{type:"integer"},x2:{type:"integer"},y2:{type:"integer"},duration_ms:{type:"integer",default:250,minimum:50,maximum:2000}},required:["x1","y1","x2","y2"]}, annotations:DESKTOP_MUTATION },
+  { name:"commandport_owner_keypress", description:"Owner Full Control: press one allowlisted navigation or editing key in the current foreground window. Arbitrary hotkeys and modifier combinations are not accepted.", inputSchema:{type:"object",properties:{...relayDeviceProp,key:{type:"string",enum:["enter","tab","esc","escape","backspace","delete","home","end","pgup","pageup","pgdn","pagedown","up","down","left","right","space"]}},required:["key"]}, annotations:DESKTOP_MUTATION },
+  { name:"commandport_owner_type_text", description:"Owner Full Control: type bounded Unicode text into the current foreground window, optionally followed by Enter. Typed content is not written to the Relay audit log.", inputSchema:{type:"object",properties:{...relayDeviceProp,text:{type:"string",maxLength:4000},press_enter:{type:"boolean",default:false}},required:["text"]}, annotations:DESKTOP_MUTATION },
+  { name:"commandport_owner_scroll", description:"Owner Full Control: scroll the current foreground window by a bounded nonzero number of wheel ticks.", inputSchema:{type:"object",properties:{...relayDeviceProp,ticks:{type:"integer",minimum:-10,maximum:10}},required:["ticks"]}, annotations:DESKTOP_MUTATION },
   { name:"commandport_owner_approve", description:"Owner Full Control: remotely approve one existing unexpired exact workstation approval. Does not execute the pending action; the original action must still consume that approval once.", inputSchema:{type:"object",properties:{...relayDeviceProp,approval_id:{type:"string",minLength:1,maxLength:128}},required:["approval_id"]}, annotations:DESKTOP_MUTATION },
   { name:"supervised_list_apps", description:"List locally registered supervised applications without private launch arguments.", inputSchema:{type:"object",properties:{...relayDeviceProp}}, annotations:PURE_READ },
   { name:"supervised_app_status", description:"Inspect exact-process status and duplicate count for one locally registered supervised application.", inputSchema:{type:"object",properties:{...relayDeviceProp,name:{type:"string",minLength:1,maxLength:80}},required:["name"]}, annotations:PURE_READ },
@@ -597,6 +655,7 @@ function audienceMatches(value: unknown) {
 }
 
 async function authorize(req: Request) {
+  if (new URL(req.url).pathname.endsWith("/sites-mcp")) return authorizeSite(req, db);
   const token=bearer(req);
   if(!token) return null;
 
@@ -618,7 +677,8 @@ async function authorize(req: Request) {
   if(!oauthToken) return null;
   if(oauthToken.revoked_at) return null;
   if(String(oauthToken.resource) !== RESOURCE) return null;
-  if(new Date(String(oauthToken.access_expires_at)).getTime() <= Date.now()) return null;
+  const accessExpiry = new Date(String(oauthToken.access_expires_at)).getTime();
+  if(!Number.isFinite(accessExpiry) || accessExpiry <= Date.now()) return null;
   const scopes=String(oauthToken.scope ?? "").split(/\s+/).filter(Boolean);
   if(!scopes.includes(REQUIRED_SCOPE)) return null;
 
@@ -728,6 +788,97 @@ async function whatsappAudit(accountId: string | null, userId: string | null, ev
   return true;
 }
 
+
+function requireProjectOAuth(identity: any) {
+  if (identity?.kind !== "oauth") throw new Error("Project workspaces require an authenticated Project Relay user account");
+  return String(identity.subject);
+}
+const PROJECT_ROLE_RANK: Record<string,number> = {viewer:1,operator:2,admin:3,owner:4};
+function requireProjectRole(role: string, minimum: string) {
+  if ((PROJECT_ROLE_RANK[role] ?? 0) < (PROJECT_ROLE_RANK[minimum] ?? 99)) throw new Error("Your project role does not allow this action");
+}
+async function projectAccess(projectId: unknown, identity: any) {
+  const userId=requireProjectOAuth(identity);
+  const id=String(projectId ?? "");
+  if(!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("A valid project_id is required");
+  const {data:project,error}=await db.from("project_relay_projects")
+    .select("id,owner_user_id,customer_ref,name,slug,status,default_priority,concurrency_limit,rate_limit_per_minute,metadata,created_at,updated_at")
+    .eq("id",id).maybeSingle();
+  if(error) throw error;
+  if(!project) throw new Error("Project not found");
+  if(String(project.owner_user_id)===userId) return {project,role:"owner",userId};
+  const {data:member,error:memberError}=await db.from("project_relay_project_members")
+    .select("role").eq("project_id",id).eq("user_id",userId).maybeSingle();
+  if(memberError) throw memberError;
+  if(!member) throw new Error("Project not found");
+  return {project,role:String(member.role),userId};
+}
+function projectPriority(value: unknown, fallback="normal") {
+  const key=String(value ?? fallback).toLowerCase();
+  if(key==="urgent") return 90;
+  if(key==="background") return 20;
+  return 50;
+}
+function projectPriorityLabel(value: unknown) {
+  const n=Number(value ?? 50);
+  return n>=80 ? "urgent" : n<=30 ? "background" : "normal";
+}
+function safeProjectSlug(value: unknown, name: string) {
+  const base=String(value ?? name).toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,63);
+  if(!base) throw new Error("Project slug could not be derived");
+  return base;
+}
+function payloadHasSecretKey(value: unknown, depth=0): boolean {
+  if(depth>8 || value===null || typeof value!=="object") return false;
+  if(Array.isArray(value)) return value.some(v=>payloadHasSecretKey(v,depth+1));
+  for(const [k,v] of Object.entries(value as Record<string,unknown>)){
+    const key=k.toLowerCase();
+    if(["password","secret","token","credential","api_key","apikey","otp","2fa","card_number","cvv"].some(mark=>key.includes(mark))) return true;
+    if(payloadHasSecretKey(v,depth+1)) return true;
+  }
+  return false;
+}
+async function inferProjectResources(action: string, payload: Record<string,unknown>, supplied: unknown) {
+  const clean=(Array.isArray(supplied)?supplied:[])
+    .map(v=>String(v).trim().toLowerCase().replace(/[^a-z0-9:._-]+/g,"-").slice(0,80))
+    .filter(Boolean);
+  if(clean.length) return [...new Set(clean)].slice(0,12);
+  const out:string[]=[];
+  if(/browser|click|type_text|scroll|switch_tab|focus_window|open_url|ui_/.test(action)) out.push("desktop","browser");
+  else if(/software/.test(action)) out.push("system:software");
+  else if(/service/.test(action)) out.push("system:services");
+  else if(/power/.test(action)) out.push("system:power");
+  else if(/terminal|run_command|process|scheduled_task|event_log|system_snapshot|network_summary|ssh/.test(action)) out.push("system");
+  else if(/serial|scan|print/.test(action)) out.push("hardware");
+  if(/file|document|xlsx|csv|pdf|docx|zip|search_content|image/.test(action)){
+    const p=typeof payload.path==="string" ? payload.path : (typeof payload.source==="string" ? payload.source : "");
+    out.push(p ? "file:"+((await sha256(p)).slice(0,32)) : "filesystem");
+  }
+  return [...new Set(out.length?out:["relay"])];
+}
+async function resolveProjectAssignedDevice(project: any, value: unknown) {
+  const {data:links,error:linkError}=await db.from("project_relay_user_devices")
+    .select("device_id").eq("user_id",project.owner_user_id);
+  if(linkError) throw linkError;
+  const ids=(links ?? []).map((r:any)=>String(r.device_id));
+  if(!ids.length) throw new Error("Project owner has no linked Relay workstations");
+  let q=db.from("project_relay_devices").select("id,name,last_seen,enabled,info").in("id",ids).eq("enabled",true);
+  if(value){
+    const s=String(value);
+    q=/^[0-9a-f-]{36}$/i.test(s)?q.eq("id",s):q.ilike("name",s);
+  }
+  const {data,error}=await q.order("name").limit(value?1:50);
+  if(error) throw error;
+  if(!data || !data.length) throw new Error("No matching workstation belongs to the project owner");
+  return data[0];
+}
+async function projectAudit(projectId:string, userId:string|null, eventType:string, detail:Record<string,unknown>, jobId:string|null=null, deviceId:string|null=null){
+  const {error}=await db.from("project_relay_project_events").insert({
+    project_id:projectId,job_id:jobId,device_id:deviceId,actor_user_id:userId,event_type:eventType,detail
+  });
+  if(error) console.error("project audit insert failed",error.message);
+}
 async function resolveDevice(value: unknown, identity: any) {
   let allowedIds: string[] | null = null;
   if(identity?.kind === "oauth"){
@@ -751,7 +902,7 @@ async function resolveDevice(value: unknown, identity: any) {
   const device=data[0];
   if(!device.last_seen) throw new Error("Project Relay workstation is offline");
   const age=Date.now()-new Date(device.last_seen).getTime();
-  if(age>90_000) throw new Error("Project Relay workstation has not checked in recently");
+  if(!Number.isFinite(age) || age < 0 || age > 90_000) throw new Error("Project Relay workstation has not checked in recently");
   return device;
 }
 async function resolveOwnerDevice(value: unknown, identity: any) {
@@ -815,6 +966,15 @@ function advertisedTools() {
 }
 
 Deno.serve(async(req:Request)=>{
+  // Separate private Sites adapter. Existing OAuth routes and device controls remain intact.
+  const sitesPath = new URL(req.url).pathname;
+  try {
+    if (sitesPath.endsWith("/sites-mcp/site-link")) return await siteAccountRoute(req, db);
+    if (sitesPath.endsWith("/sites-mcp") && !(await siteSubject(req))) return response({error:"Unauthorized"},401);
+  } catch {
+    return response({error:"Relay account connection is temporarily unavailable."},503);
+  }
+
   if(req.method==="OPTIONS") return new Response(null,{status:204,headers:cors()});
 
   const url=new URL(req.url);
@@ -840,10 +1000,313 @@ Deno.serve(async(req:Request)=>{
 
     if(method==="tools/call"){
       const auth=await authorize(req);
-      if(!auth) return rpc(id,authChallenge());
+      if(!auth) return rpc(id,sitesPath.endsWith("/sites-mcp")
+        ? {content:[{type:"text",text:"Link your existing Relay account at https://project-relay-direct.andy345787.chatgpt.site before using device tools."}],isError:true}
+        : authChallenge());
 
       const name=String(msg.params?.name ?? "");
       const args=(msg.params?.arguments ?? {}) as Record<string,unknown>;
+
+
+      if(name==="project_list"){
+        const userId=requireProjectOAuth(auth);
+        const [{data:owned,error:ownedError},{data:members,error:memberError}]=await Promise.all([
+          db.from("project_relay_projects").select("id,owner_user_id,customer_ref,name,slug,status,default_priority,concurrency_limit,rate_limit_per_minute,created_at,updated_at").eq("owner_user_id",userId).order("created_at",{ascending:false}),
+          db.from("project_relay_project_members").select("project_id,role").eq("user_id",userId)
+        ]);
+        if(ownedError) throw ownedError; if(memberError) throw memberError;
+        const memberIds=(members ?? []).map((r:any)=>String(r.project_id)).filter(id=>!(owned ?? []).some((p:any)=>String(p.id)===id));
+        let shared:any[]=[];
+        if(memberIds.length){
+          const {data,error}=await db.from("project_relay_projects").select("id,owner_user_id,customer_ref,name,slug,status,default_priority,concurrency_limit,rate_limit_per_minute,created_at,updated_at").in("id",memberIds).order("created_at",{ascending:false});
+          if(error) throw error; shared=data ?? [];
+        }
+        const roleBy=new Map((members ?? []).map((r:any)=>[String(r.project_id),String(r.role)]));
+        const projects=[...(owned ?? []).map((p:any)=>({...p,role:"owner"})),...shared.map((p:any)=>({...p,role:roleBy.get(String(p.id)) ?? "viewer"}))];
+        const ids=projects.map((p:any)=>p.id);
+        let counts:any[]=[];
+        if(ids.length){
+          const {data,error}=await db.rpc("project_relay_project_state_counts",{p_project_ids:ids});
+          if(error) throw error; counts=data ?? [];
+        }
+        const value=projects.map((p:any)=>{
+          const by:Record<string,number>={};
+          for(const row of counts.filter((r:any)=>String(r.project_id)===String(p.id))) by[String(row.state)]=Number(row.n ?? 0);
+          return {...p,job_counts:by};
+        });
+        return rpc(id,{content:textContent(value),structuredContent:{projects:value}});
+      }
+
+      if(name==="project_create"){
+        const userId=requireProjectOAuth(auth);
+        const nameValue=String(args.name ?? "").trim();
+        if(!nameValue || nameValue.length>120) throw new Error("Project name is required");
+        const maxProjects=Math.max(1,Math.min(100,Number(auth.entitlements?.max_projects ?? 25)));
+        const {count,error:countError}=await db.from("project_relay_projects").select("id",{count:"exact",head:true}).eq("owner_user_id",userId).neq("status","archived");
+        if(countError) throw countError;
+        if((count ?? 0)>=maxProjects) throw new Error("This account has reached its project workspace limit");
+        const slug=safeProjectSlug(args.slug,nameValue);
+        const row={
+          owner_user_id:userId,name:nameValue,slug,
+          customer_ref:args.customer_ref?String(args.customer_ref).slice(0,120):null,
+          default_priority:["background","normal","urgent"].includes(String(args.default_priority))?String(args.default_priority):"normal",
+          concurrency_limit:Math.max(1,Math.min(32,Number(args.concurrency_limit ?? 3))),
+          rate_limit_per_minute:Math.max(1,Math.min(600,Number(args.rate_limit_per_minute ?? 30)))
+        };
+        const {data,error}=await db.from("project_relay_projects").insert(row).select("*").single();
+        if(error) throw error;
+        await db.from("project_relay_project_members").upsert({project_id:data.id,user_id:userId,role:"owner"},{onConflict:"project_id,user_id"});
+        await projectAudit(data.id,userId,"project_created",{name:data.name,slug:data.slug});
+        return rpc(id,{content:textContent(data),structuredContent:{project:data}});
+      }
+
+      if(name==="project_get"){
+        const access=await projectAccess(args.project_id,auth);
+        const [{data:assignments,error:aerr},{data:members,error:merr},{data:jobs,error:jerr}]=await Promise.all([
+          db.from("project_relay_project_devices").select("device_id,enabled,weight,max_concurrency,project_relay_devices(name,last_seen,enabled,info)").eq("project_id",access.project.id).order("created_at"),
+          db.from("project_relay_project_members").select("user_id,role,permissions,created_at").eq("project_id",access.project.id).order("created_at"),
+          db.from("project_relay_project_jobs").select("state").eq("project_id",access.project.id)
+        ]);
+        if(aerr) throw aerr; if(merr) throw merr; if(jerr) throw jerr;
+        const counts:Record<string,number>={}; for(const j of jobs ?? []) counts[j.state]=(counts[j.state]??0)+1;
+        const devices=(assignments ?? []).map((r:any)=>{
+          const d=Array.isArray(r.project_relay_devices)?r.project_relay_devices[0]:r.project_relay_devices;
+          const age=d?.last_seen?Date.now()-new Date(d.last_seen).getTime():Infinity;
+          return {device_id:r.device_id,name:d?.name,assigned_enabled:r.enabled,max_concurrency:r.max_concurrency,weight:r.weight,online:age<=90_000,version:d?.info?.version ?? null};
+        });
+        const value={project:{...access.project,role:access.role},devices,members:members ?? [],job_counts:counts};
+        return rpc(id,{content:textContent(value),structuredContent:value});
+      }
+
+      if(name==="project_update"){
+        const access=await projectAccess(args.project_id,auth); requireProjectRole(access.role,"admin");
+        const patch:any={};
+        if(args.name!==undefined){const v=String(args.name).trim();if(!v||v.length>120)throw new Error("Invalid project name");patch.name=v;}
+        if(args.customer_ref!==undefined) patch.customer_ref=String(args.customer_ref).slice(0,120)||null;
+        if(args.status!==undefined){const v=String(args.status);if(!["active","paused","archived"].includes(v))throw new Error("Invalid project status");patch.status=v;}
+        if(args.default_priority!==undefined){const v=String(args.default_priority);if(!["background","normal","urgent"].includes(v))throw new Error("Invalid default priority");patch.default_priority=v;}
+        if(args.concurrency_limit!==undefined) patch.concurrency_limit=Math.max(1,Math.min(32,Number(args.concurrency_limit)));
+        if(args.rate_limit_per_minute!==undefined) patch.rate_limit_per_minute=Math.max(1,Math.min(600,Number(args.rate_limit_per_minute)));
+        const {data,error}=await db.from("project_relay_projects").update(patch).eq("id",access.project.id).select("*").single();
+        if(error) throw error;
+        await projectAudit(data.id,access.userId,"project_updated",{fields:Object.keys(patch)});
+        if(data.status==="active") await db.rpc("project_relay_dispatch_ready_jobs",{p_limit:50});
+        return rpc(id,{content:textContent(data),structuredContent:{project:data}});
+      }
+
+      if(name==="project_assign_device"){
+        const access=await projectAccess(args.project_id,auth); requireProjectRole(access.role,"admin");
+        const device=await resolveProjectAssignedDevice(access.project,args.relay_device);
+        const row={project_id:access.project.id,device_id:device.id,enabled:args.enabled!==false,weight:Math.max(1,Math.min(1000,Number(args.weight ?? 100))),max_concurrency:Math.max(1,Math.min(16,Number(args.max_concurrency ?? 2)))};
+        const {data,error}=await db.from("project_relay_project_devices").upsert(row,{onConflict:"project_id,device_id"}).select("project_id,device_id,enabled,weight,max_concurrency").single();
+        if(error) throw error;
+        await projectAudit(access.project.id,access.userId,"device_assignment_changed",{device_id:device.id,name:device.name,enabled:data.enabled,max_concurrency:data.max_concurrency,weight:data.weight},null,device.id);
+        if(data.enabled) await db.rpc("project_relay_dispatch_ready_jobs",{p_limit:50});
+        const age=device.last_seen?Date.now()-new Date(device.last_seen).getTime():Infinity;
+        const value={...data,name:device.name,online:age<=90_000};
+        return rpc(id,{content:textContent(value),structuredContent:value});
+      }
+
+      if(name==="project_submit_job"){
+        const access=await projectAccess(args.project_id,auth); requireProjectRole(access.role,"operator");
+        if(access.project.status==="archived") throw new Error("Archived projects cannot accept jobs");
+        if(access.project.status==="paused") throw new Error("Project is paused; resume it before submitting work");
+        const action=String(args.action ?? "");
+        if(!ACTIONS.has(action)) throw new Error("That workstation action is not available for project jobs");
+        const payload=(args.payload && typeof args.payload==="object" && !Array.isArray(args.payload)) ? args.payload as Record<string,unknown> : {};
+        const payloadBytes=new TextEncoder().encode(JSON.stringify(payload)).length;
+        if(payloadBytes>64_000) throw new Error("Project job payload is too large");
+        if(payloadHasSecretKey(payload)) throw new Error("Project job payload contains a credential/secret field; use a workstation-local credential mechanism instead");
+        let deviceId:string|null=null;
+        if(args.relay_device){
+          const d=await resolveProjectAssignedDevice(access.project,args.relay_device);
+          const {data:assigned,error}=await db.from("project_relay_project_devices").select("enabled").eq("project_id",access.project.id).eq("device_id",d.id).maybeSingle();
+          if(error) throw error;
+          if(!assigned?.enabled) throw new Error("That workstation is not enabled for this project");
+          deviceId=d.id;
+        }
+        const priorityLabel=String(args.priority ?? access.project.default_priority ?? "normal");
+        const resources=await inferProjectResources(action,payload,args.resource_keys);
+        const requiresOwner=OWNER_CONTROL_TOOLS.has(action);
+        const row={
+          project_id:access.project.id,submitted_by_user_id:access.userId,device_id:deviceId,action,payload,
+          safe_summary:args.safe_summary?String(args.safe_summary).slice(0,500):action,
+          priority:projectPriority(priorityLabel,String(access.project.default_priority ?? "normal")),
+          resource_keys:resources,requires_owner:requiresOwner,
+          max_attempts:Math.max(1,Math.min(10,Number(args.max_attempts ?? 3)))
+        };
+        const {data,error}=await db.from("project_relay_project_jobs").insert(row)
+          .select("id,project_id,device_id,action,safe_summary,priority,state,resource_keys,requires_owner,attempt,max_attempts,run_after,created_at").single();
+        if(error) throw error;
+        await projectAudit(access.project.id,access.userId,"job_queued",{action,priority:projectPriorityLabel(data.priority),resource_keys:resources,max_attempts:data.max_attempts},data.id,deviceId);
+        const {data:dispatchData,error:dispatchError}=await db.rpc("project_relay_dispatch_ready_jobs",{p_limit:50});
+        if(dispatchError) throw dispatchError;
+        const {data:fresh,error:freshError}=await db.from("project_relay_project_jobs")
+          .select("id,project_id,device_id,relay_task_id,action,safe_summary,priority,state,resource_keys,attempt,max_attempts,run_after,last_error,created_at,started_at").eq("id",data.id).single();
+        if(freshError) throw freshError;
+        const value={...fresh,priority_label:projectPriorityLabel(fresh.priority),scheduler_dispatched:Number(dispatchData ?? 0)};
+        return rpc(id,{content:textContent(value),structuredContent:{job:value}});
+      }
+
+      if(name==="project_jobs"){
+        const access=await projectAccess(args.project_id,auth);
+        const limit=Math.max(1,Math.min(200,Number(args.limit ?? 50)));
+        let q=db.from("project_relay_project_jobs")
+          .select("id,device_id,relay_task_id,parent_job_id,action,safe_summary,priority,state,resource_keys,requires_owner,attempt,max_attempts,run_after,lease_until,last_error,billing_units,created_at,started_at,finished_at,updated_at")
+          .eq("project_id",access.project.id).order("created_at",{ascending:false}).limit(limit);
+        if(args.state) q=q.eq("state",String(args.state));
+        const {data,error}=await q; if(error) throw error;
+        const jobs=(data ?? []).map((j:any)=>({...j,priority_label:projectPriorityLabel(j.priority)}));
+        return rpc(id,{content:textContent(jobs),structuredContent:{jobs}});
+      }
+
+      if(name==="project_job_control"){
+        const access=await projectAccess(args.project_id,auth); requireProjectRole(access.role,"operator");
+        const jobId=String(args.job_id ?? "");
+        const {data:job,error}=await db.from("project_relay_project_jobs")
+          .select("id,project_id,device_id,relay_task_id,state,priority,action").eq("id",jobId).eq("project_id",access.project.id).maybeSingle();
+        if(error) throw error; if(!job) throw new Error("Project job not found");
+        const op=String(args.operation ?? "");
+        let warning:string|null=null;
+        if(op==="pause"){
+          if(!["queued","waiting","retry"].includes(job.state)) throw new Error("Only queued/waiting/retry jobs can be paused safely");
+          const {error:e}=await db.from("project_relay_project_jobs").update({state:"paused",lease_until:null}).eq("id",job.id); if(e)throw e;
+          await db.from("project_relay_resource_locks").delete().eq("job_id",job.id);
+        } else if(op==="resume"){
+          if(job.state!=="paused") throw new Error("Only paused jobs can be resumed");
+          const {error:e}=await db.from("project_relay_project_jobs").update({state:"queued",run_after:new Date().toISOString(),last_error:null}).eq("id",job.id); if(e)throw e;
+          await db.rpc("project_relay_dispatch_ready_jobs",{p_limit:50});
+        } else if(op==="cancel"){
+          if(["completed","failed","cancelled"].includes(job.state)) throw new Error("Job is already finished");
+          if(["queued","waiting","retry","paused"].includes(job.state)){
+            const {error:e}=await db.from("project_relay_project_jobs").update({state:"cancelled",finished_at:new Date().toISOString(),last_error:"Cancelled by project operator",payload:{}}).eq("id",job.id); if(e)throw e;
+            await db.from("project_relay_resource_locks").delete().eq("job_id",job.id);
+          } else {
+            const {error:e}=await db.from("project_relay_project_jobs").update({state:"cancel_requested",last_error:"Cancellation requested while Relay task may already be executing"}).eq("id",job.id); if(e)throw e;
+            if(job.relay_task_id){
+              const {data:cancelled}=await db.from("project_relay_tasks").update({status:"cancelled",error:"Cancelled by project operator",finished_at:new Date().toISOString()}).eq("id",job.relay_task_id).eq("status","queued").select("id").maybeSingle();
+              if(!cancelled) warning="The workstation action was already running. Cancellation is recorded but effects may still complete.";
+            }
+          }
+        } else if(op==="priority"){
+          if(!["queued","waiting","retry","paused"].includes(job.state)) throw new Error("Priority can only change before execution starts");
+          const value=projectPriority(args.priority,"normal");
+          const {error:e}=await db.from("project_relay_project_jobs").update({priority:value}).eq("id",job.id); if(e)throw e;
+        } else throw new Error("Unknown job operation");
+        await projectAudit(access.project.id,access.userId,"job_control",{operation:op,...(warning?{warning}:{})},job.id,job.device_id);
+        const {data:fresh,error:freshError}=await db.from("project_relay_project_jobs").select("id,state,priority,last_error,updated_at").eq("id",job.id).single();
+        if(freshError) throw freshError;
+        const value={...fresh,priority_label:projectPriorityLabel(fresh.priority),...(warning?{warning}:{})};
+        return rpc(id,{content:textContent(value),structuredContent:value});
+      }
+
+      if(name==="project_dashboard"){
+        const access=await projectAccess(args.project_id,auth);
+        await db.rpc("project_relay_dispatch_ready_jobs",{p_limit:50});
+        const [{data:jobs,error:jerr},{data:stateRows,error:serr},{data:assign,error:aerr},{data:locks,error:lerr},{data:usage,error:uerr}]=await Promise.all([
+          db.from("project_relay_project_jobs").select("id,device_id,action,safe_summary,priority,state,attempt,max_attempts,last_error,created_at,started_at,finished_at").eq("project_id",access.project.id).order("created_at",{ascending:false}).limit(20),
+          db.rpc("project_relay_project_state_counts",{p_project_ids:[access.project.id]}),
+          db.from("project_relay_project_devices").select("device_id,enabled,weight,max_concurrency,project_relay_devices(name,last_seen,info)").eq("project_id",access.project.id).order("created_at"),
+          db.from("project_relay_resource_locks").select("device_id,resource_key,job_id,acquired_at,expires_at").eq("project_id",access.project.id).gt("expires_at",new Date().toISOString()).order("acquired_at"),
+          db.from("project_relay_project_usage_daily").select("*").eq("project_id",access.project.id).eq("usage_date",new Date().toISOString().slice(0,10)).maybeSingle()
+        ]);
+        if(jerr)throw jerr;if(serr)throw serr;if(aerr)throw aerr;if(lerr)throw lerr;if(uerr)throw uerr;
+        const counts:Record<string,number>={queued:0,running:0,waiting:0,failed:0,complete:0,paused:0,cancelled:0};
+        for(const row of stateRows ?? []){
+          const n=Number(row.n ?? 0),state=String(row.state);
+          if(state==="completed") counts.complete+=n;
+          else if(["dispatched","running","cancel_requested"].includes(state)) counts.running+=n;
+          else if(["queued","retry"].includes(state)) counts.queued+=n;
+          else if(state==="waiting") counts.waiting+=n;
+          else if(state==="failed") counts.failed+=n;
+          else if(state==="paused") counts.paused+=n;
+          else if(state==="cancelled") counts.cancelled+=n;
+        }
+        const devices=(assign ?? []).map((r:any)=>{
+          const d=Array.isArray(r.project_relay_devices)?r.project_relay_devices[0]:r.project_relay_devices;
+          const age=d?.last_seen?Date.now()-new Date(d.last_seen).getTime():Infinity;
+          return {device_id:r.device_id,name:d?.name,enabled:r.enabled,online:age<=90_000,max_concurrency:r.max_concurrency,weight:r.weight,version:d?.info?.version ?? null};
+        });
+        const value={project:{...access.project,role:access.role},counts,devices,locks:locks ?? [],today_usage:usage ?? {jobs_started:0,jobs_completed:0,jobs_failed:0,jobs_cancelled:0,tool_calls:0,runtime_ms:0,billable_units:0},recent_jobs:(jobs ?? []).map((j:any)=>({...j,priority_label:projectPriorityLabel(j.priority)}))};
+        return rpc(id,{content:textContent(value),structuredContent:value});
+      }
+
+      if(name==="project_audit"){
+        const access=await projectAccess(args.project_id,auth);
+        const limit=Math.max(1,Math.min(200,Number(args.limit ?? 50)));
+        const {data,error}=await db.from("project_relay_project_events").select("id,job_id,device_id,actor_user_id,event_type,detail,created_at").eq("project_id",access.project.id).order("created_at",{ascending:false}).limit(limit);
+        if(error)throw error;
+        return rpc(id,{content:textContent(data ?? []),structuredContent:{events:data ?? []}});
+      }
+
+      if(name==="project_usage"){
+        const access=await projectAccess(args.project_id,auth);
+        const days=Math.max(1,Math.min(90,Number(args.days ?? 30)));
+        const since=new Date(Date.now()-(days-1)*86400000).toISOString().slice(0,10);
+        const {data,error}=await db.from("project_relay_project_usage_daily").select("usage_date,jobs_started,jobs_completed,jobs_failed,jobs_cancelled,tool_calls,runtime_ms,billable_units,updated_at").eq("project_id",access.project.id).gte("usage_date",since).order("usage_date",{ascending:true});
+        if(error)throw error;
+        const total=(data ?? []).reduce((a:any,r:any)=>({jobs_started:a.jobs_started+r.jobs_started,jobs_completed:a.jobs_completed+r.jobs_completed,jobs_failed:a.jobs_failed+r.jobs_failed,jobs_cancelled:a.jobs_cancelled+r.jobs_cancelled,tool_calls:a.tool_calls+r.tool_calls,runtime_ms:a.runtime_ms+Number(r.runtime_ms),billable_units:a.billable_units+Number(r.billable_units)}),{jobs_started:0,jobs_completed:0,jobs_failed:0,jobs_cancelled:0,tool_calls:0,runtime_ms:0,billable_units:0});
+        const value={days,rows:data ?? [],total};
+        return rpc(id,{content:textContent(value),structuredContent:value});
+      }
+
+      if(name==="project_files"){
+        const access=await projectAccess(args.project_id,auth);
+        const limit=Math.max(1,Math.min(200,Number(args.limit ?? 100)));
+        const {data,error}=await db.from("project_relay_project_files").select("id,device_id,logical_name,file_ref,sha256,size_bytes,kind,metadata,created_at,updated_at").eq("project_id",access.project.id).order("updated_at",{ascending:false}).limit(limit);
+        if(error)throw error;
+        return rpc(id,{content:textContent(data ?? []),structuredContent:{files:data ?? []}});
+      }
+
+      if(name==="project_register_file"){
+        const access=await projectAccess(args.project_id,auth); requireProjectRole(access.role,"operator");
+        let deviceId:string|null=null;
+        if(args.relay_device){
+          const d=await resolveProjectAssignedDevice(access.project,args.relay_device);
+          const {data:assigned,error}=await db.from("project_relay_project_devices").select("enabled").eq("project_id",access.project.id).eq("device_id",d.id).maybeSingle();
+          if(error)throw error;if(!assigned?.enabled)throw new Error("That workstation is not enabled for this project");deviceId=d.id;
+        }
+        const logical=String(args.logical_name ?? "").trim(); const ref=String(args.file_ref ?? "").trim();
+        if(!logical||!ref)throw new Error("logical_name and file_ref are required");
+        const sha=args.sha256?String(args.sha256).toLowerCase():null;
+        if(sha && !/^[0-9a-f]{64}$/.test(sha))throw new Error("sha256 must be 64 hexadecimal characters");
+        const row={project_id:access.project.id,device_id:deviceId,logical_name:logical.slice(0,180),file_ref:ref.slice(0,1000),sha256:sha,size_bytes:args.size_bytes===undefined?null:Math.max(0,Number(args.size_bytes)),kind:String(args.kind ?? "file").slice(0,80)};
+        const {data,error}=await db.from("project_relay_project_files").upsert(row,{onConflict:"project_id,logical_name"}).select("*").single();
+        if(error)throw error;
+        await projectAudit(access.project.id,access.userId,"file_registered",{file_id:data.id,logical_name:data.logical_name,device_id:deviceId});
+        return rpc(id,{content:textContent(data),structuredContent:{file:data}});
+      }
+
+      if(name==="project_resource_locks"){
+        const access=await projectAccess(args.project_id,auth);
+        const {data,error}=await db.from("project_relay_resource_locks").select("device_id,resource_key,job_id,acquired_at,expires_at").eq("project_id",access.project.id).gt("expires_at",new Date().toISOString()).order("acquired_at");
+        if(error)throw error;
+        return rpc(id,{content:textContent(data ?? []),structuredContent:{locks:data ?? []}});
+      }
+
+      if(name==="project_members"){
+        const access=await projectAccess(args.project_id,auth);
+        const {data,error}=await db.from("project_relay_project_members").select("user_id,role,permissions,created_at").eq("project_id",access.project.id).order("created_at");
+        if(error)throw error;
+        return rpc(id,{content:textContent(data ?? []),structuredContent:{members:data ?? []}});
+      }
+
+      if(name==="project_set_member"){
+        const access=await projectAccess(args.project_id,auth); requireProjectRole(access.role,"admin");
+        const target=String(args.user_id ?? ""); const role=String(args.role ?? "");
+        if(!/^[0-9a-f-]{36}$/i.test(target))throw new Error("A valid user_id is required");
+        if(target===String(access.project.owner_user_id))throw new Error("The project owner role cannot be changed here");
+        const {data:targetUser,error:targetUserError}=await db.auth.admin.getUserById(target);
+        if(targetUserError || !targetUser.user) throw new Error("That Project Relay user account does not exist");
+        if(role==="remove"){
+          const {error}=await db.from("project_relay_project_members").delete().eq("project_id",access.project.id).eq("user_id",target);if(error)throw error;
+        } else {
+          if(!["admin","operator","viewer"].includes(role))throw new Error("Invalid project role");
+          const {error}=await db.from("project_relay_project_members").upsert({project_id:access.project.id,user_id:target,role},{onConflict:"project_id,user_id"});if(error)throw error;
+        }
+        await projectAudit(access.project.id,access.userId,"member_changed",{user_id:target,role});
+        return rpc(id,{content:textContent({user_id:target,role}),structuredContent:{user_id:target,role}});
+      }
 
       if(name==="get_profile"){
         const profile=auth.kind==="oauth"
@@ -1335,7 +1798,7 @@ Deno.serve(async(req:Request)=>{
         return rpc(id,{isError:true,content:textContent(message)});
       }
 
-      if(name==="commandport_owner_read_image"){
+      if(name==="commandport_owner_read_image" || name==="commandport_owner_capture_screen"){
         const raw=(out.result ?? {}) as Record<string,unknown>;
         const data=typeof raw.base64==="string" ? raw.base64 : "";
         const mime=typeof raw.mime_type==="string" ? raw.mime_type : "";
