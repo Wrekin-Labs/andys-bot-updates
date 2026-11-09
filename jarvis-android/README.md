@@ -1,82 +1,79 @@
-# Jarvis Android 0.2.0 preview
+# Jarvis Android 0.3.0 preview
 
-Continues the existing Jarvis research branch and preserves its Python task ledger.
-Native Java app with typed/voice notes, speech playback, note export, individual
-note deletion, read-only task snapshots and an optional authenticated AI connection.
+Original native Android companion continuing the recovered Jarvis research branch.
+The existing Python task ledger and Windows source remain unchanged.
 
-## Preview identity and signing
+## What works in this build
 
-This development app is **Jarvis Dev**, application ID `uk.wrekinlabs.jarvis.dev`.
-It installs alongside 0.1.0 (`uk.wrekinlabs.jarvis`) so existing notes are preserved.
-The original CI-generated debug signing key was ephemeral and is unavailable;
-this is deliberately not an in-place update. Do not uninstall 0.1.0 to install it.
-Data is not automatically migrated between these two app IDs.
+- Dark Jarvis HUD, animated core and explicit ready/listening/transcribing/thinking/
+  speaking/error states, with reduced motion and fixed bottom navigation.
+- Foreground speech recognition with live transcription. System speech may use an
+  online provider; optional on-device-only mode refuses to fall back to the cloud.
+- Optional automatic send after speech, off by default. Local English voice selection,
+  speech speed, read/stop controls. Microphone and TTS stop when the app backgrounds.
+- 200 local notes, search, individual deletion and plain-JSON export.
+- Latest 20 conversation exchanges persisted on the phone. Requests include at most
+  five completed AI exchanges / 12,000 characters. New conversation clears history.
+- Up to five explicitly selected notes / 4,000 characters attached to the next question.
+  Other notes, local commands and task snapshots are not automatically sent to AI.
+- Read-only ledger-snapshot import; no task execution or mobile approval endpoints.
+- HTTPS bridge pairing with Android Keystore AES-GCM encrypted, origin-bound token.
+  No cleartext HTTP, redirects, URL credentials or certificate-validation bypasses.
 
-CI produces an unsigned release APK. The delivered APK is signed outside GitHub
-with a retained private development key. Future `.dev` builds must use that same
-key. No signing key or pairing credential belongs in the repository or CI artifact.
-Production package identity and signing remain a separate release decision.
+## Local commands — no PC or model required
 
-## Phone use
+`time`, `date`, `battery`, `remember ...`, `show notes`, `open wifi settings`,
+`open bluetooth settings`, `open calculator`, `timer 10 minutes`, `stop`.
 
-Local notes and snapshot import work without an AI server. Tap-to-talk uses the
-phone's installed speech provider, which may process audio online. Review its
-transcription before saving or sending. Read-aloud is explicit; speech stops when
-the app leaves the foreground. Export saves a plain JSON file to a location chosen
-by the user; keep this private. Uninstalling removes app notes and pairing data.
+Only exact user commands reach this deterministic parser. Model replies are never
+executed. Settings and timer requests open Android's own apps; their completion is
+not verified by Jarvis. General conversation needs a configured, reachable AI bridge.
 
-Connection accepts an HTTPS origin and private pairing token. Tokens are encrypted
-with an Android Keystore AES-GCM key and bound to the saved origin. Cleartext HTTP,
-URL credentials, paths, queries and redirects are rejected. Normal platform TLS
-validation remains enabled. No certificate bypass or embedded AI API keys.
+## AI bridge
 
-Ask Jarvis sends only the current question. Each question is independent; no saved
-notes, previous chat, task ledger or ChatGPT history are automatically uploaded.
-See `bridge/README.md` for the matching private local-Ollama bridge. The bridge has
-not been installed or tested against Andy Home. Test Connection verifies bridge
-identity, not whether the model is loaded. AI output is labelled as text, and no
-model output is interpreted as an action or command.
+Use the matching `bridge/server.py` 0.3, exposing health protocol version 2 through
+private HTTPS with a trusted certificate. Local Ollama must already be installed
+with a model chosen by the owner. Nothing is deployed or downloaded automatically.
+See bridge/README.md for setup and the bounded request contract.
 
-## Build and validate
+Phone cancellation discards the reply but may not stop an already running server
+inference. Replies do not perform PC actions. Saved memory is attached only when
+selected; note exports contain private plaintext. Local note/conversation storage
+uses app-private preferences, not application-level encryption. Backup and device
+transfer are disabled. Uninstalling removes this app's local data.
+
+## Identity and updates
+
+App name: Jarvis Dev. Package: `uk.wrekinlabs.jarvis.dev`.
+0.3 updates 0.2 using the same retained private development signing key and preserves
+its notes, conversation and pairing preferences. CI builds an unsigned release APK;
+delivery signing happens separately. Never commit signing keys or pairing tokens.
+
+The original 0.1 app (`uk.wrekinlabs.jarvis`) used an unavailable temporary CI debug
+key. It remains a separate installation. Do not uninstall it to install this app;
+its data is not automatically migrated into Jarvis Dev.
+
+## Build and validation
 
 JDK 17, Gradle 8.11.1, SDK 35:
 `gradle --no-daemon assembleRelease testDebugUnitTest lintRelease`
 
-Python: `python -m unittest discover -s bridge -v`, plus the existing tests under
-`research/jarvis-2/prototype`. Android unit tests cover endpoint/token validation.
-Python HTTP integration uses loopback and a fake provider; no paid/model requests.
+Python: `python -m unittest discover -s bridge -v`, plus existing tests under
+`research/jarvis-2/prototype`. JVM tests cover endpoint/token policy and exact local
+command routing. Android API-35 emulator tests cover note persistence/recreation,
+disconnected-chat honesty, pairing encryption/origin binding and context filtering.
+CI captures a real emulator screenshot and UI hierarchy. Model tests use a fake
+provider; they do not prove quality, latency or hardware compatibility with Ollama.
 
-Task snapshots retain the existing command:
-`python mobile_export.py --demo --output sample-tasks.json` in the prototype folder.
+Task snapshot generation is unchanged: run `python mobile_export.py --demo --output
+sample-tasks.json` in the prototype folder, then import the JSON on the phone.
 
-## Remaining work
+## Remaining limits
 
-Live HTTPS bridge setup, installed-model selection, phone-to-PC testing, physical
-Samsung UI/voice/Keystore checks, multi-turn chat, optional memory attachment,
-and a separately authenticated Relay read-only adapter. PC execution and approvals
-are not available. Do not expose the trusted-local prototype TaskStore over HTTP.
-Target SDK remains 35 for this preview; newer Android compatibility must be tested
-before a store release. No Play Store release or production deployment is implied.
+Physical Samsung microphone/language/voice checks, live HTTPS/Ollama pairing,
+on-phone language-model inference, background wake word, full-duplex interruption,
+Accessibility operation, live web research, camera/vision and Relay PC control are
+not delivered. Target API remains 35; newer-device and store readiness are unverified.
+No Play Store publication or production deployment is implied.
 
-## 0.3.0 upgrade
-
-Same `.dev` package and retained signing identity as 0.2: install over Jarvis Dev.
-New original native HUD and navigation, animated status core, foreground live speech input,
-local voice selection/rate, optional automatic voice sending, reduced motion, searchable
-memory, bounded conversation history and explicit note attachment. Existing notes/pairing
-preferences are preserved. Speech now requests microphone permission on the first tap;
-there is no background microphone service. System recognition may use a cloud provider;
-strict on-device mode fails with a clear message when unavailable.
-
-Local commands: `time`, `date`, `battery`, `remember ...`, `show notes`,
-`open wifi settings`, `open bluetooth settings`, `open calculator`, `timer 10 minutes`.
-These are exact user commands. Model replies are never evaluated as commands.
-Settings/timer requests open the relevant Android app; Jarvis cannot verify completion.
-
-The bridge must be updated to 0.3 (health protocol version 2) for history and selected notes.
-The app sends up to five recent completed AI exchanges and only notes explicitly chosen.
-The latest 20 exchanges remain in on-phone preferences; New conversation clears them.
-No conversation persistence occurs on the bridge. Stop discards the mobile reply but cannot
-promise to stop an already running Ollama generation. Backgrounding stops microphone/TTS.
-
-See GITHUB_RESEARCH_2026-11-09.md for current upstream comparisons and deferred features.
+See GITHUB_RESEARCH_2026-11-09.md for checked upstream projects and design decisions.

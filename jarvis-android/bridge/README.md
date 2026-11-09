@@ -1,48 +1,46 @@
-# Jarvis local chat bridge 0.2
+# Jarvis private chat bridge 0.3 — protocol v2
 
-Private development preview. No deployment was performed. This standard-library
-service connects only to Ollama on `127.0.0.1:11434`, using an already installed
-model explicitly selected by the owner. It never downloads models or invokes
-PC commands, tools, files, messages, or the task ledger. No API billing is used.
+Development preview. No deployment was performed. Connects only to local Ollama
+at `127.0.0.1:11434`, with a previously installed model explicitly chosen by the
+owner. No model downloads, file access, shell, tools, messaging or PC task execution.
 
-Set `JARVIS_OLLAMA_MODEL` to the installed model name and `JARVIS_PAIRING_TOKEN`
-to a cryptographically random URL-safe token (32–128 characters). Generate one
-privately with Python `secrets.token_urlsafe(32)`. Do not commit or send it in chat.
-Run `python server.py`. Default binding is loopback only, suitable for a private
-HTTPS reverse proxy. Android accepts only HTTPS with a normally trusted certificate.
-Direct TLS is also supported with `--cert PATH --key PATH`; non-loopback binding
-requires both. No firewall, router, certificate, DNS or proxy setup is automatic.
+## Setup
 
-Enter the HTTPS origin (no path) and pairing token in the app's Connection screen.
-Test checks only the bridge identity and authentication, not model readiness.
-Ask Jarvis sends a single question and receives text. Saved notes and earlier
-questions are not automatically included. Phone cancellation discards the reply;
-Ollama may continue computing until it finishes or the bridge times out.
+Set `JARVIS_OLLAMA_MODEL` to the installed model and `JARVIS_PAIRING_TOKEN` to a
+cryptographically random URL-safe token, 32–128 characters. Generate privately using
+Python `secrets.token_urlsafe(32)`. Do not commit or send it in chat.
 
-## Protocol and restrictions
+Run `python server.py`. It binds loopback by default, suitable for a private HTTPS
+reverse proxy. Android accepts HTTPS with a normally trusted certificate only.
+Direct TLS is available using `--cert PATH --key PATH`; non-loopback binding
+requires both. No firewall, router, DNS, certificate or proxy changes are automatic.
+This standard-library HTTP server is not intended for unrestricted public hosting;
+a hardened private HTTPS proxy must limit concurrent connections, rates and bodies.
 
-- `GET /v1/health`, bearer token required: service identity and capabilities.
-- `POST /v1/chat`, same auth, JSON `{ "message": "..." }` only.
-- Replies: `{ "reply": "...", "actions_executed": false }`.
-- 4000 characters / 32 KB request limit, bounded provider responses, 60s provider
-  timeout, one generation at a time and at most 10 authenticated requests/minute.
-- Unknown routes, extra fields, browser origins and invalid credentials rejected.
-- No prompt/request logging or conversation database. Restart revokes rate history;
-  change the token and restart to revoke an old phone pairing.
-- This Python HTTP server is for a private preview, not unrestricted public hosting.
-  Use a hardened HTTPS proxy with connection/body/rate limits for any deployment.
-- No live model or workstation has been verified. Fake-provider integration tests
-  exercise request handling, not response quality, performance, or hardware fit.
+Enter the HTTPS origin and token in the app's Settings. Test checks service identity
+and authentication, not model readiness. Send a question to check actual generation.
 
-Reference: https://docs.ollama.com/api/chat
+## Protocol
 
-## 0.3 protocol v2
+- `GET /v1/health`: bearer auth; service identity, `version: 2`, capabilities.
+- `POST /v1/chat`: bearer auth; JSON `message` required, `history` and `notes` optional.
+- Message: 1–4000 characters. History: at most five complete user/assistant pairs,
+  12,000 characters. Notes: up to five selected strings, 4,000 characters total.
+- Body limit 128 KiB. No client system/tool roles or unknown request fields.
+- Response: `{ "reply": "...", "actions_executed": false }`.
+- Bounded provider response; 60s timeout; one generation at a time; at most ten
+  authenticated chat requests per minute. No request/prompt/conversation logging.
+- Note content is reference data, not executable authority. No tools exist even if
+  a note or model asks for one. `<think>`/`<analysis>` blocks are removed from visible
+  text; an empty final reply fails with a generic provider error.
+- Change token and restart to revoke pairing. Rate history resets on restart.
+- Phone Stop discards the reply, but the model may continue until completion/timeout.
 
-Health returns `version: 2`. Chat additionally accepts optional `history` (at most
-five complete user/assistant pairs, 12,000 characters) and `notes` (up to five
-explicitly selected strings, 4,000 characters total). Body cap is now 128 KiB.
-System/tool roles and extra fields are rejected. Phone notes are untrusted reference
-data; no tools are available regardless of their contents. The bridge removes
-`<think>`/`<analysis>` blocks from user-facing text and rejects empty final replies.
-Message-only requests remain accepted for older clients; their old health-version
-check will need updating. No model was downloaded or production server deployed.
+Message-only 0.2 request bodies remain accepted; old health-version checks require
+updating. The Android 0.3 app requires bridge version 2 when testing the connection.
+
+## Validation limits
+
+Loopback HTTP integration tests use a fake provider. No live model, desktop source,
+TLS deployment or physical phone-to-PC session has been verified. No API spending
+was performed. Official provider contract: https://docs.ollama.com/api/chat.
