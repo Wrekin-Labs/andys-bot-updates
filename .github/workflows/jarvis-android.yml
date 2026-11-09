@@ -26,14 +26,18 @@ jobs:
       - name: Test existing ledger and mobile export
         working-directory: research/jarvis-2/prototype
         run: python -m unittest discover -v
+      - name: Test private AI bridge
+        run: python -m unittest discover -s jarvis-android/bridge -v
       - name: Build and lint preview APK
         working-directory: jarvis-android
-        run: gradle --no-daemon assembleDebug lintDebug
+        run: gradle --no-daemon assembleRelease testDebugUnitTest lintRelease
       - name: Show lint report
         if: always()
-        run: cat jarvis-android/app/build/reports/lint-results-debug.txt || true
+        run: cat jarvis-android/app/build/reports/lint-results-release.txt || true
+      - name: Include signing utility (no keys)
+        run: cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" jarvis-android/app/build/outputs/apk/release/
       - uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Android-0.1.0-preview
-          path: jarvis-android/app/build/outputs/apk/debug/*.apk
+          name: Jarvis-Android-0.2.0-unsigned
+          path: jarvis-android/app/build/outputs/apk/release/
           if-no-files-found: error
