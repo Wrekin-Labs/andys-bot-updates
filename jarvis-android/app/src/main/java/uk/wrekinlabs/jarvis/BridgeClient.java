@@ -9,18 +9,18 @@ final class BridgeClient {
     private volatile HttpsURLConnection active;
     private volatile boolean cancelled;
     void cancel() { cancelled=true; HttpsURLConnection c=active; if(c!=null)c.disconnect(); }
-    JSONObject request(String endpoint,String token,String message) throws Exception {
+    JSONObject request(String endpoint,String token,JSONObject payload) throws Exception {
         if(cancelled) throw new IOException("Cancelled");
         String base=EndpointPolicy.normalize(endpoint);
         if(!EndpointPolicy.validToken(token)) throw new IOException("Pairing token invalid");
-        HttpsURLConnection c=(HttpsURLConnection)new URL(base+(message==null?"/v1/health":"/v1/chat")).openConnection();
+        HttpsURLConnection c=(HttpsURLConnection)new URL(base+(payload==null?"/v1/health":"/v1/chat")).openConnection();
         active=c;
         try {
             c.setInstanceFollowRedirects(false); c.setConnectTimeout(10000); c.setReadTimeout(70000);
             c.setRequestProperty("Authorization","Bearer "+token); c.setRequestProperty("Accept","application/json");
             if(cancelled) throw new IOException("Cancelled");
-            if(message!=null) {
-                byte[] data=new JSONObject().put("message",message).toString().getBytes(StandardCharsets.UTF_8);
+            if(payload!=null) {
+                byte[] data=payload.toString().getBytes(StandardCharsets.UTF_8);
                 c.setRequestMethod("POST"); c.setDoOutput(true); c.setFixedLengthStreamingMode(data.length);
                 c.setRequestProperty("Content-Type","application/json");
                 try(OutputStream out=c.getOutputStream()){out.write(data);}

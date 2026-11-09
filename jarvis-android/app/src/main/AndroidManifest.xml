@@ -1,7 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>
-    <application android:theme="@style/AppTheme" android:label="Jarvis Dev" android:icon="@drawable/ic_jarvis" android:dataExtractionRules="@xml/data_extraction_rules" android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false">
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <queries><intent><action android:name="android.speech.RecognitionService" /></intent><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>
+    <application android:theme="@style/AppTheme" android:label="Jarvis Dev" android:icon="@drawable/ic_jarvis" android:dataExtractionRules="@xml/data_extraction_rules" android:allowBackup="false" android:fullBackupContent="false" android:supportsRtl="true" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>

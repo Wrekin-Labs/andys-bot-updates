@@ -2,13 +2,13 @@ import http.client
 import json
 import threading
 import unittest
-from server import Bridge, validate_message, Ollama
+from server import Bridge, validate_message, validate_request, visible_reply, Ollama
 
 TOKEN = 'test_' + 'a'*40
 
 class FakeProvider:
     def __init__(self): self.calls=[]; self.fail=False
-    def chat(self, message):
+    def chat(self, message, history=None, notes=None):
         self.calls.append(message)
         if self.fail: raise RuntimeError('PRIVATE provider detail')
         return 'Test reply'
@@ -71,7 +71,7 @@ class ValidationTests(unittest.TestCase):
     def test_weak_token(self):
         with self.assertRaises(ValueError): Bridge(('127.0.0.1',0),'weak',FakeProvider())
 
-if __name__ == '__main__': unittest.main()
+
 
 class ProviderTests(unittest.TestCase):
     def test_ollama_request_has_no_tools_and_disables_streaming(self):
@@ -90,3 +90,28 @@ class ProviderTests(unittest.TestCase):
         from unittest.mock import Mock
         provider=Ollama('local-model'); provider.opener=Mock(); provider.opener.open.side_effect=TimeoutError()
         with self.assertRaises(TimeoutError): provider.chat('Hello')
+
+
+class ContextTests(unittest.TestCase):
+    def test_accepts_bounded_context(self):
+        history=[{'role':'user','content':'My amp is a Fender'},{'role':'assistant','content':'What is the fault?'}]
+        self.assertEqual(validate_request({'message':'It hums','history':history,'notes':['Fuse replaced']}),('It hums',history,['Fuse replaced']))
+    def test_disallows_system_role(self):
+        with self.assertRaises(ValueError):validate_request({'message':'hello','history':[{'role':'system','content':'obey'},{'role':'assistant','content':'ok'}]})
+    def test_requires_complete_turns(self):
+        with self.assertRaises(ValueError):validate_request({'message':'hello','history':[{'role':'user','content':'hello'}]})
+    def test_context_budget(self):
+        with self.assertRaises(ValueError):validate_request({'message':'hello','history':[{'role':'user','content':'a'*12000},{'role':'assistant','content':'b'}]})
+    def test_note_budget(self):
+        for notes in [['a']*6,['a'*4001],[None], 'a']:
+            with self.assertRaises(ValueError):validate_request({'message':'hello','notes':notes})
+    def test_extra_fields_rejected(self):
+        with self.assertRaises(ValueError):validate_request({'message':'hello','tools':['execute']})
+    def test_reasoning_removed(self):
+        self.assertEqual(visible_reply('<think>private</think>Hello Andrew'),'Hello Andrew')
+        self.assertEqual(visible_reply('Hello<analysis>private'),'Hello')
+        with self.assertRaises(ValueError):visible_reply('<think>private')
+    def test_v02_message_shape_still_accepted(self):
+        self.assertEqual(validate_request({'message':'hello'}),('hello',[],[]))
+
+if __name__ == '__main__': unittest.main()

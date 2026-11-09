@@ -35,3 +35,14 @@ Ollama may continue computing until it finishes or the bridge times out.
   exercise request handling, not response quality, performance, or hardware fit.
 
 Reference: https://docs.ollama.com/api/chat
+
+## 0.3 protocol v2
+
+Health returns `version: 2`. Chat additionally accepts optional `history` (at most
+five complete user/assistant pairs, 12,000 characters) and `notes` (up to five
+explicitly selected strings, 4,000 characters total). Body cap is now 128 KiB.
+System/tool roles and extra fields are rejected. Phone notes are untrusted reference
+data; no tools are available regardless of their contents. The bridge removes
+`<think>`/`<analysis>` blocks from user-facing text and rejects empty final replies.
+Message-only requests remain accepted for older clients; their old health-version
+check will need updating. No model was downloaded or production server deployed.

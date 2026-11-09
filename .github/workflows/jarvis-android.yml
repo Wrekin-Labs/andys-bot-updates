@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -34,10 +34,32 @@ jobs:
       - name: Show lint report
         if: always()
         run: cat jarvis-android/app/build/reports/lint-results-release.txt || true
+      - name: Enable emulator acceleration
+        run: |
+          sudo chmod 666 /dev/kvm
+      - name: Android emulator smoke tests and screenshot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          working-directory: jarvis-android
+          script: bash ci/emulator-smoke.sh
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-0.3.0-emulator-checks
+          path: |
+            jarvis-android/evidence/
+            jarvis-android/app/build/reports/androidTests/
+            jarvis-android/app/build/outputs/androidTest-results/
       - name: Include signing utility (no keys)
         run: cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" jarvis-android/app/build/outputs/apk/release/
       - uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Android-0.2.0-unsigned
+          name: Jarvis-Android-0.3.0-unsigned
           path: jarvis-android/app/build/outputs/apk/release/
           if-no-files-found: error

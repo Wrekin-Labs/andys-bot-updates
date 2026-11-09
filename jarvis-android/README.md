@@ -57,3 +57,26 @@ and a separately authenticated Relay read-only adapter. PC execution and approva
 are not available. Do not expose the trusted-local prototype TaskStore over HTTP.
 Target SDK remains 35 for this preview; newer Android compatibility must be tested
 before a store release. No Play Store release or production deployment is implied.
+
+## 0.3.0 upgrade
+
+Same `.dev` package and retained signing identity as 0.2: install over Jarvis Dev.
+New original native HUD and navigation, animated status core, foreground live speech input,
+local voice selection/rate, optional automatic voice sending, reduced motion, searchable
+memory, bounded conversation history and explicit note attachment. Existing notes/pairing
+preferences are preserved. Speech now requests microphone permission on the first tap;
+there is no background microphone service. System recognition may use a cloud provider;
+strict on-device mode fails with a clear message when unavailable.
+
+Local commands: `time`, `date`, `battery`, `remember ...`, `show notes`,
+`open wifi settings`, `open bluetooth settings`, `open calculator`, `timer 10 minutes`.
+These are exact user commands. Model replies are never evaluated as commands.
+Settings/timer requests open the relevant Android app; Jarvis cannot verify completion.
+
+The bridge must be updated to 0.3 (health protocol version 2) for history and selected notes.
+The app sends up to five recent completed AI exchanges and only notes explicitly chosen.
+The latest 20 exchanges remain in on-phone preferences; New conversation clears them.
+No conversation persistence occurs on the bridge. Stop discards the mobile reply but cannot
+promise to stop an already running Ollama generation. Backgrounding stops microphone/TTS.
+
+See GITHUB_RESEARCH_2026-11-09.md for current upstream comparisons and deferred features.
