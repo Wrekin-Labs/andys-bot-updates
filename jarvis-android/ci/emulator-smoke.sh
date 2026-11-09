@@ -3,6 +3,8 @@ set -eu
 mkdir -p evidence
 test_exit=0
 gradle --no-daemon connectedDebugAndroidTest || test_exit=$?
+# The test runner removes its temporary installation after tests.
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell pm clear uk.wrekinlabs.jarvis.dev
 adb shell am start -W -n uk.wrekinlabs.jarvis.dev/uk.wrekinlabs.jarvis.MainActivity
 sleep 2
