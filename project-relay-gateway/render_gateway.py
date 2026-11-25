@@ -44,6 +44,9 @@ CHALLENGE = os.environ.get("OPENAI_APPS_CHALLENGE", "").strip()
 
 ISSUER = PUBLIC_ORIGIN
 RESOURCE = PUBLIC_ORIGIN + "/mcp"
+PUBLIC_MCP_PATH = "/public/mcp"
+PUBLIC_MCP_RESOURCE = PUBLIC_ORIGIN + PUBLIC_MCP_PATH
+PUBLIC_MCP_UPSTREAM = SUPABASE_URL + "/functions/v1/project-relay-public-mcp"
 OAUTH_SCOPE = "relay:inspect"
 OAUTH_SCOPES = (OAUTH_SCOPE, "openid", "email")
 CHATGPT_CLIENT_HOST = "chatgpt.com"
@@ -171,9 +174,9 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
             "grant_types_supported": ["authorization_code", "refresh_token"],
         }
 
-    def _resource_metadata(self) -> dict[str, object]:
+    def _resource_metadata(self, resource: str = RESOURCE) -> dict[str, object]:
         return {
-            "resource": RESOURCE,
+            "resource": resource,
             "authorization_servers": [ISSUER],
             "scopes_supported": [OAUTH_SCOPE],
             "bearer_methods_supported": ["header"],
@@ -252,7 +255,7 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
                 params.append(("state", state))
             self._redirect(self._append_query(redirect_uri, params))
 
-        if resource != RESOURCE:
+        if resource not in (RESOURCE, PUBLIC_MCP_RESOURCE):
             oauth_error("invalid_target", "Unexpected Project Relay resource")
             return
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", code_challenge):
@@ -273,7 +276,7 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
                 "redirect_uri": redirect_uri,
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
-                "resource": RESOURCE,
+                "resource": resource,
                 "scope": scope_value,
                 "state": state,
             },
@@ -286,6 +289,7 @@ main{{max-width:28rem;padding:2rem;text-align:center}}a{{display:block;backgroun
         supabase_url = json.dumps(SUPABASE_URL)
         publishable_key = json.dumps(SUPABASE_PUBLISHABLE_KEY)
         request_json = json.dumps(request_id)
+        connection = "public plugin" if resource == PUBLIC_MCP_RESOURCE else "full connection"
         page = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -309,7 +313,7 @@ button{{width:100%;padding:12px;border:0;border-radius:10px;margin-top:12px;font
 <body>
 <div class="card">
   <div class="brand"><div class="mark">PR</div><div><h1>Connect Project Relay</h1><div class="small">ChatGPT is requesting access to your linked PCs.</div></div></div>
-  <div class="scope"><strong>Requested access</strong><br>Inspect and control your linked Project Relay workstations using the published owner-aware tool catalogue. Sensitive and mutating actions remain subject to workstation ownership and local safety gates.</div>
+  <div class="scope"><strong>Requested access &ndash; Project Relay {connection}</strong><br>Inspect and control your linked Project Relay workstations using the published owner-aware tool catalogue. Sensitive and mutating actions remain subject to workstation ownership and local safety gates.</div>
   <div id="signed" style="display:none"><p>Signed in as <strong id="who"></strong>.</p><button id="allow" class="primary">Allow Project Relay</button><button id="signout" class="secondary">Use another account</button></div>
   <div id="login">
     <label>Email<input id="email" type="email" autocomplete="email"></label>
@@ -590,9 +594,11 @@ await renderSession();
             },
         )
 
-    def _proxy(self) -> None:
-        suffix = self.path[len("/mcp"):] if self.path.startswith("/mcp") else self.path
-        upstream = UPSTREAM_MCP + suffix
+    def _proxy(self, *, public_plugin: bool = False) -> None:
+        # The public route proxies one exact path to its own OAuth resource.
+        base = PUBLIC_MCP_UPSTREAM if public_plugin else UPSTREAM_MCP
+        resource = PUBLIC_MCP_RESOURCE if public_plugin else self._public_mcp()
+        upstream = base if public_plugin else base + self.path[len("/mcp"):]
         length = int(self.headers.get("content-length", "0") or "0")
         body = self.rfile.read(length) if length else None
 
@@ -630,17 +636,17 @@ await renderSession();
         if (
             "json" in content_type.lower()
             or content_type.lower().startswith("text/")
-            or UPSTREAM_MCP.encode() in payload
+            or base.encode() in payload
         ):
             text = payload.decode("utf-8", errors="replace")
-            text = text.replace(UPSTREAM_MCP, self._public_mcp())
+            text = text.replace(base, resource)
             payload = text.encode("utf-8")
 
         keep: dict[str, str] = {}
         for key in ("cache-control", "www-authenticate", "mcp-session-id"):
             value = response_headers.get(key) or response_headers.get(key.title())
             if value:
-                keep[key] = value.replace(UPSTREAM_MCP, self._public_mcp())
+                keep[key] = value.replace(base, resource)
         keep["access-control-allow-origin"] = "*"
         keep["access-control-allow-headers"] = "authorization,content-type,mcp-protocol-version"
         keep["access-control-allow-methods"] = "GET,POST,OPTIONS"
@@ -659,7 +665,12 @@ await renderSession();
         if path in {"/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"}:
             self._json(200, self._oauth_metadata())
             return
-        if path in {"/.well-known/oauth-protected-resource", "/mcp/.well-known/oauth-protected-resource"}:
+        if path in {"/.well-known/oauth-protected-resource/public/mcp",
+                    PUBLIC_MCP_PATH + "/.well-known/oauth-protected-resource"}:
+            self._json(200, self._resource_metadata(PUBLIC_MCP_RESOURCE))
+            return
+        if path in {"/.well-known/oauth-protected-resource", "/mcp/.well-known/oauth-protected-resource",
+                    "/.well-known/oauth-protected-resource/mcp"}:
             self._json(200, self._resource_metadata())
             return
         if path == "/oauth/authorize":
@@ -687,6 +698,9 @@ await renderSession();
                 return
             self._send(200, CHALLENGE.encode(), "text/plain; charset=utf-8", {"cache-control": "no-store"})
             return
+        if path == PUBLIC_MCP_PATH:
+            self._proxy(public_plugin=True)
+            return
         if path.startswith("/mcp"):
             self._proxy()
             return
@@ -712,6 +726,9 @@ await renderSession();
         if path == "/billing/webhook":
             self._proxy_api(BILLING_ENDPOINT + "/webhook")
             return
+        if path == PUBLIC_MCP_PATH:
+            self._proxy(public_plugin=True)
+            return
         if path.startswith("/mcp"):
             self._proxy()
             return
@@ -719,6 +736,9 @@ await renderSession();
 
     def do_OPTIONS(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
+        if path == PUBLIC_MCP_PATH:
+            self._proxy(public_plugin=True)
+            return
         if path.startswith("/mcp"):
             self._proxy()
             return
